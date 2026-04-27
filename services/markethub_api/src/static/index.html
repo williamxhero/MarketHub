@@ -1,0 +1,379 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MarketHub 文档搜索</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: #fffaf1;
+      --line: #d8c8ae;
+      --text: #241c15;
+      --muted: #6a5d51;
+      --accent: #a54d2d;
+      --accent-soft: #f0d7c1;
+      --code: #1d252c;
+      --danger: #a32020;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, #f9e5cf 0, transparent 32%),
+        linear-gradient(135deg, #f4efe6 0%, #efe4d2 100%);
+      min-height: 100vh;
+    }
+
+    .shell {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 48px 20px 72px;
+    }
+
+    .hero {
+      margin-bottom: 28px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+    }
+
+    h1 {
+      margin: 14px 0 10px;
+      font-size: clamp(30px, 5vw, 52px);
+      line-height: 1.05;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.7;
+    }
+
+    .hero-link {
+      margin-top: 14px;
+      font-size: 15px;
+    }
+
+    .hero-link a {
+      text-decoration: none;
+    }
+
+    .hero-link a:hover {
+      text-decoration: underline;
+    }
+
+    .panel {
+      background: color-mix(in srgb, var(--panel) 92%, white 8%);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 20px;
+      box-shadow: 0 14px 40px rgba(87, 58, 38, 0.08);
+    }
+
+    form {
+      display: grid;
+      grid-template-columns: 1fr 120px;
+      gap: 12px;
+    }
+
+    input,
+    button {
+      height: 52px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      font-size: 16px;
+    }
+
+    input {
+      padding: 0 16px;
+      background: #fffdf8;
+    }
+
+    button {
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+
+    .meta {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .meta.error {
+      color: var(--danger);
+    }
+
+    .results {
+      margin-top: 20px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .card {
+      padding: 18px;
+      border-radius: 18px;
+      background: rgba(255, 253, 248, 0.92);
+      border: 1px solid rgba(216, 200, 174, 0.9);
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+
+    .card h2 a,
+    .path a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .card h2 a:hover,
+    .path a:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .tag {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #f5e4d4;
+      color: #7c4127;
+      font-size: 12px;
+    }
+
+    .path,
+    .summary,
+    .snippet,
+    .source {
+      margin: 8px 0;
+      line-height: 1.6;
+    }
+
+    .path,
+    .source {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      overflow: auto;
+      border-radius: 14px;
+      background: var(--code);
+      color: #e6edf3;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    a {
+      color: var(--accent);
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding-top: 28px;
+      }
+
+      form {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <span class="eyebrow">DOCS SEARCH</span>
+      <h1>按关键词搜索 MarketHub 全部文档。</h1>
+      <p>支持按接口路径、文档路径、参数名、字段名、说明文字和示例代码搜索。搜索范围覆盖接口文档、分组 README、系统说明和文档服务说明，结果中的标题和文档路径都可以直接打开。</p>
+      <div class="hero-link"><a href="/doc-view/">打开文档总入口</a></div>
+      <div class="hero-link"><a href="/doc-view/all">打开全部文档聚合页</a></div>
+      <div class="hero-link"><a href="/docs">程序对接文档入口</a></div>
+    </section>
+
+    <section class="panel">
+      <form id="search-form">
+        <input id="query-input" name="q" type="text" placeholder="例如：stocks quotes / money-flow / 龙虎榜 / 股东人数">
+        <button type="submit">搜索</button>
+      </form>
+      <div class="meta" id="status">输入关键词后开始搜索。</div>
+      <div class="results" id="results"></div>
+    </section>
+  </main>
+
+  <script>
+    const SEARCH_STATE_KEY = "integration_docs_search_state";
+    const form = document.getElementById("search-form");
+    const queryInput = document.getElementById("query-input");
+    const statusNode = document.getElementById("status");
+    const resultsNode = document.getElementById("results");
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function buildDocUrl(path) {
+      const normalized = String(path || "")
+        .split("/")
+        .filter(Boolean)
+        .map(encodeURIComponent)
+        .join("/");
+      if (normalized === "") {
+        return "/doc-view";
+      }
+      return `/doc-view/${normalized}`;
+    }
+
+    function buildSearchUrl(query) {
+      return `/doc-view/search?q=${encodeURIComponent(query)}`;
+    }
+
+    function setStatus(text, isError = false) {
+      statusNode.textContent = text;
+      statusNode.classList.toggle("error", isError);
+    }
+
+    function saveState() {
+      const state = {
+        query: queryInput.value.trim(),
+        scrollY: window.scrollY,
+      };
+      sessionStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(state));
+    }
+
+    function loadState() {
+      const raw = sessionStorage.getItem(SEARCH_STATE_KEY);
+      if (!raw) {
+        return null;
+      }
+      try {
+        return JSON.parse(raw);
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function renderItems(items, query, restoreScrollY = null) {
+      if (!Array.isArray(items) || items.length === 0) {
+        setStatus(`没有找到与“${query}”相关的结果。`);
+        resultsNode.innerHTML = "";
+        if (restoreScrollY !== null) {
+          window.scrollTo(0, restoreScrollY);
+        }
+        return;
+      }
+
+      setStatus(`找到 ${items.length} 条结果。`);
+      resultsNode.innerHTML = items.map((item) => {
+        const docUrl = buildDocUrl(item.path || "");
+        return `
+        <article class="card">
+          <div class="tags">
+            ${item.docset ? `<span class="tag">${escapeHtml(item.docset)}</span>` : ""}
+            ${item.api_name ? `<span class="tag">${escapeHtml(item.api_name)}</span>` : ""}
+          </div>
+          <h2><a href="${docUrl}" data-doc-link="1">${escapeHtml(item.title || "")}</a></h2>
+          <div class="path"><a href="${docUrl}" data-doc-link="1">${escapeHtml(item.path || "")}</a></div>
+          <div class="summary">${escapeHtml(item.summary || "")}</div>
+          <div class="snippet">${escapeHtml(item.snippet || "")}</div>
+          ${item.source_url ? `<div class="source"><a href="${item.source_url}" target="_blank" rel="noreferrer">来源链接</a></div>` : ""}
+          ${item.example ? `<pre>${escapeHtml(item.example)}</pre>` : ""}
+        </article>
+      `;
+      }).join("");
+
+      if (restoreScrollY !== null) {
+        requestAnimationFrame(() => {
+          window.scrollTo(0, restoreScrollY);
+        });
+      }
+    }
+
+    async function doSearch(query, restoreScrollY = null) {
+      const trimmed = query.trim();
+      if (!trimmed) {
+        setStatus("输入关键词后开始搜索。");
+        resultsNode.innerHTML = "";
+        history.replaceState(null, "", "/doc-view/search");
+        saveState();
+        return;
+      }
+
+      setStatus(`正在搜索“${trimmed}”…`);
+      resultsNode.innerHTML = "";
+      history.replaceState(null, "", buildSearchUrl(trimmed));
+
+      try {
+        const response = await fetch(`/docs/search?q=${encodeURIComponent(trimmed)}`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        renderItems(data.items, trimmed, restoreScrollY);
+        saveState();
+      } catch (error) {
+        setStatus(`搜索失败：${error.message}`, true);
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      doSearch(queryInput.value);
+    });
+
+    resultsNode.addEventListener("click", (event) => {
+      const link = event.target.closest("a[data-doc-link='1']");
+      if (!link) {
+        return;
+      }
+      saveState();
+    });
+
+    window.addEventListener("pagehide", () => {
+      saveState();
+    });
+
+    const urlQuery = new URLSearchParams(window.location.search).get("q") || "";
+    const savedState = loadState();
+    const initialQuery = urlQuery || (savedState ? savedState.query || "" : "");
+    const initialScrollY = savedState && savedState.query === initialQuery ? savedState.scrollY : null;
+
+    if (initialQuery) {
+      queryInput.value = initialQuery;
+      doSearch(initialQuery, initialScrollY);
+    }
+  </script>
+</body>
+</html>

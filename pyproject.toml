@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+testpaths = [
+    "services/markethub_api/tests",
+    "services/markethub_console/tests",
+]
+python_files = [
+    "test_*.py",
+]

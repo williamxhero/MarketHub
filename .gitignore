@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+pytest_tmp/
+.venv/
+.mypy_cache/
+.ruff_cache/
+*.log
+.env
+.env.*
+config_runtime/
+source_packages/
+.tmp
+vendor/
+ops/
+docs/markethub_independent_todo_*.md
+services/markethub_api/src/data/*.db
