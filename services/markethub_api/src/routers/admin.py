@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Query
+from pydantic import BaseModel, Field
 
 from services import admin_runtime
 
@@ -38,6 +38,11 @@ class ImportUploadedSourcePackagePayload(BaseModel):
     files: list[UploadedSourcePackageFilePayload]
 
 
+class ImportSourcePackageArchivePayload(BaseModel):
+    filename: str
+    content_base64: str
+
+
 class PublishProfilePayload(BaseModel):
     display_name: str = ""
     note: str = ""
@@ -63,7 +68,8 @@ class ContractMatrixPayload(BaseModel):
 
 class CapabilitySettingsPayload(BaseModel):
     merge_strategy: str = ""
-    cache_enabled: bool
+    ttl_days: int | None = Field(default=None, ge=-1)
+    cache_enabled: bool | None = None
 
 
 class CapturePolicyPayload(BaseModel):
@@ -99,6 +105,11 @@ async def api_admin_source_packages_import(payload: ImportSourcePackagePayload) 
 async def api_admin_source_packages_import_directory(payload: ImportUploadedSourcePackagePayload) -> dict[str, object]:
     files = tuple({"path": item.path, "content_base64": item.content_base64} for item in payload.files)
     return admin_runtime.import_uploaded_source_package(files)
+
+
+@router.post("/api/admin/source-packages/import-archive")
+async def api_admin_source_packages_import_archive(payload: ImportSourcePackageArchivePayload) -> dict[str, object]:
+    return admin_runtime.import_source_package_archive(payload.filename, payload.content_base64)
 
 
 @router.get("/api/admin/source-packages/{package_id}")
@@ -229,6 +240,7 @@ async def api_admin_capability_settings_update(capability_id: str, payload: Capa
     return admin_runtime.save_capability_settings(
         capability_id,
         payload.merge_strategy,
+        payload.ttl_days,
         payload.cache_enabled,
     )
 
@@ -270,6 +282,12 @@ async def api_admin_run_capture(capability_id: str) -> dict[str, object]:
 @router.post("/api/admin/capture/run-due")
 async def api_admin_run_due_captures() -> list[dict[str, object]]:
     return admin_runtime.run_due_captures()
+
+
+@router.post("/api/admin/capture/run-due-async")
+async def api_admin_run_due_captures_async(background_tasks: BackgroundTasks) -> dict[str, object]:
+    background_tasks.add_task(admin_runtime.run_due_captures)
+    return {"accepted": True}
 
 
 @router.get("/api/admin/runtime-health")

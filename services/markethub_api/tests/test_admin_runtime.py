@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 import base64
 import json
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -266,6 +268,37 @@ def test_admin_contract_matrix_reads_and_saves_package_selection(monkeypatch, tm
 
 
 def test_admin_capture_management(monkeypatch, tmp_path) -> None:
+    class FakeCacheAdmin:
+        def __init__(self) -> None:
+            self.policy = {
+                "capability_id": "stocks.quotes.daily",
+                "enabled": True,
+                "read_enabled": True,
+                "write_enabled": True,
+                "ttl_seconds": 172800,
+                "time_field": "trade_time",
+                "key_fields": ["code"],
+                "request_scope_fields": ["code"],
+                "coverage_mode": "trading_day_range",
+            }
+
+        def get_policy(self, capability_id: str) -> dict[str, object]:
+            return dict(self.policy | {"capability_id": capability_id})
+
+        def update_policy(self, update) -> dict[str, object]:
+            read_enabled = update.enabled if getattr(update, "read_enabled", None) is None else update.read_enabled
+            write_enabled = update.enabled if getattr(update, "write_enabled", None) is None else update.write_enabled
+            self.policy.update(
+                {
+                    "capability_id": update.capability_id,
+                    "enabled": update.enabled,
+                    "read_enabled": read_enabled,
+                    "write_enabled": write_enabled,
+                    "ttl_seconds": update.ttl_seconds,
+                }
+            )
+            return dict(self.policy)
+
     class FakeCaptureAdmin:
         def __init__(self) -> None:
             self.policy = {
@@ -321,6 +354,7 @@ def test_admin_capture_management(monkeypatch, tmp_path) -> None:
 
     _configure_admin_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin())
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", FakeCacheAdmin())
 
     policies_response = client.get("/api/admin/capture-policies", headers=_auth_headers())
     overview_response = client.get("/api/admin/capture-overview", headers=_auth_headers())
@@ -345,6 +379,7 @@ def test_admin_capture_management(monkeypatch, tmp_path) -> None:
     runs_response = client.get("/api/admin/capture-runs?capability_id=stocks.quotes.daily&status=success&limit=5", headers=_auth_headers())
     run_one_response = client.post("/api/admin/capture-runs/stocks.quotes.daily", headers=_auth_headers())
     run_due_response = client.post("/api/admin/capture/run-due", headers=_auth_headers())
+    run_due_async_response = client.post("/api/admin/capture/run-due-async", headers=_auth_headers())
 
     assert policies_response.status_code == 200
     assert policies_response.json()[0]["capability_id"] == "stocks.quotes.daily"
@@ -360,6 +395,8 @@ def test_admin_capture_management(monkeypatch, tmp_path) -> None:
     assert run_one_response.json()["status"] == "success"
     assert run_due_response.status_code == 200
     assert run_due_response.json()[0]["capability_id"] == "stocks.quotes.daily"
+    assert run_due_async_response.status_code == 200
+    assert run_due_async_response.json()["accepted"] is True
 
 
 def test_admin_import_uploaded_source_package_directory(monkeypatch, tmp_path) -> None:
@@ -370,23 +407,172 @@ def test_admin_import_uploaded_source_package_directory(monkeypatch, tmp_path) -
         "source_name": "demo_source",
         "display_name": "Demo Source",
         "description": "测试导入目录 package。",
-        "contract_names": ["stocks.quotes"],
+        "capabilities": [
+            {
+                "capability_id": "stocks.quotes.daily",
+                "support_level": "native",
+                "handler_name": "get_stock_quotes",
+                "mergeable": True,
+                "notes": "",
+            }
+        ],
         "capability_tags": ["test"],
         "config_schema": [],
         "secret_fields": [],
         "supports_multi_instance": True,
-        "handler_targets": {"get_stock_quotes": "quotemux.sources.akshare.source:get_stock_quotes"},
+        "handler_targets": {"get_stock_quotes": "demo_source.source:get_stock_quotes"},
     }
     content = base64.b64encode(json.dumps(manifest).encode("utf-8")).decode("ascii")
+    init_content = base64.b64encode(b"").decode("ascii")
+    source_content = base64.b64encode(b"def get_stock_quotes(*args, **kwargs):\n    return []\n").decode("ascii")
 
     response = client.post(
         "/api/admin/source-packages/import-directory",
         headers=_auth_headers(),
-        json={"files": [{"path": "demo_source/quotemux_package.json", "content_base64": content}]},
+        json={
+            "files": [
+                {"path": "demo_source/__init__.py", "content_base64": init_content},
+                {"path": "demo_source/source.py", "content_base64": source_content},
+                {"path": "demo_source/quotemux_package.json", "content_base64": content},
+            ]
+        },
     )
 
     assert response.status_code == 200
     assert any(item["package_id"] == "demo_source" for item in response.json()["packages"])
+
+
+def test_admin_import_namespace_package_by_local_directory(monkeypatch, tmp_path) -> None:
+    _configure_admin_runtime(monkeypatch, tmp_path)
+    package_root = tmp_path / "external_packages" / "akshare"
+    package_root.mkdir(parents=True)
+    (package_root / "__init__.py").write_text("", encoding="utf-8")
+    (package_root / "source.py").write_text("def get_stock_quotes(*args, **kwargs):\n    return []\n", encoding="utf-8")
+    manifest = {
+        "package_id": "akshare",
+        "version": "1.0.0",
+        "source_name": "akshare",
+        "display_name": "AKShare",
+        "description": "测试本地命名空间 package 导入。",
+        "capabilities": [
+            {
+                "capability_id": "stocks.quotes.daily",
+                "support_level": "native",
+                "handler_name": "get_stock_quotes",
+                "mergeable": True,
+                "notes": "",
+            }
+        ],
+        "capability_tags": ["test"],
+        "config_schema": [],
+        "secret_fields": [],
+        "supports_multi_instance": True,
+        "handler_targets": {"get_stock_quotes": "quotemux_packages.akshare.source:get_stock_quotes"},
+    }
+    (package_root / "quotemux_package.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+    response = client.post(
+        "/api/admin/source-packages/import",
+        headers=_auth_headers(),
+        json={"path": str(package_root)},
+    )
+
+    assert response.status_code == 200
+    assert any(item["package_id"] == "akshare" for item in response.json()["packages"])
+    import_roots = response.json()["import_roots"]
+    assert len(import_roots) == 1
+    assert import_roots[0].endswith("quotemux_packages")
+
+
+def test_admin_import_namespace_package_from_uploaded_directory_uses_manifest_package_id(monkeypatch, tmp_path) -> None:
+    _configure_admin_runtime(monkeypatch, tmp_path)
+    manifest = {
+        "package_id": "akshare",
+        "version": "1.0.0",
+        "source_name": "akshare",
+        "display_name": "AKShare",
+        "description": "测试上传目录按 manifest package_id 导入。",
+        "capabilities": [
+            {
+                "capability_id": "stocks.quotes.daily",
+                "support_level": "native",
+                "handler_name": "get_stock_quotes",
+                "mergeable": True,
+                "notes": "",
+            }
+        ],
+        "capability_tags": ["test"],
+        "config_schema": [],
+        "secret_fields": [],
+        "supports_multi_instance": True,
+        "handler_targets": {"get_stock_quotes": "quotemux_packages.akshare.source:get_stock_quotes"},
+    }
+    content = base64.b64encode(json.dumps(manifest, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    init_content = base64.b64encode(b"").decode("ascii")
+    source_content = base64.b64encode(b"def get_stock_quotes(*args, **kwargs):\n    return []\n").decode("ascii")
+
+    response = client.post(
+        "/api/admin/source-packages/import-directory",
+        headers=_auth_headers(),
+        json={
+            "files": [
+                {"path": "selected-folder/__init__.py", "content_base64": init_content},
+                {"path": "selected-folder/source.py", "content_base64": source_content},
+                {"path": "selected-folder/quotemux_package.json", "content_base64": content},
+                {"path": "selected-folder/__pycache__/source.pyc", "content_base64": init_content},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert any(item["package_id"] == "akshare" for item in response.json()["packages"])
+    import_roots = response.json()["import_roots"]
+    assert len(import_roots) == 1
+    assert import_roots[0].endswith("quotemux_packages")
+
+
+def test_admin_import_source_package_archive(monkeypatch, tmp_path) -> None:
+    _configure_admin_runtime(monkeypatch, tmp_path)
+    manifest = {
+        "package_id": "akshare",
+        "version": "1.0.0",
+        "source_name": "akshare",
+        "display_name": "AKShare",
+        "description": "测试压缩包导入。",
+        "capabilities": [
+            {
+                "capability_id": "stocks.quotes.daily",
+                "support_level": "native",
+                "handler_name": "get_stock_quotes",
+                "mergeable": True,
+                "notes": "",
+            }
+        ],
+        "capability_tags": ["test"],
+        "config_schema": [],
+        "secret_fields": [],
+        "supports_multi_instance": True,
+        "handler_targets": {"get_stock_quotes": "quotemux_packages.akshare.source:get_stock_quotes"},
+    }
+    archive_buffer = BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("akshare/__init__.py", "")
+        archive.writestr("akshare/source.py", "def get_stock_quotes(*args, **kwargs):\n    return []\n")
+        archive.writestr("akshare/quotemux_package.json", json.dumps(manifest, ensure_ascii=False))
+        archive.writestr("akshare/__pycache__/source.pyc", "")
+    content = base64.b64encode(archive_buffer.getvalue()).decode("ascii")
+
+    response = client.post(
+        "/api/admin/source-packages/import-archive",
+        headers=_auth_headers(),
+        json={"filename": "akshare.zip", "content_base64": content},
+    )
+
+    assert response.status_code == 200
+    assert any(item["package_id"] == "akshare" for item in response.json()["packages"])
+    import_roots = response.json()["import_roots"]
+    assert len(import_roots) == 1
+    assert import_roots[0].endswith("quotemux_packages")
 
 
 def test_console_entry_page() -> None:

@@ -313,6 +313,21 @@
       word-break: break-word;
     }
 
+    .matrix-source-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      min-width: 0;
+      line-height: 1.35;
+    }
+
+    .matrix-source-toggle span {
+      min-width: 0;
+      word-break: break-word;
+    }
+
     .matrix input[type="checkbox"] {
       width: 20px;
       height: 20px;
@@ -533,6 +548,23 @@
       accent-color: var(--accent);
     }
 
+    .ttl-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .ttl-control input {
+      min-width: 0;
+    }
+
+    .muted-note {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
     .schedule-options {
       display: flex;
       flex-wrap: wrap;
@@ -680,13 +712,13 @@
             <select id="capability-merge-strategy"></select>
           </label>
           <label class="field">
-            <span class="field-label">Cache Enabled</span>
-            <span class="inline-check"><input id="cache-enabled" type="checkbox" />启用统一缓存</span>
+            <span class="field-label">TTL 缓存（天）</span>
+            <span class="ttl-control"><input id="cache-ttl-days" type="number" min="0" step="1" /><span id="cache-effective-note" class="muted-note" hidden>无缓存</span></span>
           </label>
           <div class="field full">
             <span class="field-label">定时更新</span>
             <div class="schedule-options" id="capture-schedule-options">
-              <label class="inline-check"><input class="capture-schedule-option" type="checkbox" value="none" />不更新</label>
+              <label class="inline-check"><input class="capture-schedule-option" type="checkbox" value="none" />无</label>
               <label class="inline-check"><input class="capture-schedule-option" type="checkbox" value="daily" />每天</label>
               <label class="inline-check"><input class="capture-schedule-option" type="checkbox" value="weekly" />每周日</label>
               <label class="inline-check"><input class="capture-schedule-option" type="checkbox" value="monthly" />每月最后一天</label>
@@ -735,6 +767,7 @@
   </div>
 
   <script>
+    const DEFAULT_TTL_DAYS = 365;
     const summary = document.getElementById("summary");
     const packageList = document.getElementById("package-list");
     const matrixWrap = document.getElementById("matrix-wrap");
@@ -747,7 +780,8 @@
     const capabilityMetaCoverage = document.getElementById("capability-meta-coverage");
     const capabilityApiPaths = document.getElementById("capability-api-paths");
     const capabilityMergeStrategy = document.getElementById("capability-merge-strategy");
-    const cacheEnabled = document.getElementById("cache-enabled");
+    const cacheTtlDays = document.getElementById("cache-ttl-days");
+    const cacheEffectiveNote = document.getElementById("cache-effective-note");
     const captureScheduleOptions = Array.from(document.querySelectorAll(".capture-schedule-option"));
     const captureWindowCount = document.getElementById("capture-window-count");
     const captureBatchSize = document.getElementById("capture-batch-size");
@@ -877,16 +911,59 @@
 
     function renderCapabilityBadges(capability, capturePolicy) {
       const cachePolicy = capability.cache_policy || {};
-      const cacheEnabled = Boolean(cachePolicy.enabled);
-      const cacheClass = cacheEnabled ? "is-on" : "is-off";
-      const cacheTitle = cacheEnabled ? "缓存已打开" : "缓存已关闭";
-      const cadenceBadge = renderCadenceBadge(capturePolicy);
+      if (capturePolicy && capturePolicy.enabled) {
+        const cadenceBadge = renderCadenceBadge(capturePolicy);
+        return `<span class="api-badges" aria-label="${escapeHtml(cadenceTitle(capturePolicy))}">${cadenceBadge}</span>`;
+      }
+      const ttlDays = Number.parseInt(capability.ttl_days ?? cachePolicy.ttl_days ?? DEFAULT_TTL_DAYS, 10);
+      const cacheEnabled = Boolean(capability.cache_effective || cachePolicy.enabled);
+      if (!cacheEnabled || !Number.isInteger(ttlDays) || ttlDays <= 0) {
+        return "";
+      }
+      const cacheTitle = `TTL 缓存：${ttlDays}天`;
       return `
-        <span class="api-badges" aria-label="${escapeHtml(cacheTitle)}，${escapeHtml(cadenceTitle(capturePolicy))}">
-          <span class="cache-badge ${cacheClass}" title="${escapeHtml(cacheTitle)}"><span class="cache-mark"></span><span>存</span></span>
-          ${cadenceBadge}
+        <span class="api-badges" aria-label="${escapeHtml(cacheTitle)}">
+          <span class="cache-badge is-on" title="${escapeHtml(cacheTitle)}">存 ${escapeHtml(String(ttlDays))}天</span>
         </span>
       `;
+    }
+
+    function renderSourceHeader(sourcePackage) {
+      const packageId = escapeHtml(sourcePackage.package_id);
+      const title = escapeHtml(sourcePackage.display_name || sourcePackage.package_id);
+      return `
+        <th class="matrix-provider">
+          <label class="matrix-source-toggle">
+            <span>${title}</span>
+            <input type="checkbox" data-source-toggle="${packageId}" aria-label="全选 ${title}" />
+          </label>
+        </th>
+      `;
+    }
+
+    function getMatrixProviderCheckboxes(packageId) {
+      return Array.from(matrixWrap.querySelectorAll("input[data-capability-id][data-package-id]"))
+        .filter((checkbox) => checkbox.dataset.packageId === packageId);
+    }
+
+    function syncMatrixSourceToggles() {
+      matrixWrap.querySelectorAll("input[data-source-toggle]").forEach((toggle) => {
+        const checkboxes = getMatrixProviderCheckboxes(toggle.dataset.sourceToggle).filter((checkbox) => !checkbox.disabled);
+        const checkedCount = checkboxes.filter((checkbox) => checkbox.checked).length;
+        toggle.disabled = checkboxes.length === 0;
+        toggle.checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+        toggle.indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+      });
+    }
+
+    function setMatrixSourceSelection(packageId, enabled) {
+      getMatrixProviderCheckboxes(packageId).forEach((checkbox) => {
+        if (!checkbox.disabled) {
+          checkbox.checked = enabled;
+        }
+      });
+      syncMatrixSourceToggles();
+      setSummary("Capability Matrix 有未保存的 provider 变更。");
     }
 
     function renderMatrix(payload, capturePolicies = []) {
@@ -899,7 +976,7 @@
         return;
       }
       const tableMinWidth = 468 + packages.length * 116;
-      const headerCells = packages.map((item) => `<th class="matrix-provider">${escapeHtml(item.display_name || item.package_id)}</th>`).join("");
+      const headerCells = packages.map((item) => renderSourceHeader(item)).join("");
       const rows = capabilities.map((capability) => {
         const packageState = Object.fromEntries((capability.packages || []).map((item) => [item.package_id, item]));
         const cells = packages.map((sourcePackage) => {
@@ -945,8 +1022,15 @@
           <tbody>${rows}</tbody>
         </table>
       `;
-      matrixWrap.querySelectorAll("input[type='checkbox']").forEach((checkbox) => {
-        checkbox.addEventListener("change", () => setSummary("Capability Matrix 有未保存的 provider 变更。"));
+      syncMatrixSourceToggles();
+      matrixWrap.querySelectorAll("input[data-capability-id][data-package-id]").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          syncMatrixSourceToggles();
+          setSummary("Capability Matrix 有未保存的 provider 变更。");
+        });
+      });
+      matrixWrap.querySelectorAll("input[data-source-toggle]").forEach((toggle) => {
+        toggle.addEventListener("change", () => setMatrixSourceSelection(toggle.dataset.sourceToggle, toggle.checked));
       });
       matrixWrap.querySelectorAll("[data-capability-edit]").forEach((button) => {
         button.addEventListener("click", () => openCapabilityEditor(button.dataset.capabilityEdit));
@@ -966,7 +1050,7 @@
         const selected = strategy === payload.merge_strategy ? "selected" : "";
         return `<option value="${escapeHtml(strategy)}" ${selected}>${escapeHtml(strategy)}</option>`;
       }).join("");
-      cacheEnabled.checked = Boolean(cachePolicy.enabled);
+      cacheTtlDays.value = Number.parseInt(payload.ttl_days ?? DEFAULT_TTL_DAYS, 10);
       cacheTimeField.value = cachePolicy.time_field || "";
       cacheCoverageMode.value = cachePolicy.coverage_mode || "";
       cacheKeyFields.value = (cachePolicy.key_fields || []).join(", ");
@@ -987,11 +1071,26 @@
       captureScheduleOptions.forEach((option) => {
         option.checked = option.value === selectedValue;
       });
+      updateTtlInputState();
     }
 
     function selectedCaptureSchedule() {
       const selected = captureScheduleOptions.find((option) => option.checked);
       return selected ? selected.value : "none";
+    }
+
+    function updateTtlInputState() {
+      const updateEnabled = selectedCaptureSchedule() !== "none";
+      cacheTtlDays.disabled = updateEnabled;
+      cacheEffectiveNote.hidden = !updateEnabled;
+    }
+
+    function ttlDaysValue() {
+      const parsed = Number.parseInt(cacheTtlDays.value, 10);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return DEFAULT_TTL_DAYS;
+      }
+      return parsed;
     }
 
     function captureSchedulePayload() {
@@ -1045,7 +1144,7 @@
           method: "PUT",
           body: JSON.stringify({
             merge_strategy: capabilityMergeStrategy.value,
-            cache_enabled: cacheEnabled.checked,
+            ttl_days: ttlDaysValue(),
           }),
         });
         await request(`/api/admin/capture-policies/${encodeURIComponent(activeCapabilityId)}`, {
@@ -1100,7 +1199,12 @@
       }
     }
 
-    function fileToBase64(file) {
+    function shouldIgnorePackagePath(pathText) {
+      const parts = pathText.replaceAll("\\", "/").split("/");
+      return parts.some((part) => part === "__pycache__" || part === ".git" || part === "build" || part === "dist" || part.endsWith(".egg-info") || part.endsWith(".pyc"));
+    }
+
+    async function fileToBase64(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
@@ -1118,17 +1222,48 @@
       });
     }
 
-    async function importSelectedDirectory(files) {
-      if (files.length === 0) {
+    async function collectDirectoryEntries(directoryHandle, currentPath, collectedFiles) {
+      for await (const [name, handle] of directoryHandle.entries()) {
+        const entryPath = `${currentPath}/${name}`;
+        if (shouldIgnorePackagePath(entryPath)) {
+          continue;
+        }
+        if (handle.kind === "directory") {
+          await collectDirectoryEntries(handle, entryPath, collectedFiles);
+          continue;
+        }
+        collectedFiles.push({ path: entryPath, file: await handle.getFile() });
+      }
+    }
+
+    async function selectPackageDirectoryFiles() {
+      if ("showDirectoryPicker" in window) {
+        const directoryHandle = await window.showDirectoryPicker({ mode: "read" });
+        const selectedFiles = [];
+        await collectDirectoryEntries(directoryHandle, directoryHandle.name, selectedFiles);
+        return selectedFiles;
+      }
+      directoryInput.click();
+      return null;
+    }
+
+    function selectedInputFiles(files) {
+      return files
+        .map((file) => ({ path: file.webkitRelativePath || file.name, file }))
+        .filter((item) => !shouldIgnorePackagePath(item.path));
+    }
+
+    async function importSelectedDirectory(selectedFiles) {
+      if (selectedFiles === null || selectedFiles.length === 0) {
         return;
       }
       try {
         setSummary("正在导入目录...");
         const payloadFiles = [];
-        for (const file of files) {
+        for (const item of selectedFiles) {
           payloadFiles.push({
-            path: file.webkitRelativePath || file.name,
-            content_base64: await fileToBase64(file),
+            path: item.path,
+            content_base64: await fileToBase64(item.file),
           });
         }
         await request("/api/admin/source-packages/import-directory", {
@@ -1143,9 +1278,21 @@
       }
     }
 
+    async function importPackageDirectory() {
+      try {
+        const selectedFiles = await selectPackageDirectoryFiles();
+        await importSelectedDirectory(selectedFiles);
+      } catch (error) {
+        if (error && error.name === "AbortError") {
+          return;
+        }
+        setSummary(`导入目录失败: ${error.message}`);
+      }
+    }
+
     async function saveMatrix() {
       try {
-        const checkedInputs = Array.from(matrixWrap.querySelectorAll("input[type='checkbox']:checked"));
+        const checkedInputs = Array.from(matrixWrap.querySelectorAll("input[data-capability-id][data-package-id]:checked"));
         const capabilities = (matrixPayload.capabilities || []).filter((capability) => capability.policy_managed).map((capability) => {
           const enabledPackageIds = checkedInputs
             .filter((checkbox) => checkbox.dataset.capabilityId === capability.capability_id)
@@ -1165,7 +1312,7 @@
       }
     }
 
-    document.getElementById("import-directory").addEventListener("click", () => directoryInput.click());
+    document.getElementById("import-directory").addEventListener("click", importPackageDirectory);
     document.getElementById("save-matrix").addEventListener("click", saveMatrix);
     document.getElementById("close-capability-editor").addEventListener("click", closeCapabilityEditor);
     document.getElementById("close-capability-editor-top").addEventListener("click", closeCapabilityEditor);
@@ -1173,12 +1320,7 @@
     captureScheduleOptions.forEach((option) => {
       option.addEventListener("change", () => setCaptureSchedule(option.checked ? option.value : "none"));
     });
-    capabilityEditor.addEventListener("click", (event) => {
-      if (event.target === capabilityEditor) {
-        closeCapabilityEditor();
-      }
-    });
-    directoryInput.addEventListener("change", (event) => importSelectedDirectory(Array.from(event.target.files || [])));
+    directoryInput.addEventListener("change", (event) => importSelectedDirectory(selectedInputFiles(Array.from(event.target.files || []))));
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && capabilityEditor.classList.contains("open")) {
         closeCapabilityEditor();

@@ -35,16 +35,59 @@ class FakeCacheAdmin:
 
     def update_policy(self, update) -> dict[str, object]:
         current = self.get_policy(update.capability_id)
+        read_enabled = update.enabled if getattr(update, "read_enabled", None) is None else update.read_enabled
+        write_enabled = update.enabled if getattr(update, "write_enabled", None) is None else update.write_enabled
         current.update(
             {
                 "enabled": update.enabled,
-                "read_enabled": update.read_enabled,
-                "write_enabled": update.write_enabled,
+                "read_enabled": read_enabled,
+                "write_enabled": write_enabled,
                 "ttl_seconds": update.ttl_seconds,
             }
         )
         self._policies[update.capability_id] = current
         return dict(current)
+
+
+class FakeCaptureAdmin:
+    def __init__(self, enabled: bool = False) -> None:
+        self.policy: dict[str, object] = {
+            "capability_id": "stocks.quotes.daily",
+            "enabled": enabled,
+            "cadence": "daily",
+            "run_time": "00:00:00",
+            "timezone": "Asia/Shanghai",
+            "weekday": None,
+            "month": None,
+            "month_day": None,
+            "scope_profile": "active_stocks_recent_trading_days",
+            "window_count": 5,
+            "batch_size": 50,
+            "notes": "",
+        }
+
+    def list_policies(self) -> tuple[dict[str, object], ...]:
+        return (dict(self.policy),)
+
+    def get_policy(self, capability_id: str) -> dict[str, object]:
+        return dict(self.policy | {"capability_id": capability_id})
+
+    def update_policy(self, payload) -> dict[str, object]:
+        self.policy = {
+            "capability_id": payload.capability_id,
+            "enabled": payload.enabled,
+            "cadence": payload.cadence,
+            "run_time": payload.run_time.strftime("%H:%M:%S"),
+            "timezone": payload.timezone,
+            "weekday": payload.weekday,
+            "month": payload.month,
+            "month_day": payload.month_day,
+            "scope_profile": payload.scope_profile,
+            "window_count": payload.window_count,
+            "batch_size": payload.batch_size,
+            "notes": payload.notes,
+        }
+        return dict(self.policy)
 
 
 def _configure_admin_runtime(monkeypatch, case_name: str) -> None:
@@ -63,6 +106,7 @@ def test_capability_settings_reads_current_merge_and_cache(monkeypatch) -> None:
     _configure_admin_runtime(monkeypatch, "read")
     fake_cache_admin = FakeCacheAdmin()
     monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
 
     response = client.get("/api/admin/capability-settings/stocks.quotes.daily")
 
@@ -70,16 +114,102 @@ def test_capability_settings_reads_current_merge_and_cache(monkeypatch) -> None:
     payload = response.json()
     assert payload["capability_id"] == "stocks.quotes.daily"
     assert payload["merge_strategy"] != ""
+    assert payload["ttl_days"] == admin_runtime.DEFAULT_TTL_DAYS
+    assert payload["cache_effective"] is True
     assert payload["cache_policy"]["capability_id"] == "stocks.quotes.daily"
+    assert payload["cache_policy"]["ttl_seconds"] == admin_runtime.DEFAULT_TTL_SECONDS
     assert payload["cache_policy"]["time_field"] != ""
     assert payload["cache_policy"]["key_fields"] != []
 
 
-def test_capability_settings_updates_merge_and_cache(monkeypatch) -> None:
+def test_capability_settings_updates_ttl_days_with_capture_disabled(monkeypatch) -> None:
     _configure_admin_runtime(monkeypatch, "update")
     fake_cache_admin = FakeCacheAdmin()
     monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
 
+    response = client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "ttl_days": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["capability_id"] == "stocks.quotes.daily"
+    assert payload["merge_strategy"] == "append_dedupe"
+    assert payload["ttl_days"] == 2
+    assert payload["cache_effective"] is True
+    assert payload["cache_policy"]["enabled"] is True
+    assert payload["cache_policy"]["read_enabled"] is True
+    assert payload["cache_policy"]["write_enabled"] is True
+    assert payload["cache_policy"]["ttl_seconds"] == 172800
+
+
+def test_capability_settings_ttl_zero_disables_cache(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "disable")
+    fake_cache_admin = FakeCacheAdmin()
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
+
+    response = client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "ttl_days": 0,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["capability_id"] == "stocks.quotes.daily"
+    assert payload["ttl_days"] == 0
+    assert payload["cache_effective"] is False
+    assert payload["cache_policy"]["enabled"] is False
+    assert payload["cache_policy"]["read_enabled"] is False
+    assert payload["cache_policy"]["write_enabled"] is False
+    assert payload["cache_policy"]["ttl_seconds"] == 0
+
+
+def test_capability_settings_ttl_minus_one_never_expires(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "never_expire")
+    fake_cache_admin = FakeCacheAdmin()
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
+
+    response = client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "ttl_days": -1,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ttl_days"] == -1
+    assert payload["cache_effective"] is True
+    assert payload["cache_policy"]["enabled"] is True
+    assert payload["cache_policy"]["read_enabled"] is True
+    assert payload["cache_policy"]["write_enabled"] is True
+    assert payload["cache_policy"]["ttl_seconds"] == -1
+
+
+def test_capability_settings_preserves_never_expire_when_legacy_cache_enabled(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "legacy_never_expire")
+    fake_cache_admin = FakeCacheAdmin()
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
+
+    client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "ttl_days": -1,
+        },
+    )
     response = client.put(
         "/api/admin/capability-settings/stocks.quotes.daily",
         json={
@@ -90,9 +220,119 @@ def test_capability_settings_updates_merge_and_cache(monkeypatch) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["capability_id"] == "stocks.quotes.daily"
-    assert payload["merge_strategy"] == "append_dedupe"
-    assert payload["cache_policy"]["enabled"] is True
-    assert payload["cache_policy"]["read_enabled"] is True
+    assert payload["ttl_days"] == -1
+    assert payload["cache_effective"] is True
+    assert payload["cache_policy"]["ttl_seconds"] == -1
+
+
+def test_capability_settings_accepts_legacy_cache_enabled_input(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "legacy")
+    fake_cache_admin = FakeCacheAdmin()
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
+
+    response = client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "cache_enabled": False,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "cache_enabled" not in payload
+    assert payload["ttl_days"] == 0
+    assert payload["cache_effective"] is False
+
+
+def test_capability_settings_legacy_cache_enabled_true_uses_default_ttl(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "legacy_enabled")
+    fake_cache_admin = FakeCacheAdmin()
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
+
+    client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "ttl_days": 0,
+        },
+    )
+    response = client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "cache_enabled": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ttl_days"] == admin_runtime.DEFAULT_TTL_DAYS
+    assert payload["cache_effective"] is True
+    assert payload["cache_policy"]["ttl_seconds"] == admin_runtime.DEFAULT_TTL_SECONDS
+
+
+def test_capability_settings_preserves_ttl_but_disables_cache_when_capture_enabled(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "capture_enabled")
+    fake_cache_admin = FakeCacheAdmin()
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=True))
+
+    response = client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "ttl_days": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ttl_days"] == 2
+    assert payload["cache_effective"] is False
+    assert payload["cache_policy"]["enabled"] is False
+    assert payload["cache_policy"]["read_enabled"] is False
     assert payload["cache_policy"]["write_enabled"] is True
-    assert payload["cache_policy"]["ttl_seconds"] > 0
+    assert payload["cache_policy"]["ttl_seconds"] == 172800
+
+
+def test_capture_policy_none_restores_cache_from_existing_ttl(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "restore")
+    fake_cache_admin = FakeCacheAdmin()
+    fake_capture_admin = FakeCaptureAdmin(enabled=True)
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", fake_capture_admin)
+
+    client.put(
+        "/api/admin/capability-settings/stocks.quotes.daily",
+        json={
+            "merge_strategy": "append_dedupe",
+            "ttl_days": 2,
+        },
+    )
+    response = client.put(
+        "/api/admin/capture-policies/stocks.quotes.daily",
+        json={
+            "enabled": False,
+            "cadence": "daily",
+            "run_time": "00:00:00",
+            "timezone": "Asia/Shanghai",
+            "weekday": None,
+            "month": None,
+            "month_day": None,
+            "scope_profile": "active_stocks_recent_trading_days",
+            "window_count": 5,
+            "batch_size": 50,
+            "notes": "",
+        },
+    )
+    settings_response = client.get("/api/admin/capability-settings/stocks.quotes.daily")
+
+    assert response.status_code == 200
+    payload = settings_response.json()
+    assert payload["ttl_days"] == 2
+    assert payload["cache_effective"] is True
+    assert payload["cache_policy"]["enabled"] is True
+    assert payload["cache_policy"]["ttl_seconds"] == 172800

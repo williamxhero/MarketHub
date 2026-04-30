@@ -12,7 +12,7 @@ COPY vendor /tmp/vendor
 RUN pip install --no-cache-dir /tmp/vendor/quotemux-0.1.0-py3-none-any.whl \
     && pip install --no-cache-dir -r /tmp/requirements.runtime.txt
 
-COPY vendor/markethub_packages /app/markethub_packages
+COPY vendor/markethub_packages /app/quotemux_packages
 COPY services/markethub_api/docs /app/services/markethub_api/docs
 COPY services/markethub_api/src /app/services/markethub_api/src
 COPY services/markethub_api/app.py /app/services/markethub_api/app.py

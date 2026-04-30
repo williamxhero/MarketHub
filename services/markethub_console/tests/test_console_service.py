@@ -41,17 +41,27 @@ def test_console_contains_capability_editor_modal() -> None:
     assert "/api/admin/capability-settings/" in response.text
     assert "/api/admin/capture-policies/" in response.text
     assert "Merge Strategy" in response.text
-    assert "Cache Enabled" in response.text
+    assert "TTL 缓存（天）" in response.text
+    assert "id=\"cache-ttl-days\"" in response.text
+    assert "DEFAULT_TTL_DAYS = 365" in response.text
+    assert "ttl_days" in response.text
     assert "定时更新" in response.text
+    assert "无缓存" in response.text
+    assert ">无</label>" in response.text
+    assert "不更新" not in response.text
     assert "api-badges" in response.text
     assert "renderCapabilityBadges" in response.text
     assert "renderCadenceBadge" in response.text
     assert "cadenceLabel" in response.text
+    assert "存 ${escapeHtml(String(ttlDays))}天" in response.text
     assert "停" not in response.text
     assert "capture-schedule-option" in response.text
     assert "每月最后一天" in response.text
     assert "<th>Edit</th>" in response.text
     assert "<th>Merge Strategy</th>" not in response.text
+    assert 'document.getElementById("close-capability-editor").addEventListener("click", closeCapabilityEditor)' in response.text
+    assert 'document.getElementById("close-capability-editor-top").addEventListener("click", closeCapabilityEditor)' in response.text
+    assert 'capabilityEditor.addEventListener("click"' not in response.text
 
 
 def test_console_keeps_package_import_and_matrix_selection_flow() -> None:
@@ -60,14 +70,22 @@ def test_console_keeps_package_import_and_matrix_selection_flow() -> None:
     assert response.status_code == 200
     assert "id=\"directory-input\"" in response.text
     assert "webkitdirectory" in response.text
+    assert "showDirectoryPicker" in response.text
+    assert "shouldIgnorePackagePath" in response.text
+    assert "__pycache__" in response.text
     assert "/api/admin/source-packages/import-directory" in response.text
+    assert "请输入 source package 目录路径" not in response.text
     assert "/api/admin/capability-matrix" in response.text
     assert "enabled_package_ids" in response.text
     assert "type=\"checkbox\"" in response.text
+    assert "data-source-toggle" in response.text
+    assert "syncMatrixSourceToggles" in response.text
+    assert "setMatrixSourceSelection" in response.text
     assert "save-capability-settings" in response.text
     assert "captureSchedulePayload" in response.text
     assert "Cache Read" not in response.text
     assert "Cache Write" not in response.text
+    assert "cache_enabled" not in response.text
 
 
 def test_console_config_uses_admin_api_base_url(monkeypatch) -> None:

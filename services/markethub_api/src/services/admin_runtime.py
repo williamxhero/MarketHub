@@ -2,9 +2,12 @@
 
 import base64
 import binascii
+from datetime import datetime
+from io import BytesIO
 import json
 import os
 import shutil
+import zipfile
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -15,11 +18,15 @@ from quotemux.contracts.registry import get_contract_allowed_merge_strategies, g
 from quotemux.contracts.strategies import list_merge_strategies
 from quotemux.runtime_core.audit import read_fallback_summary, record_provider_event
 from quotemux.runtime_core.health import get_provider_metrics
+from quotemux.source_packages.registry import clear_loaded_source_package_modules, refresh_default_source_package_registry
 from quotemux.store.admin import CachePolicyUpdate, CapturePolicyPayload, QuoteMuxCacheAdmin, QuoteMuxCaptureAdmin
-from quotemux.store.postgres import _coverage_mode_for_capability, _key_fields_for_capability, _request_scope_fields_for_capability, _time_field_for_capability
+from quotemux.store.postgres import CACHE_NEVER_EXPIRE_TTL_SECONDS, _coverage_mode_for_capability, _key_fields_for_capability, _request_scope_fields_for_capability, _time_field_for_capability
 
 
 MANIFEST_FILE_NAME = "quotemux_package.json"
+SECONDS_PER_DAY = 86400
+DEFAULT_TTL_DAYS = 365
+DEFAULT_TTL_SECONDS = DEFAULT_TTL_DAYS * SECONDS_PER_DAY
 _CACHE_ADMIN = QuoteMuxCacheAdmin()
 _CAPTURE_ADMIN: QuoteMuxCaptureAdmin | None = None
 
@@ -48,6 +55,14 @@ def _admin_state_path() -> Path:
 
 def _managed_source_packages_root() -> Path:
     return _project_root() / "source_packages"
+
+
+def _managed_namespace_root() -> Path:
+    return _managed_source_packages_root() / "quotemux_packages"
+
+
+def _managed_archive_upload_root() -> Path:
+    return _managed_source_packages_root() / "uploaded_archives"
 
 
 def _read_admin_state() -> dict[str, object]:
@@ -86,7 +101,7 @@ def _visible_manifests():
 def _ensure_managed_import_root() -> tuple[str, ...]:
     managed_root = _managed_source_packages_root()
     managed_root.mkdir(parents=True, exist_ok=True)
-    return _runtime().add_import_root(str(managed_root))
+    return _register_managed_import_root(managed_root, ())
 
 
 def _read_manifest_package_id(package_root: Path) -> str:
@@ -97,6 +112,35 @@ def _read_manifest_package_id(package_root: Path) -> str:
     if not isinstance(payload, dict):
         return ""
     return str(payload.get("package_id", ""))
+
+
+def _read_manifest_handler_targets(package_root: Path) -> tuple[str, ...]:
+    manifest_path = package_root / MANIFEST_FILE_NAME
+    if not manifest_path.is_file():
+        return ()
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return ()
+    handler_targets = payload.get("handler_targets", {})
+    if not isinstance(handler_targets, dict):
+        return ()
+    return tuple(str(item) for item in handler_targets.values())
+
+
+def _uses_quotemux_namespace(package_root: Path) -> bool:
+    return any(target.startswith("quotemux_packages.") for target in _read_manifest_handler_targets(package_root))
+
+
+def _copy_ignore_patterns(_: str, names: list[str]) -> set[str]:
+    ignored = {"__pycache__", ".git", "build", "dist"}
+    return {name for name in names if name in ignored or name.endswith(".pyc") or name.endswith(".egg-info")}
+
+
+def _package_directory_name(package_root: Path) -> str:
+    package_id = _read_manifest_package_id(package_root)
+    if package_id != "":
+        return package_id
+    return package_root.name
 
 
 def _safe_upload_parts(path_text: str) -> tuple[str, ...]:
@@ -110,14 +154,117 @@ def _safe_upload_parts(path_text: str) -> tuple[str, ...]:
     return parts
 
 
-def _copy_package_to_managed_root(source_root: Path) -> Path:
-    managed_root = _managed_source_packages_root()
-    managed_root.mkdir(parents=True, exist_ok=True)
-    if managed_root in source_root.parents or source_root == managed_root:
-        return source_root
-    target_root = managed_root / source_root.name
-    shutil.copytree(source_root, target_root, dirs_exist_ok=True)
-    return target_root
+def _copy_package_to_managed_root(source_root: Path) -> tuple[Path, Path]:
+    if _uses_quotemux_namespace(source_root):
+        import_root = _managed_namespace_root()
+        target_root = import_root / source_root.name
+    else:
+        import_root = _managed_source_packages_root()
+        target_root = import_root / source_root.name
+    import_root.mkdir(parents=True, exist_ok=True)
+    if target_root == source_root:
+        return import_root, target_root
+    shutil.copytree(source_root, target_root, dirs_exist_ok=True, ignore=_copy_ignore_patterns)
+    return import_root, target_root
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _iter_import_root_manifest_paths(import_root: Path) -> tuple[Path, ...]:
+    if not import_root.exists():
+        return ()
+    candidates = [import_root / MANIFEST_FILE_NAME]
+    candidates.extend(import_root.glob(f"*/{MANIFEST_FILE_NAME}"))
+    candidates.extend(import_root.glob(f"*/*/{MANIFEST_FILE_NAME}"))
+    return tuple(path for path in sorted(set(candidates)) if path.is_file())
+
+
+def _read_import_root_package_ids(import_root: Path) -> tuple[str, ...]:
+    package_ids: list[str] = []
+    for manifest_path in _iter_import_root_manifest_paths(import_root):
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            package_id = str(payload.get("package_id", ""))
+            if package_id != "":
+                package_ids.append(package_id)
+    return tuple(package_ids)
+
+
+def _keep_import_root(root_text: str, import_root: Path, package_ids: tuple[str, ...]) -> bool:
+    root_path = Path(root_text)
+    if _path_is_relative_to(root_path, import_root) or _path_is_relative_to(import_root, root_path):
+        return False
+    if package_ids == ():
+        return True
+    root_package_ids = set(_read_import_root_package_ids(root_path))
+    return root_package_ids.isdisjoint(package_ids)
+
+
+def _register_managed_import_root(import_root: Path, package_ids: tuple[str, ...]) -> tuple[str, ...]:
+    store = _runtime()._store
+    root_text = str(import_root)
+    original_roots = store.read_import_roots()
+    current_roots = tuple(root for root in original_roots if _keep_import_root(root, import_root, package_ids))
+    next_roots = tuple(dict.fromkeys((root_text, *current_roots)))
+    store.write_import_roots(next_roots)
+    try:
+        clear_loaded_source_package_modules()
+        refresh_default_source_package_registry()
+        _runtime().ensure_initialized()
+    except Exception:
+        store.write_import_roots(original_roots)
+        clear_loaded_source_package_modules()
+        refresh_default_source_package_registry()
+        raise
+    return store.read_import_roots()
+
+
+def _is_uploaded_package_file(parts: tuple[str, ...]) -> bool:
+    return not any(part == "__pycache__" or part.endswith(".pyc") for part in parts)
+
+
+def _write_uploaded_file(managed_root: Path, parts: tuple[str, ...], content: bytes) -> Path:
+    if len(parts) == 1:
+        target_parts = ("uploaded_source_package", parts[0])
+    else:
+        target_parts = parts
+    target_path = managed_root.joinpath(*target_parts)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(content)
+    return managed_root / target_parts[0]
+
+
+def _finish_imported_target_roots(target_roots: tuple[Path, ...]) -> dict[str, object]:
+    if target_roots == ():
+        raise KeyError("上传目录为空")
+    namespace_roots = tuple(target_root for target_root in target_roots if _uses_quotemux_namespace(target_root))
+    import_root = _managed_source_packages_root()
+    if namespace_roots != ():
+        import_root = _managed_namespace_root()
+        import_root.mkdir(parents=True, exist_ok=True)
+        for target_root in namespace_roots:
+            shutil.copytree(target_root, import_root / _package_directory_name(target_root), dirs_exist_ok=True, ignore=_copy_ignore_patterns)
+    imported_package_ids: list[str] = []
+    imported_roots = namespace_roots if namespace_roots != () else target_roots
+    for target_root in imported_roots:
+        package_id = _read_manifest_package_id(target_root)
+        imported_package_ids.extend(_candidate_package_ids(package_id, target_root.name))
+    _register_managed_import_root(import_root, tuple(imported_package_ids))
+    restored_package_ids = _restore_package_registration(tuple(imported_package_ids))
+    if restored_package_ids == ():
+        _remove_unregistered_ids(tuple(imported_package_ids))
+    packages = refresh_source_packages()
+    _record_admin_change("import_uploaded_source_package", "source_packages", {"package_ids": imported_package_ids, "restored_package_ids": list(restored_package_ids)})
+    return {
+        "import_roots": list(_runtime().list_import_roots()),
+        "packages": packages,
+    }
 
 
 def _remove_unregistered_ids(package_ids: tuple[str, ...]) -> None:
@@ -293,7 +440,7 @@ def _default_cache_policy_payload(capability_id: str) -> dict[str, object]:
         "enabled": capability.store_enabled,
         "read_enabled": capability.store_enabled,
         "write_enabled": capability.store_enabled,
-        "ttl_seconds": capability.freshness_seconds,
+        "ttl_seconds": DEFAULT_TTL_SECONDS,
         "time_field": _time_field_for_capability(capability_id),
         "key_fields": list(_key_fields_for_capability(capability_id)),
         "request_scope_fields": list(_request_scope_fields_for_capability(capability_id)),
@@ -306,6 +453,52 @@ def _cache_policy_payload(capability_id: str) -> dict[str, object]:
         return _CACHE_ADMIN.get_policy(capability_id)
     except Exception:
         return _default_cache_policy_payload(capability_id)
+
+
+def ttl_days_from_cache_policy(cache_policy: dict[str, object]) -> int:
+    ttl_seconds = int(cache_policy.get("ttl_seconds", 0))
+    if ttl_seconds == CACHE_NEVER_EXPIRE_TTL_SECONDS:
+        return CACHE_NEVER_EXPIRE_TTL_SECONDS
+    if ttl_seconds <= 0:
+        return 0
+    return (ttl_seconds + SECONDS_PER_DAY - 1) // SECONDS_PER_DAY
+
+
+def _cache_enabled_by_ttl_seconds(ttl_seconds: int) -> bool:
+    return ttl_seconds == CACHE_NEVER_EXPIRE_TTL_SECONDS or ttl_seconds > 0
+
+
+def _ttl_seconds_from_days(ttl_days: int) -> int:
+    if ttl_days == CACHE_NEVER_EXPIRE_TTL_SECONDS:
+        return CACHE_NEVER_EXPIRE_TTL_SECONDS
+    return ttl_days * SECONDS_PER_DAY
+
+
+def cache_effective_for_capability(capability_id: str, ttl_days: int) -> bool:
+    ttl_keeps_cache_enabled = ttl_days == CACHE_NEVER_EXPIRE_TTL_SECONDS or ttl_days > 0
+    if not ttl_keeps_cache_enabled:
+        return False
+    try:
+        capture_policy = get_capture_policy(capability_id)
+    except Exception:
+        return True
+    return not bool(capture_policy["enabled"])
+
+
+def _sync_cache_policy_for_capture(capability_id: str, capture_enabled: bool) -> None:
+    current_cache_policy = _cache_policy_payload(capability_id)
+    ttl_seconds = int(current_cache_policy["ttl_seconds"])
+    ttl_keeps_cache_enabled = _cache_enabled_by_ttl_seconds(ttl_seconds)
+    cache_effective = ttl_keeps_cache_enabled and not capture_enabled
+    _CACHE_ADMIN.update_policy(
+        CachePolicyUpdate(
+            capability_id=capability_id,
+            enabled=cache_effective,
+            ttl_seconds=ttl_seconds,
+            read_enabled=cache_effective,
+            write_enabled=ttl_keeps_cache_enabled,
+        )
+    )
 
 
 def _capability_settings_row(
@@ -333,6 +526,12 @@ def _capability_settings_row(
             available_package_ids.append(manifest.package_id)
     base_policy = get_contract_policy(normalized_capability_id)
     capability = get_capability_definition(normalized_capability_id)
+    cache_policy = _cache_policy_payload(normalized_capability_id)
+    ttl_days = ttl_days_from_cache_policy(cache_policy)
+    cache_effective = cache_effective_for_capability(normalized_capability_id, ttl_days)
+    visible_cache_policy = dict(cache_policy)
+    visible_cache_policy["enabled"] = cache_effective
+    visible_cache_policy["read_enabled"] = cache_effective
     return {
         "capability_id": normalized_capability_id,
         "contract_name": normalized_capability_id,
@@ -349,7 +548,9 @@ def _capability_settings_row(
             "enabled": capability.store_enabled,
             "freshness_seconds": capability.freshness_seconds,
         },
-        "cache_policy": _cache_policy_payload(normalized_capability_id),
+        "ttl_days": ttl_days,
+        "cache_effective": cache_effective,
+        "cache_policy": visible_cache_policy,
         "packages": package_rows,
     }
 
@@ -419,10 +620,10 @@ def import_source_package(path_text: str) -> dict[str, object]:
     source_root = Path(path_text)
     if not source_root.is_dir():
         raise KeyError(f"鏈煡 source package 鐩綍: {path_text}")
-    target_root = _copy_package_to_managed_root(source_root)
-    _ensure_managed_import_root()
+    import_root, target_root = _copy_package_to_managed_root(source_root)
     imported_package_id = _read_manifest_package_id(target_root)
     candidate_package_ids = _candidate_package_ids(imported_package_id, target_root.name, source_root.name)
+    _register_managed_import_root(import_root, candidate_package_ids)
     restored_package_ids = _restore_package_registration(candidate_package_ids)
     if restored_package_ids == ():
         _remove_unregistered_ids(candidate_package_ids)
@@ -440,36 +641,47 @@ def import_uploaded_source_package(files: tuple[dict[str, str], ...]) -> dict[st
         raise KeyError("涓婁紶鐩綍涓虹┖")
     managed_root = _managed_source_packages_root()
     managed_root.mkdir(parents=True, exist_ok=True)
-    target_roots: dict[str, Path] = {}
+    target_roots: list[Path] = []
     for file_payload in files:
         file_path = file_payload.get("path", "")
         content_base64 = file_payload.get("content_base64", "")
         parts = _safe_upload_parts(file_path)
-        if len(parts) == 1:
-            target_parts = ("uploaded_source_package", parts[0])
-        else:
-            target_parts = parts
-        target_path = managed_root.joinpath(*target_parts)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if not _is_uploaded_package_file(parts):
+            continue
         try:
-            target_path.write_bytes(base64.b64decode(content_base64, validate=True))
+            target_root = _write_uploaded_file(managed_root, parts, base64.b64decode(content_base64, validate=True))
         except binascii.Error as exc:
             raise ValueError(f"涓婁紶鏂囦欢鍐呭涓嶆槸鍚堟硶 base64: {file_path}") from exc
-        target_roots[target_parts[0]] = managed_root / target_parts[0]
-    _ensure_managed_import_root()
-    imported_package_ids: list[str] = []
-    for target_root in target_roots.values():
-        package_id = _read_manifest_package_id(target_root)
-        imported_package_ids.extend(_candidate_package_ids(package_id, target_root.name))
-    restored_package_ids = _restore_package_registration(tuple(imported_package_ids))
-    if restored_package_ids == ():
-        _remove_unregistered_ids(tuple(imported_package_ids))
-    packages = refresh_source_packages()
-    _record_admin_change("import_uploaded_source_package", "source_packages", {"package_ids": imported_package_ids, "restored_package_ids": list(restored_package_ids)})
-    return {
-        "import_roots": list(_runtime().list_import_roots()),
-        "packages": packages,
-    }
+        if target_root not in target_roots:
+            target_roots.append(target_root)
+    return _finish_imported_target_roots(tuple(target_roots))
+
+
+def import_source_package_archive(filename: str, content_base64: str) -> dict[str, object]:
+    if not filename.endswith(".zip"):
+        raise ValueError("只支持 zip 格式的 source package 压缩包")
+    try:
+        archive_content = base64.b64decode(content_base64, validate=True)
+    except binascii.Error as exc:
+        raise ValueError("上传压缩包内容不是合法 base64") from exc
+    upload_root = _managed_archive_upload_root() / datetime.now().strftime("archive-%Y%m%d%H%M%S%f")
+    upload_root.mkdir(parents=True, exist_ok=False)
+    target_roots: list[Path] = []
+    try:
+        archive_file = zipfile.ZipFile(BytesIO(archive_content))
+    except zipfile.BadZipFile as exc:
+        raise ValueError("上传内容不是合法 zip 压缩包") from exc
+    with archive_file:
+        for item in archive_file.infolist():
+            if item.is_dir():
+                continue
+            parts = _safe_upload_parts(item.filename)
+            if not _is_uploaded_package_file(parts):
+                continue
+            target_root = _write_uploaded_file(upload_root, parts, archive_file.read(item))
+            if target_root not in target_roots:
+                target_roots.append(target_root)
+    return _finish_imported_target_roots(tuple(target_roots))
 
 
 def unregister_source_package(package_id: str) -> dict[str, object]:
@@ -609,7 +821,8 @@ def get_capability_settings(capability_id: str) -> dict[str, object]:
 def save_capability_settings(
     capability_id: str,
     merge_strategy: str,
-    cache_enabled: bool,
+    ttl_days: int | None,
+    cache_enabled: bool | None = None,
 ) -> dict[str, object]:
     normalized_capability_id = normalize_capability_id(capability_id)
     policy = _all_policies_by_contract().get(normalized_capability_id)
@@ -618,31 +831,48 @@ def save_capability_settings(
         save_contract_policy_override(normalized_capability_id, policy.mode, policy.source_order, actual_merge_strategy)
         publish_runtime_profile("Console Capability Settings", f"更新 {normalized_capability_id} 配置")
     current_cache_policy = _cache_policy_payload(normalized_capability_id)
-    actual_cache_ttl_seconds = current_cache_policy["ttl_seconds"]
+    actual_ttl_days = _resolve_ttl_days(ttl_days, cache_enabled, current_cache_policy)
+    actual_cache_ttl_seconds = _ttl_seconds_from_days(actual_ttl_days)
     try:
-        _CACHE_ADMIN.update_policy(
-            CachePolicyUpdate(
-                capability_id=normalized_capability_id,
-                enabled=cache_enabled,
-                read_enabled=cache_enabled,
-                write_enabled=cache_enabled,
-                ttl_seconds=actual_cache_ttl_seconds,
-            )
-        )
+        capture_policy = get_capture_policy(normalized_capability_id)
+        capture_enabled = bool(capture_policy["enabled"])
     except Exception:
-        pass
+        capture_enabled = False
+    ttl_keeps_cache_enabled = _cache_enabled_by_ttl_seconds(actual_cache_ttl_seconds)
+    cache_effective = ttl_keeps_cache_enabled and not capture_enabled
+    _CACHE_ADMIN.update_policy(
+        CachePolicyUpdate(
+            capability_id=normalized_capability_id,
+            enabled=cache_effective,
+            ttl_seconds=actual_cache_ttl_seconds,
+            read_enabled=cache_effective,
+            write_enabled=ttl_keeps_cache_enabled,
+        )
+    )
     _record_admin_change(
         "save_capability_settings",
         normalized_capability_id,
         {
             "merge_strategy": merge_strategy,
-            "cache_enabled": cache_enabled,
-            "cache_read_enabled": cache_enabled,
-            "cache_write_enabled": cache_enabled,
+            "ttl_days": actual_ttl_days,
+            "cache_effective": cache_effective,
             "cache_ttl_seconds": actual_cache_ttl_seconds,
         },
     )
     return get_capability_settings(normalized_capability_id)
+
+
+def _resolve_ttl_days(ttl_days: int | None, cache_enabled: bool | None, current_cache_policy: dict[str, object]) -> int:
+    if ttl_days is not None:
+        return ttl_days
+    if cache_enabled is None:
+        return ttl_days_from_cache_policy(current_cache_policy)
+    if not cache_enabled:
+        return 0
+    current_ttl_days = ttl_days_from_cache_policy(current_cache_policy)
+    if current_ttl_days == CACHE_NEVER_EXPIRE_TTL_SECONDS or current_ttl_days > 0:
+        return current_ttl_days
+    return DEFAULT_TTL_DAYS
 
 
 def list_capture_policies() -> list[dict[str, object]]:
@@ -658,11 +888,12 @@ def get_capture_policy(capability_id: str) -> dict[str, object]:
 
 
 def save_capture_policy(capability_id: str, payload: dict[str, object]) -> dict[str, object]:
-    current = get_capture_policy(capability_id)
+    normalized_capability_id = normalize_capability_id(capability_id)
+    current = get_capture_policy(normalized_capability_id)
     schedule = _fixed_capture_schedule(payload, current)
-    return _capture_admin().update_policy(
+    updated = _capture_admin().update_policy(
         CapturePolicyPayload(
-            capability_id=capability_id,
+            capability_id=normalized_capability_id,
             enabled=schedule["enabled"],
             cadence=schedule["cadence"],
             run_time=_time_from_text("00:00:00"),
@@ -676,6 +907,8 @@ def save_capture_policy(capability_id: str, payload: dict[str, object]) -> dict[
             notes=str(payload.get("notes", current["notes"])),
         )
     )
+    _sync_cache_policy_for_capture(normalized_capability_id, bool(schedule["enabled"]))
+    return updated
 
 
 def _fixed_capture_schedule(payload: dict[str, object], current: dict[str, object]) -> dict[str, object]:
