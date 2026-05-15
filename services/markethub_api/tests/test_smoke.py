@@ -24,11 +24,12 @@ from app import app
 from docs_all import collect_all_doc_items
 from docs_paths import to_public_doc_path
 from fastapi import HTTPException
+from quotemux import QuoteMuxSettings, StockQuotesRequest
 from quotemux.infra.cache import store as cache_store
 from quotemux.capabilities import list_public_api_bindings
 from quotemux.config_runtime.runtime import reset_config_runtime_cache
 from quotemux.runtime_core.registry import get_default_source_registry
-from quotemux.models import BoardMoneyFlowItem, BoardQuoteItem, IndexMemberItem, IndexQuoteItem, NewsEventItem, NewsEventQueryResult, NewsEventSourceItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockMoneyFlowItem, StockQuoteItem
+from quotemux.models import BoardMoneyFlowItem, BoardQuoteItem, IndexMemberItem, IndexQuoteItem, NewsEventItem, NewsEventQueryResult, NewsEventSourceItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockMoneyFlowItem, StockQuoteCodeSummary, StockQuoteItem, StockQuotesMeta, StockQuotesQueryResult
 from quotemux.sources.datalake import source as datalake
 from quotemux.sources.datalake import news as datalake_news
 from quotemux.source_packages.registry import refresh_default_source_package_registry
@@ -109,8 +110,8 @@ def test_public_api_routes_are_all_bound_to_capabilities() -> None:
 
     binding_paths = [item.api_path for item in list_public_api_bindings()]
 
-    assert len(route_paths) == 78
-    assert len(binding_paths) == 78
+    assert len(route_paths) == 79
+    assert len(binding_paths) == 79
     assert sorted(route_paths) == sorted(binding_paths)
 
 
@@ -143,15 +144,13 @@ def test_openapi_endpoint() -> None:
     assert payload['openapi'].startswith('3.')
 
 
-def test_validation_error_uses_uniform_api_error_payload() -> None:
-    response = client.get('/api/stocks/quotes', params={'codes': '603158', 'limit': 10000})
-    assert response.status_code == 422
-    payload = response.json()
-    assert payload == {
-        'code': 'HTTP_422',
-        'message': 'query.limit: Input should be less than or equal to 5000',
-        'details': '',
-    }
+def test_stock_quotes_limit_has_no_artificial_upper_bound(monkeypatch) -> None:
+    monkeypatch.setattr(stocks, 'get_quotes', lambda *args: [])
+
+    response = client.get('/api/stocks/quotes', params={'codes': '603158', 'limit': 50000})
+
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_connection_diagnostics_endpoint() -> None:
@@ -666,6 +665,103 @@ def test_stock_quotes_auto_fill_missing_even_when_fill_missing_is_false(monkeypa
     assert [item.trade_time for item in items] == ['2025-03-03', '2025-03-04']
     assert ts_calls == [(['600000'], '2025-03-04', '2025-03-04')]
     assert ef_calls == [(['600000'], '2025-03-04', '2025-03-04')]
+
+
+def test_stock_quotes_query_marks_single_intraday_range_incomplete(monkeypatch) -> None:
+    monkeypatch.setattr(
+        qm_stocks._datalake,
+        'get_stock_quotes',
+        lambda codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust: [
+            StockQuoteItem(code='300001', trade_time='2026-05-14 15:00:00', freq='30m', close=10.0, adjust='none')
+        ],
+    )
+    monkeypatch.setattr(
+        qm_stocks._datalake_ref,
+        'get_trading_calendar',
+        lambda exchange, start_date, end_date, is_open: [
+            TradingCalendarItem(exchange='SSE', trade_date='2026-05-14', is_open=True),
+            TradingCalendarItem(exchange='SSE', trade_date='2026-05-15', is_open=True),
+        ],
+    )
+    monkeypatch.setattr(qm_stocks._opentdx_provider, 'get_stock_quotes', lambda *args, **kwargs: [])
+    monkeypatch.setattr(qm_stocks._efinance_provider, 'get_stock_quotes', lambda *args, **kwargs: [])
+    monkeypatch.setattr(qm_stocks._mootdx_provider, 'get_stock_quotes', lambda *args, **kwargs: [])
+    monkeypatch.setattr(qm_stocks._akshare_provider, 'get_stock_quotes', lambda *args, **kwargs: [])
+
+    result = qm_stocks.QuoteMuxStocks(QuoteMuxSettings()).get_quotes_query_result(
+        StockQuotesRequest(codes=['300001'], freq='30m', start_date='2026-03-16', end_date='2026-05-15', limit=5000)
+    )
+
+    assert result.meta.complete is False
+    assert result.meta.codes[0].code == '300001'
+    assert result.meta.codes[0].last_trade_time == '2026-05-14 15:00:00'
+    assert result.meta.codes[0].missing_trade_dates == ['2026-05-15']
+
+
+def test_stock_quotes_query_reports_batch_code_ranges(monkeypatch) -> None:
+    codes = [f'30000{index}' for index in range(1, 6)]
+    monkeypatch.setattr(
+        qm_stocks._datalake,
+        'get_stock_quotes',
+        lambda request_codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust: [
+            StockQuoteItem(code=code, trade_time=trade_time, freq='30m', close=10.0, adjust='none')
+            for code in request_codes
+            for trade_time in ['2026-05-14 15:00:00', '2026-05-15 15:00:00']
+        ],
+    )
+    monkeypatch.setattr(
+        qm_stocks._datalake_ref,
+        'get_trading_calendar',
+        lambda exchange, start_date, end_date, is_open: [
+            TradingCalendarItem(exchange='SSE', trade_date='2026-05-14', is_open=True),
+            TradingCalendarItem(exchange='SSE', trade_date='2026-05-15', is_open=True),
+        ],
+    )
+    monkeypatch.setattr(qm_stocks._opentdx_provider, 'get_stock_quotes', lambda *args, **kwargs: pytest.fail('数据完整时不应补源'))
+
+    result = qm_stocks.QuoteMuxStocks(QuoteMuxSettings()).get_quotes_query_result(
+        StockQuotesRequest(codes=codes, freq='30m', start_date='2026-03-16', end_date='2026-05-15')
+    )
+
+    assert result.meta.complete is True
+    assert result.meta.total_rows == 10
+    assert [(item.code, item.row_count, item.first_trade_time, item.last_trade_time, item.complete) for item in result.meta.codes] == [
+        (code, 2, '2026-05-14 15:00:00', '2026-05-15 15:00:00', True)
+        for code in codes
+    ]
+
+
+def test_stock_quotes_query_endpoint_filters_item_fields(monkeypatch) -> None:
+    monkeypatch.setattr(
+        stocks,
+        'get_quotes_query_result',
+        lambda *args: StockQuotesQueryResult(
+            items=[StockQuoteItem(code='600000', trade_time='2026-05-15', freq='1d', close=10.0, volume=100.0)],
+            meta=StockQuotesMeta(
+                total_rows=1,
+                returned_rows=1,
+                complete=True,
+                truncated=False,
+                codes=[
+                    StockQuoteCodeSummary(
+                        code='600000',
+                        row_count=1,
+                        first_trade_time='2026-05-15',
+                        last_trade_time='2026-05-15',
+                        complete=True,
+                        truncated=False,
+                    )
+                ],
+            ),
+        ),
+    )
+
+    response = client.get('/api/stocks/quotes/query', params={'code': '600000', 'fields': 'code,close'})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['items'] == [{'code': '600000', 'close': 10.0}]
+    assert payload['meta']['codes'][0]['last_trade_time'] == '2026-05-15'
 
 
 def test_stock_quotes_daily_range_does_not_fill_weekend_gaps(monkeypatch) -> None:

@@ -5,7 +5,7 @@ from fastapi import HTTPException
 
 from core.config import DEFAULT_LIMIT
 from quotemux import QuoteMux, StockDailySnapshotRequest, StockQuotesRequest
-from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialStatementItem, StockManagerItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockRiskFlagItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
+from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialStatementItem, StockManagerItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
 from services.common import ensure_limit, require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
 
 
@@ -23,7 +23,7 @@ def get_quotes(
     end_time: str,
     count: int | None,
     adjust: str,
-    limit: int,
+    limit: int | None,
     skip_suspended: bool,
     fill_missing: bool,
 ) -> list[StockQuoteItem]:
@@ -39,7 +39,39 @@ def get_quotes(
             end_time=end_time,
             count=count,
             adjust=require_adjust(adjust),
-            limit=ensure_limit(limit or DEFAULT_LIMIT),
+            limit=limit,
+        )
+    )
+
+
+def get_quotes_query_result(
+    code: str,
+    codes: str,
+    freq: str,
+    trade_date: str,
+    start_date: str,
+    end_date: str,
+    start_time: str,
+    end_time: str,
+    count: int | None,
+    adjust: str,
+    limit: int | None,
+    skip_suspended: bool,
+    fill_missing: bool,
+) -> StockQuotesQueryResult:
+    del skip_suspended, fill_missing
+    return _QUOTEMUX.stocks.get_quotes_query_result(
+        StockQuotesRequest(
+            codes=require_codes(code, codes),
+            freq=require_quote_freq(freq),
+            trade_date=trade_date,
+            start_date=start_date,
+            end_date=end_date,
+            start_time=start_time,
+            end_time=end_time,
+            count=count,
+            adjust=require_adjust(adjust),
+            limit=limit,
         )
     )
 

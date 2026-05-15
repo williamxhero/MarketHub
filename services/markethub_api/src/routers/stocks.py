@@ -51,6 +51,15 @@ def _filter_items(loader: Callable[..., list[object]], args: tuple[object, ...],
     return filter_response_fields(items, fields, allowed_fields)
 
 
+def _filter_quote_query_result(loader: Callable[..., object], args: tuple[object, ...], fields: str, allowed_fields: set[str]) -> dict[str, object]:
+    result = loader(*args)
+    payload = result.model_dump()
+    if fields == "":
+        return payload
+    filtered_items = filter_response_fields(result.items, fields, allowed_fields)
+    return {"items": filtered_items, "meta": payload["meta"]}
+
+
 @router.get("/api/stocks/quotes")
 async def api_stock_quotes(
     code: str = Query(""),
@@ -64,12 +73,33 @@ async def api_stock_quotes(
     count: int | None = Query(None, ge=1),
     adjust: str = Query("none"),
     fields: str = Query(""),
-    limit: int = Query(200, ge=1, le=5000),
+    limit: int | None = Query(None, ge=1),
     skip_suspended: bool = Query(True),
     fill_missing: bool = Query(False),
 ) -> list[dict[str, object]]:
     args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, fill_missing)
     return await run_data_task(_filter_items, stocks.get_quotes, args, fields, STOCK_QUOTE_FIELDS)
+
+
+@router.get("/api/stocks/quotes/query")
+async def api_stock_quotes_query(
+    code: str = Query(""),
+    codes: str = Query(""),
+    freq: str = Query("1d"),
+    trade_date: str = Query(""),
+    start_date: str = Query(""),
+    end_date: str = Query(""),
+    start_time: str = Query(""),
+    end_time: str = Query(""),
+    count: int | None = Query(None, ge=1),
+    adjust: str = Query("none"),
+    fields: str = Query(""),
+    limit: int | None = Query(None, ge=1),
+    skip_suspended: bool = Query(True),
+    fill_missing: bool = Query(False),
+) -> dict[str, object]:
+    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, fill_missing)
+    return await run_data_task(_filter_quote_query_result, stocks.get_quotes_query_result, args, fields, STOCK_QUOTE_FIELDS)
 
 
 @router.get("/api/stocks/quotes/daily-snapshot")
