@@ -262,6 +262,62 @@ def test_datalake_stock_quotes_1d_reads_fact_stock_daily_1d_and_supports_bjse(mo
     assert items[0].volume == 12340.0
 
 
+def _stock_30m_rows(code: str, trade_dates: list[str]) -> list[dict[str, object]]:
+    bar_times = ['09:30:00', '10:00:00', '10:30:00', '11:00:00', '11:30:00', '13:00:00', '13:30:00', '14:00:00', '14:30:00', '15:00:00']
+    return [
+        {'code': code, 'trade_time': f'{trade_date} {bar_time}', 'open': 10.0, 'high': 10.2, 'low': 9.8, 'close': 10.1, 'volume': 100, 'amount': 1000.0}
+        for trade_date in trade_dates
+        for bar_time in bar_times
+    ]
+
+
+def test_datalake_stock_quotes_30m_uses_local_30m_without_1m_fallback(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_load_stock_intraday_frame(codes: list[str], start_time: object, end_time: object, freq: str = '1m') -> pd.DataFrame:
+        calls.append(freq)
+        if freq == '30m':
+            return pd.DataFrame(_stock_30m_rows('300001', ['2026-05-15']))
+        return pd.DataFrame()
+
+    monkeypatch.setattr(datalake, 'load_stock_intraday_frame', fake_load_stock_intraday_frame)
+    monkeypatch.setattr(
+        datalake,
+        'get_trading_calendar',
+        lambda exchange, start_date, end_date, is_open: [TradingCalendarItem(exchange='SSE', trade_date='2026-05-15', is_open=True)],
+    )
+
+    items = datalake.get_stock_quotes(['300001'], '30m', '', '2026-05-15', '2026-05-15', '', '', None, 'none')
+
+    assert len(items) == 10
+    assert calls == ['30m']
+
+
+def test_datalake_stock_quotes_30m_fills_local_30m_holes_from_1m(monkeypatch) -> None:
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_load_stock_intraday_frame(codes: list[str], start_time: object, end_time: object, freq: str = '1m') -> pd.DataFrame:
+        calls.append((freq, codes))
+        if freq == '30m':
+            return pd.DataFrame(_stock_30m_rows('300001', ['2026-05-14']))
+        return pd.DataFrame(_stock_30m_rows('300001', ['2026-05-15']))
+
+    monkeypatch.setattr(datalake, 'load_stock_intraday_frame', fake_load_stock_intraday_frame)
+    monkeypatch.setattr(
+        datalake,
+        'get_trading_calendar',
+        lambda exchange, start_date, end_date, is_open: [
+            TradingCalendarItem(exchange='SSE', trade_date='2026-05-14', is_open=True),
+            TradingCalendarItem(exchange='SSE', trade_date='2026-05-15', is_open=True),
+        ],
+    )
+
+    items = datalake.get_stock_quotes(['300001'], '30m', '', '2026-05-14', '2026-05-15', '', '', None, 'none')
+
+    assert len(items) == 20
+    assert calls == [('30m', ['300001']), ('1m', ['300001'])]
+
+
 def test_datalake_stock_daily_snapshot_reads_fact_stock_daily_1d_and_supports_bjse(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -696,6 +752,7 @@ def test_stock_quotes_query_marks_single_intraday_range_incomplete(monkeypatch) 
     assert result.meta.codes[0].code == '300001'
     assert result.meta.codes[0].last_trade_time == '2026-05-14 15:00:00'
     assert result.meta.codes[0].missing_trade_dates == ['2026-05-15']
+    assert '2026-05-15 15:00:00' in result.meta.codes[0].missing_trade_times
 
 
 def test_stock_quotes_query_reports_batch_code_ranges(monkeypatch) -> None:
@@ -704,9 +761,9 @@ def test_stock_quotes_query_reports_batch_code_ranges(monkeypatch) -> None:
         qm_stocks._datalake,
         'get_stock_quotes',
         lambda request_codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust: [
-            StockQuoteItem(code=code, trade_time=trade_time, freq='30m', close=10.0, adjust='none')
+            StockQuoteItem(code=code, trade_time=str(row['trade_time']), freq='30m', close=10.0, adjust='none')
             for code in request_codes
-            for trade_time in ['2026-05-14 15:00:00', '2026-05-15 15:00:00']
+            for row in _stock_30m_rows(code, ['2026-05-14', '2026-05-15'])
         ],
     )
     monkeypatch.setattr(
@@ -724,9 +781,9 @@ def test_stock_quotes_query_reports_batch_code_ranges(monkeypatch) -> None:
     )
 
     assert result.meta.complete is True
-    assert result.meta.total_rows == 10
-    assert [(item.code, item.row_count, item.first_trade_time, item.last_trade_time, item.complete) for item in result.meta.codes] == [
-        (code, 2, '2026-05-14 15:00:00', '2026-05-15 15:00:00', True)
+    assert result.meta.total_rows == 100
+    assert [(item.code, item.row_count, item.expected_bar_count, item.actual_bar_count, item.first_trade_time, item.last_trade_time, item.complete) for item in result.meta.codes] == [
+        (code, 20, 20, 20, '2026-05-14 09:30:00', '2026-05-15 15:00:00', True)
         for code in codes
     ]
 
@@ -897,7 +954,7 @@ def test_stock_quotes_intraday_service_uses_datalake_before_provider_fill(monkey
     items = stocks.get_quotes('600000', '', '30m', '', '2026-03-31', '2026-04-01', '', '', None, 'none', 20, True, False)
 
     assert [(item.trade_time, item.close) for item in items] == [('2026-03-31 09:30:00', 10.0), ('2026-04-01 09:30:00', 10.5)]
-    assert op_calls == [(['600000'], '2026-04-01', '2026-04-01')]
+    assert op_calls == [(['600000'], '2026-03-31', '2026-04-01')]
 
 
 def test_index_members_service_degrades_to_b3_and_only_keeps_member_shape(monkeypatch) -> None:

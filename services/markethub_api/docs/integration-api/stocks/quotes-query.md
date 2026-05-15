@@ -47,11 +47,14 @@
 - `meta.codes`（`list[StockQuoteCodeSummary]`）：每只股票的完整性统计。
 - `meta.codes.code`（`str`）：股票代码。
 - `meta.codes.row_count`（`int`）：该股票本次实际返回行数。
+- `meta.codes.expected_bar_count`（`int`）：该股票在请求窗口内按当前频率预期应有的 bar 数；当前对 `30m` 提供 bar 级统计。
+- `meta.codes.actual_bar_count`（`int`）：该股票在请求窗口内实际命中的预期 bar 数；当前对 `30m` 提供 bar 级统计。
 - `meta.codes.first_trade_time`（`str`）：该股票本次实际返回的第一条时间。
 - `meta.codes.last_trade_time`（`str`）：该股票本次实际返回的最后一条时间。
 - `meta.codes.complete`（`bool`）：该股票结果是否完整。
 - `meta.codes.truncated`（`bool`）：该股票结果是否因 `limit` 被裁剪。
 - `meta.codes.missing_trade_dates`（`list[str]`）：该股票在请求交易日范围内缺失的交易日。
+- `meta.codes.missing_trade_times`（`list[str]`）：该股票在请求窗口内缺失的具体 bar 时间；当前对 `30m` 提供 bar 级统计。
 
 ## 补充说明
 
@@ -59,5 +62,6 @@
 - 传入 `limit` 时，`limit` 表示调用方主动裁剪总返回条数；如果发生裁剪，`meta.truncated=true` 且 `meta.complete=false`。
 - `fields` 只裁剪 `items` 内的行情字段，不裁剪 `meta`。
 - `meta.codes.complete=false` 时，调用方不应把该股票用于需要完整窗口的扫描。
-- 30m、60m 等分钟线完整性第一阶段按交易日判断，后续可继续扩展到每个交易日的 bar 级缺失。
+- `30m` 分钟线完整性按 bar 级判断；缺失一根 30m K 线时，`meta.codes.complete=false` 并返回具体 `missing_trade_times`。
+- 本地已有的行情会直接用于结果；只有本地缺失的日期或 bar 所在日期会进入外源补缺。
 - ChannelN 这类需要预热 K 线的扫描应优先使用本接口，并检查 `meta.complete` 和每只股票的 `complete`。
