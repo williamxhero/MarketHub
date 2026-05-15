@@ -4,6 +4,7 @@ from datetime import datetime
 import inspect
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -26,10 +27,12 @@ from fastapi import HTTPException
 from quotemux.infra.cache import store as cache_store
 from quotemux.capabilities import list_public_api_bindings
 from quotemux.config_runtime.runtime import reset_config_runtime_cache
+from quotemux.runtime_core.registry import get_default_source_registry
 from quotemux.models import BoardMoneyFlowItem, BoardQuoteItem, IndexMemberItem, IndexQuoteItem, NewsEventItem, NewsEventQueryResult, NewsEventSourceItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockMoneyFlowItem, StockQuoteItem
 from quotemux.sources.datalake import source as datalake
 from quotemux.sources.datalake import news as datalake_news
-from quotemux.sources.tushare import stocks as tushare_stocks
+from quotemux.source_packages.registry import refresh_default_source_package_registry
+from quotemux_packages.tushare import stocks as tushare_stocks
 import quotemux.boards as qm_boards
 import quotemux.indexes as qm_indexes
 import quotemux.markets as qm_markets
@@ -55,8 +58,12 @@ PLACEHOLDER_TEXTS = (
 def isolate_quotemux_runtime(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QUOTEMUX_RUNTIME_ROOT", str(tmp_path / "quotemux-runtime"))
     reset_config_runtime_cache()
+    refresh_default_source_package_registry()
+    get_default_source_registry.cache_clear()
     yield
     reset_config_runtime_cache()
+    refresh_default_source_package_registry()
+    get_default_source_registry.cache_clear()
 
 
 def extract_section_lines(text: str, title: str) -> list[str]:
@@ -657,8 +664,8 @@ def test_stock_quotes_auto_fill_missing_even_when_fill_missing_is_false(monkeypa
     items = stocks.get_quotes('600000', '', '1d', '', '2025-03-03', '2025-03-04', '', '', None, 'none', 200, True, False)
 
     assert [item.trade_time for item in items] == ['2025-03-03', '2025-03-04']
-    assert ts_calls == [(['600000'], '2025-03-03', '2025-03-04')]
-    assert ef_calls == [(['600000'], '2025-03-03', '2025-03-04')]
+    assert ts_calls == [(['600000'], '2025-03-04', '2025-03-04')]
+    assert ef_calls == [(['600000'], '2025-03-04', '2025-03-04')]
 
 
 def test_stock_quotes_daily_range_does_not_fill_weekend_gaps(monkeypatch) -> None:
@@ -695,8 +702,8 @@ def test_stock_quotes_daily_range_does_not_fill_weekend_gaps(monkeypatch) -> Non
     items = stocks.get_quotes('000032', '', '1d', '', '2026-04-07', '2026-04-14', '', '', None, 'none', 5000, True, False)
 
     assert [item.trade_time for item in items] == ['2026-04-07', '2026-04-08', '2026-04-09', '2026-04-10', '2026-04-13', '2026-04-14']
-    assert ef_calls == [(['000032'], '2026-04-07', '2026-04-14')]
-    assert ts_calls == [(['000032'], '2026-04-07', '2026-04-14')]
+    assert ef_calls == []
+    assert ts_calls == []
 
 
 def test_market_daily_snapshot_service_auto_fills_missing_from_ts_then_ef_after_datalake(monkeypatch) -> None:
@@ -730,8 +737,8 @@ def test_market_daily_snapshot_service_auto_fills_missing_from_ts_then_ef_after_
     items = stocks.get_market_daily_snapshot('2025-03-03', 10, 0)
 
     assert [(item.code, item.close) for item in items] == [('430001', 9.0), ('600000', 10.0), ('830001', 8.0)]
-    assert ts_calls == [['430001', '600000', '830001']]
-    assert ef_calls == [['430001', '600000', '830001']]
+    assert ts_calls == [['430001', '830001']]
+    assert ef_calls == [['430001', '830001']]
 
 
 def test_stock_quotes_intraday_service_degrades_from_opentdx_to_efinance(monkeypatch) -> None:
@@ -739,6 +746,7 @@ def test_stock_quotes_intraday_service_degrades_from_opentdx_to_efinance(monkeyp
     ef_calls: list[tuple[list[str], str, str]] = []
 
     monkeypatch.setattr(qm_stocks._datalake, 'get_stock_quotes', lambda *args, **kwargs: [])
+    monkeypatch.setattr(qm_stocks._datalake_ref, 'get_trading_calendar', lambda exchange, start_date, end_date, is_open: [TradingCalendarItem(exchange='SSE', trade_date='2026-04-03', is_open=True)])
     monkeypatch.setattr(
         qm_stocks._opentdx_provider,
         'get_stock_quotes',
@@ -759,6 +767,41 @@ def test_stock_quotes_intraday_service_degrades_from_opentdx_to_efinance(monkeyp
     assert [(item.code, item.trade_time) for item in items] == [('600000', '2026-04-03 09:31:00')]
     assert op_calls == [(['600000'], '2026-04-03', '2026-04-03')]
     assert ef_calls == [(['600000'], '2026-04-03', '2026-04-03')]
+
+
+def test_stock_quotes_intraday_service_uses_datalake_before_provider_fill(monkeypatch) -> None:
+    op_calls: list[tuple[list[str], str, str]] = []
+
+    monkeypatch.setattr(
+        qm_stocks._datalake,
+        'get_stock_quotes',
+        lambda codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust: [
+            StockQuoteItem(code='600000', trade_time='2026-03-31 09:30:00', freq='30m', close=10.0, adjust='none')
+        ],
+    )
+    monkeypatch.setattr(
+        qm_stocks._datalake_ref,
+        'get_trading_calendar',
+        lambda exchange, start_date, end_date, is_open: [
+            TradingCalendarItem(exchange='SSE', trade_date='2026-03-31', is_open=True),
+            TradingCalendarItem(exchange='SSE', trade_date='2026-04-01', is_open=True),
+        ],
+    )
+    monkeypatch.setattr(
+        qm_stocks._opentdx_provider,
+        'get_stock_quotes',
+        lambda codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust: op_calls.append((codes, start_date, end_date)) or [
+            StockQuoteItem(code='600000', trade_time='2026-04-01 09:30:00', freq='30m', close=10.5, adjust='none')
+        ],
+    )
+    monkeypatch.setattr(qm_stocks._efinance_provider, 'get_stock_quotes', lambda *args, **kwargs: [])
+    monkeypatch.setattr(qm_stocks._mootdx_provider, 'get_stock_quotes', lambda *args, **kwargs: [])
+    monkeypatch.setattr(qm_stocks._akshare_provider, 'get_stock_quotes', lambda *args, **kwargs: [])
+
+    items = stocks.get_quotes('600000', '', '30m', '', '2026-03-31', '2026-04-01', '', '', None, 'none', 20, True, False)
+
+    assert [(item.trade_time, item.close) for item in items] == [('2026-03-31 09:30:00', 10.0), ('2026-04-01 09:30:00', 10.5)]
+    assert op_calls == [(['600000'], '2026-04-01', '2026-04-01')]
 
 
 def test_index_members_service_degrades_to_b3_and_only_keeps_member_shape(monkeypatch) -> None:
@@ -828,7 +871,7 @@ def test_trading_calendar_service_auto_fills_missing_dates_from_ts(monkeypatch) 
     items = markets.get_trading_calendar('SSE', '2025-03-03', '2025-03-05', True)
 
     assert [item.trade_date for item in items] == ['2025-03-03', '2025-03-04', '2025-03-05']
-    assert ts_calls == [('2025-03-03', '2025-03-05')]
+    assert ts_calls == [('2025-03-04', '2025-03-05')]
 
 
 def test_trading_calendar_service_uses_akshare_emergency_after_tushare_gap(monkeypatch) -> None:
@@ -881,6 +924,26 @@ def test_daily_basic_service_remains_tushare_only(monkeypatch) -> None:
     assert ak_calls == []
 
 
+def test_daily_basic_service_reads_store_before_tushare(monkeypatch) -> None:
+    monkeypatch.setattr(
+        qm_stocks,
+        'load_store_result',
+        lambda capability_id, request_identity, model_type: (
+            [StockDailyBasicItem(code='600000', trade_date='2025-03-03', pe=12.0)],
+            SimpleNamespace(hit=True, partial_hit=False, status='hit'),
+        ),
+    )
+    monkeypatch.setattr(
+        qm_stocks._tushare_provider,
+        'get_stock_daily_basic',
+        lambda code, codes, trade_date, start_date, end_date: pytest.fail('Store 命中后不应调用数据源'),
+    )
+
+    items = stocks.get_daily_basic('600000', '', '2025-03-03', '', '')
+
+    assert [(item.code, item.trade_date, item.pe) for item in items] == [('600000', '2025-03-03', 12.0)]
+
+
 def test_board_money_flow_service_only_fills_missing_date_ranges_from_ts(monkeypatch) -> None:
     ts_calls: list[tuple[str, str]] = []
 
@@ -910,7 +973,27 @@ def test_board_money_flow_service_only_fills_missing_date_ranges_from_ts(monkeyp
     items = boards.get_money_flow('885338', '', '2025-03-03', '2025-03-04', 'board')
 
     assert [(item.trade_date, item.net_inflow) for item in items] == [('2025-03-03', 1.0), ('2025-03-04', 2.0)]
-    assert ts_calls == [('2025-03-03', '2025-03-04')]
+    assert ts_calls == [('2025-03-04', '2025-03-04')]
+
+
+def test_board_money_flow_service_reads_store_before_sources(monkeypatch) -> None:
+    monkeypatch.setattr(
+        qm_boards,
+        'load_store_result',
+        lambda capability_id, request_identity, model_type: (
+            [BoardMoneyFlowItem(board_code='885338', trade_date='2025-03-03', scope='board', net_inflow=8.0)],
+            SimpleNamespace(hit=True, partial_hit=False, status='hit'),
+        ),
+    )
+    monkeypatch.setattr(
+        qm_boards._datalake,
+        'get_board_money_flow',
+        lambda board_code, trade_date, start_date, end_date, scope: pytest.fail('Store 命中后不应调用 datalake'),
+    )
+
+    items = boards.get_money_flow('885338', '2025-03-03', '', '', 'board')
+
+    assert [(item.board_code, item.trade_date, item.net_inflow) for item in items] == [('885338', '2025-03-03', 8.0)]
 
 
 def test_board_money_flow_service_skips_weekend_gap_fill(monkeypatch) -> None:
@@ -941,7 +1024,7 @@ def test_board_money_flow_service_skips_weekend_gap_fill(monkeypatch) -> None:
     items = boards.get_money_flow('885338', '', '2026-04-07', '2026-04-14', 'board')
 
     assert [item.trade_date for item in items] == ['2026-04-07', '2026-04-08', '2026-04-09', '2026-04-10', '2026-04-13', '2026-04-14']
-    assert ts_calls == [('2026-04-07', '2026-04-14')]
+    assert ts_calls == []
 
 
 def test_stock_money_flow_service_only_fills_missing_date_ranges_from_ts(monkeypatch) -> None:
@@ -973,7 +1056,7 @@ def test_stock_money_flow_service_only_fills_missing_date_ranges_from_ts(monkeyp
     items = stocks.get_money_flow('600000', '', '2025-03-03', '2025-03-04', 'summary')
 
     assert [(item.trade_date, item.net_inflow) for item in items] == [('2025-03-03', 1.0), ('2025-03-04', 2.0)]
-    assert ts_calls == [('2025-03-03', '2025-03-04')]
+    assert ts_calls == [('2025-03-04', '2025-03-04')]
 
 
 def test_stock_money_flow_service_skips_weekend_gap_fill(monkeypatch) -> None:
@@ -1004,7 +1087,7 @@ def test_stock_money_flow_service_skips_weekend_gap_fill(monkeypatch) -> None:
     items = stocks.get_money_flow('600000', '', '2026-04-07', '2026-04-14', 'summary')
 
     assert [item.trade_date for item in items] == ['2026-04-07', '2026-04-08', '2026-04-09', '2026-04-10', '2026-04-13', '2026-04-14']
-    assert ts_calls == [('2026-04-07', '2026-04-14')]
+    assert ts_calls == []
 
 
 def test_index_quotes_service_only_fills_missing_ranges_from_providers(monkeypatch) -> None:
@@ -1045,8 +1128,8 @@ def test_index_quotes_service_only_fills_missing_ranges_from_providers(monkeypat
     items = indexes.get_quotes('000001', '', '1d', '', '2025-03-03', '2025-03-05', None, 20)
 
     assert [(item.trade_time, item.close) for item in items] == [('2025-03-03', 3300.0), ('2025-03-04', 3310.0), ('2025-03-05', 3320.0)]
-    assert ts_calls == [(['000001'], '2025-03-03', '2025-03-05')]
-    assert ef_calls == [(['000001'], '2025-03-03', '2025-03-05')]
+    assert ts_calls == [(['000001'], '2025-03-04', '2025-03-05')]
+    assert ef_calls == [(['000001'], '2025-03-04', '2025-03-05')]
 
 
 def test_index_quotes_service_skips_weekend_gap_fill(monkeypatch) -> None:
@@ -1083,8 +1166,8 @@ def test_index_quotes_service_skips_weekend_gap_fill(monkeypatch) -> None:
     items = indexes.get_quotes('000001', '', '1d', '', '2026-04-07', '2026-04-14', None, 20)
 
     assert [item.trade_time for item in items] == ['2026-04-07', '2026-04-08', '2026-04-09', '2026-04-10', '2026-04-13', '2026-04-14']
-    assert ef_calls == [(['000001'], '2026-04-07', '2026-04-14')]
-    assert ts_calls == [(['000001'], '2026-04-07', '2026-04-14')]
+    assert ef_calls == []
+    assert ts_calls == []
 
 
 def test_quotes_doc_mentions_automatic_gap_fill() -> None:

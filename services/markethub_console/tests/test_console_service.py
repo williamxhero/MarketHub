@@ -43,17 +43,26 @@ def test_console_contains_capability_editor_modal() -> None:
     assert "Merge Strategy" in response.text
     assert "TTL 缓存（天）" in response.text
     assert "id=\"cache-ttl-days\"" in response.text
+    assert "id=\"cache-permanent\"" in response.text
+    assert "永久缓存" in response.text
+    assert "永久保存" in response.text
+    assert "markethub.console.manual_permanent." in response.text
+    assert "restoreManualPermanent" in response.text
     assert "DEFAULT_TTL_DAYS = 365" in response.text
+    assert "CACHE_NEVER_EXPIRE_TTL_DAYS = -1" in response.text
     assert "ttl_days" in response.text
     assert "定时更新" in response.text
-    assert "无缓存" in response.text
+    assert "无缓存" not in response.text
     assert ">无</label>" in response.text
     assert "不更新" not in response.text
     assert "api-badges" in response.text
+    assert "renderApiDocLinks" in response.text
+    assert '<a href="${href}">${path}</a>' in response.text
     assert "renderCapabilityBadges" in response.text
     assert "renderCadenceBadge" in response.text
+    assert "ttlLabelFromSeconds" in response.text
     assert "cadenceLabel" in response.text
-    assert "存 ${escapeHtml(String(ttlDays))}天" in response.text
+    assert "存 ${escapeHtml(ttlLabel)}" in response.text
     assert "停" not in response.text
     assert "capture-schedule-option" in response.text
     assert "每月最后一天" in response.text

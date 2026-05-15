@@ -443,6 +443,15 @@
       word-break: break-word;
     }
 
+    .api-paths a {
+      color: #0f5f89;
+      text-decoration: none;
+    }
+
+    .api-paths a:hover {
+      text-decoration: underline;
+    }
+
     .empty-state {
       padding: 16px 0;
       color: var(--muted);
@@ -555,8 +564,13 @@
       min-width: 0;
     }
 
-    .ttl-control input {
+    .ttl-control > input {
+      flex: 1 1 120px;
       min-width: 0;
+    }
+
+    .ttl-permanent-check {
+      flex: 0 0 auto;
     }
 
     .muted-note {
@@ -711,10 +725,10 @@
             <span class="field-label">Merge Strategy</span>
             <select id="capability-merge-strategy"></select>
           </label>
-          <label class="field">
+          <div class="field">
             <span class="field-label">TTL 缓存（天）</span>
-            <span class="ttl-control"><input id="cache-ttl-days" type="number" min="0" step="1" /><span id="cache-effective-note" class="muted-note" hidden>无缓存</span></span>
-          </label>
+            <span class="ttl-control"><input id="cache-ttl-days" type="text" inputmode="numeric" /><label class="inline-check ttl-permanent-check"><input id="cache-permanent" type="checkbox" />永久缓存</label></span>
+          </div>
           <div class="field full">
             <span class="field-label">定时更新</span>
             <div class="schedule-options" id="capture-schedule-options">
@@ -768,6 +782,8 @@
 
   <script>
     const DEFAULT_TTL_DAYS = 365;
+    const CACHE_NEVER_EXPIRE_TTL_DAYS = -1;
+    const CACHE_PERMANENT_LABEL = "永久保存";
     const summary = document.getElementById("summary");
     const packageList = document.getElementById("package-list");
     const matrixWrap = document.getElementById("matrix-wrap");
@@ -781,7 +797,7 @@
     const capabilityApiPaths = document.getElementById("capability-api-paths");
     const capabilityMergeStrategy = document.getElementById("capability-merge-strategy");
     const cacheTtlDays = document.getElementById("cache-ttl-days");
-    const cacheEffectiveNote = document.getElementById("cache-effective-note");
+    const cachePermanent = document.getElementById("cache-permanent");
     const captureScheduleOptions = Array.from(document.querySelectorAll(".capture-schedule-option"));
     const captureWindowCount = document.getElementById("capture-window-count");
     const captureBatchSize = document.getElementById("capture-batch-size");
@@ -795,6 +811,8 @@
     let matrixPayload = { packages: [], capabilities: [] };
     let activeCapabilityId = "";
     let activeCapturePolicy = {};
+    let rememberedTtlDays = String(DEFAULT_TTL_DAYS);
+    let activeTtlDays = DEFAULT_TTL_DAYS;
 
     async function loadConsoleConfig() {
       const response = await fetch("/api/console/config");
@@ -909,6 +927,22 @@
       return `<span class="cadence-badge" title="${escapeHtml(cadenceTitle(policy))}">${escapeHtml(cadenceLabel(policy))}</span>`;
     }
 
+    function ttlLabelFromSeconds(ttlSeconds, ttlDays) {
+      if (ttlSeconds === -1) {
+        return "永不过期";
+      }
+      if (Number.isFinite(ttlSeconds) && ttlSeconds > 0) {
+        if (ttlSeconds < 3600) {
+          return `${Math.ceil(ttlSeconds / 60)}分钟`;
+        }
+        if (ttlSeconds < 86400) {
+          return `${Math.ceil(ttlSeconds / 3600)}小时`;
+        }
+        return `${Math.ceil(ttlSeconds / 86400)}天`;
+      }
+      return `${ttlDays}天`;
+    }
+
     function renderCapabilityBadges(capability, capturePolicy) {
       const cachePolicy = capability.cache_policy || {};
       if (capturePolicy && capturePolicy.enabled) {
@@ -916,16 +950,27 @@
         return `<span class="api-badges" aria-label="${escapeHtml(cadenceTitle(capturePolicy))}">${cadenceBadge}</span>`;
       }
       const ttlDays = Number.parseInt(capability.ttl_days ?? cachePolicy.ttl_days ?? DEFAULT_TTL_DAYS, 10);
+      const ttlSeconds = Number.parseInt(cachePolicy.ttl_seconds ?? 0, 10);
       const cacheEnabled = Boolean(capability.cache_effective || cachePolicy.enabled);
-      if (!cacheEnabled || !Number.isInteger(ttlDays) || ttlDays <= 0) {
+      const ttlVisible = ttlSeconds === -1 || ttlDays === -1 || ttlDays > 0;
+      if (!cacheEnabled || !Number.isInteger(ttlDays) || !ttlVisible) {
         return "";
       }
-      const cacheTitle = `TTL 缓存：${ttlDays}天`;
+      const ttlLabel = ttlLabelFromSeconds(ttlSeconds, ttlDays);
+      const cacheTitle = `TTL 缓存：${ttlLabel}`;
       return `
         <span class="api-badges" aria-label="${escapeHtml(cacheTitle)}">
-          <span class="cache-badge is-on" title="${escapeHtml(cacheTitle)}">存 ${escapeHtml(String(ttlDays))}天</span>
+          <span class="cache-badge is-on" title="${escapeHtml(cacheTitle)}">存 ${escapeHtml(ttlLabel)}</span>
         </span>
       `;
+    }
+
+    function renderApiDocLinks(capability) {
+      return (capability.api_docs || []).map((apiDoc) => {
+        const path = escapeHtml(apiDoc.path);
+        const href = escapeHtml(apiDoc.href);
+        return `<a href="${href}">${path}</a>`;
+      }).join(", ");
     }
 
     function renderSourceHeader(sourcePackage) {
@@ -996,7 +1041,7 @@
             </td>
           `;
         }).join("");
-        const apiPaths = (capability.api_paths || []).map((path) => escapeHtml(path)).join(", ");
+        const apiPaths = renderApiDocLinks(capability);
         const badges = renderCapabilityBadges(capability, policiesByCapability[capability.capability_id]);
         return `
           <tr>
@@ -1040,6 +1085,8 @@
     function fillCapabilityEditor(payload) {
       activeCapabilityId = payload.capability_id || "";
       const cachePolicy = payload.cache_policy || {};
+      const ttlDays = Number.parseInt(payload.ttl_days ?? DEFAULT_TTL_DAYS, 10);
+      activeTtlDays = ttlDays;
       capabilityMetaId.textContent = payload.capability_id || "";
       capabilityMetaShape.textContent = payload.result_shape || "";
       capabilityMetaStage.textContent = (payload.stage_namespace || []).join(" / ");
@@ -1050,7 +1097,14 @@
         const selected = strategy === payload.merge_strategy ? "selected" : "";
         return `<option value="${escapeHtml(strategy)}" ${selected}>${escapeHtml(strategy)}</option>`;
       }).join("");
-      cacheTtlDays.value = Number.parseInt(payload.ttl_days ?? DEFAULT_TTL_DAYS, 10);
+      if (Number.isInteger(ttlDays) && ttlDays !== CACHE_NEVER_EXPIRE_TTL_DAYS) {
+        rememberedTtlDays = String(ttlDays);
+        saveRememberedTtlDays();
+      } else {
+        rememberedTtlDays = loadRememberedTtlDays();
+      }
+      cachePermanent.checked = ttlDays === CACHE_NEVER_EXPIRE_TTL_DAYS;
+      cacheTtlDays.value = rememberedTtlDays;
       cacheTimeField.value = cachePolicy.time_field || "";
       cacheCoverageMode.value = cachePolicy.coverage_mode || "";
       cacheKeyFields.value = (cachePolicy.key_fields || []).join(", ");
@@ -1059,7 +1113,9 @@
 
     function fillCapturePolicyEditor(policy) {
       activeCapturePolicy = policy || {};
-      setCaptureSchedule(activeCapturePolicy.enabled ? activeCapturePolicy.cadence || "daily" : "none");
+      const schedule = activeCapturePolicy.enabled ? activeCapturePolicy.cadence || "daily" : "none";
+      restoreManualPermanent(schedule);
+      setCaptureSchedule(schedule);
       captureWindowCount.value = activeCapturePolicy.window_count || 1;
       captureBatchSize.value = activeCapturePolicy.batch_size || 1;
       captureScopeProfile.value = activeCapturePolicy.scope_profile_label || activeCapturePolicy.scope_profile || "";
@@ -1080,13 +1136,82 @@
     }
 
     function updateTtlInputState() {
-      const updateEnabled = selectedCaptureSchedule() !== "none";
-      cacheTtlDays.disabled = updateEnabled;
-      cacheEffectiveNote.hidden = !updateEnabled;
+      const permanent = selectedCaptureSchedule() !== "none" || cachePermanent.checked;
+      if (permanent) {
+        rememberTtlDays();
+        cacheTtlDays.value = CACHE_PERMANENT_LABEL;
+        cacheTtlDays.readOnly = true;
+        return;
+      }
+      cacheTtlDays.readOnly = false;
+      cacheTtlDays.value = rememberedTtlDays;
+    }
+
+    function rememberTtlDays() {
+      const parsed = Number.parseInt(cacheTtlDays.value, 10);
+      if (Number.isInteger(parsed) && parsed >= 0) {
+        rememberedTtlDays = String(parsed);
+        saveRememberedTtlDays();
+      }
+    }
+
+    function ttlDaysStorageKey() {
+      return `markethub.console.ttl_days.${activeCapabilityId}`;
+    }
+
+    function manualPermanentStorageKey() {
+      return `markethub.console.manual_permanent.${activeCapabilityId}`;
+    }
+
+    function loadManualPermanent() {
+      const stored = localStorage.getItem(manualPermanentStorageKey());
+      if (stored === "true") {
+        return true;
+      }
+      if (stored === "false") {
+        return false;
+      }
+      return null;
+    }
+
+    function restoreManualPermanent(schedule) {
+      const manualPermanent = loadManualPermanent();
+      if (activeTtlDays !== CACHE_NEVER_EXPIRE_TTL_DAYS) {
+        cachePermanent.checked = false;
+        return;
+      }
+      if (schedule !== "none") {
+        cachePermanent.checked = manualPermanent === true;
+        return;
+      }
+      cachePermanent.checked = manualPermanent !== false;
+    }
+
+    function saveManualPermanent() {
+      if (activeCapabilityId !== "") {
+        localStorage.setItem(manualPermanentStorageKey(), String(cachePermanent.checked));
+      }
+    }
+
+    function loadRememberedTtlDays() {
+      const parsed = Number.parseInt(localStorage.getItem(ttlDaysStorageKey()) ?? "", 10);
+      if (Number.isInteger(parsed) && parsed >= 0) {
+        return String(parsed);
+      }
+      return String(DEFAULT_TTL_DAYS);
+    }
+
+    function saveRememberedTtlDays() {
+      if (activeCapabilityId !== "") {
+        localStorage.setItem(ttlDaysStorageKey(), rememberedTtlDays);
+      }
     }
 
     function ttlDaysValue() {
-      const parsed = Number.parseInt(cacheTtlDays.value, 10);
+      if (selectedCaptureSchedule() !== "none" || cachePermanent.checked) {
+        return CACHE_NEVER_EXPIRE_TTL_DAYS;
+      }
+      const parsed = Number.parseInt(rememberedTtlDays, 10);
       if (!Number.isInteger(parsed) || parsed < 0) {
         return DEFAULT_TTL_DAYS;
       }
@@ -1140,6 +1265,7 @@
       }
       try {
         setSummary(`正在保存 ${activeCapabilityId} 设置...`);
+        saveManualPermanent();
         await request(`/api/admin/capability-settings/${encodeURIComponent(activeCapabilityId)}`, {
           method: "PUT",
           body: JSON.stringify({
@@ -1317,6 +1443,11 @@
     document.getElementById("close-capability-editor").addEventListener("click", closeCapabilityEditor);
     document.getElementById("close-capability-editor-top").addEventListener("click", closeCapabilityEditor);
     document.getElementById("save-capability-settings").addEventListener("click", saveCapabilitySettings);
+    cacheTtlDays.addEventListener("input", rememberTtlDays);
+    cachePermanent.addEventListener("change", () => {
+      saveManualPermanent();
+      updateTtlInputState();
+    });
     captureScheduleOptions.forEach((option) => {
       option.addEventListener("change", () => setCaptureSchedule(option.checked ? option.value : "none"));
     });

@@ -42,6 +42,7 @@ DOCS_PATH_RE = re.compile(r"(?<![\w-])/docs(?=/|`|\s|$)")
 DOC_VIEW_GET_CODE_RE = re.compile(r"`GET (?P<path>/doc-view[^`\s]*)`")
 DOC_VIEW_CODE_RE = re.compile(r"`(?P<path>/doc-view[^`\s]*)`")
 DOC_VIEW_TEXT_RE = re.compile(r"(?<![\"'=/>`])(?P<path>/doc-view[^\s<)`]*)")
+API_GET_CODE_RE = re.compile(r"`GET (?P<path>/api/[^`\s]*)`")
 HTTP_URL_CODE_RE = re.compile(r"`(?P<url>https?://[^`\s<>]+)`")
 HEADING_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
 INLINE_CODE_RE = re.compile(r"`([^`]+)`")
@@ -128,6 +129,11 @@ def build_doc_view_anchor(path_text: str) -> str:
     return f'<a href="{safe_path}"><code>{safe_path}</code></a>'
 
 
+def build_api_anchor(path_text: str) -> str:
+    safe_path = escape(path_text, quote=True)
+    return f'<a href="{safe_path}"><code>{safe_path}</code></a>'
+
+
 def build_external_url_anchor(url_text: str) -> str:
     safe_url = escape(url_text, quote=True)
     return f'<a href="{safe_url}"><code>{safe_url}</code></a>'
@@ -136,6 +142,7 @@ def build_external_url_anchor(url_text: str) -> str:
 def build_view_content(text: str) -> str:
     content = DOCS_PATH_RE.sub("/doc-view", text)
     content = HTTP_URL_CODE_RE.sub(lambda match: build_external_url_anchor(match.group("url")), content)
+    content = API_GET_CODE_RE.sub(lambda match: build_api_anchor(match.group("path")), content)
     content = DOC_VIEW_GET_CODE_RE.sub(lambda match: build_doc_view_anchor(match.group("path")), content)
     content = DOC_VIEW_CODE_RE.sub(lambda match: build_doc_view_anchor(match.group("path")), content)
     return DOC_VIEW_TEXT_RE.sub(lambda match: build_doc_view_anchor(match.group("path")), content)

@@ -5,3 +5,8 @@ pygments==2.19.1
 pandas==2.3.3
 pyarrow==21.0.0
 psycopg[binary]==3.3.3
+akshare
+efinance
+mootdx
+opentdx
+tushare==1.4.24

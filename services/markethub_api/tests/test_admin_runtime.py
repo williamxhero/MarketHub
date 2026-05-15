@@ -20,7 +20,8 @@ from runtime_paths import configure_python_path
 configure_python_path()
 
 from app import app
-from quotemux.config_runtime import reset_config_runtime_cache
+from docs_all import collect_all_doc_items
+from quotemux.config_runtime import get_config_runtime, reset_config_runtime_cache
 from services import admin_runtime
 
 
@@ -35,6 +36,7 @@ def _configure_admin_runtime(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("QUOTEMUX_RUNTIME_ROOT", str(tmp_path / "runtime"))
     monkeypatch.setenv("MARKETHUB_PROJECT_ROOT", str(tmp_path / "markethub"))
     reset_config_runtime_cache()
+    get_config_runtime().add_import_root(str(Path(__file__).resolve().parents[4] / "QuoteMux_Packages"))
 
 
 def test_admin_api_allows_console_cors_preflight(monkeypatch, tmp_path) -> None:
@@ -69,11 +71,11 @@ def test_admin_source_packages_and_instances(monkeypatch, tmp_path) -> None:
     packages_response = client.get("/api/admin/source-packages", headers=_auth_headers())
     assert packages_response.status_code == 200
     packages = packages_response.json()
-    assert any(item["package_id"] == "datalake" for item in packages)
-    datalake_package = next(item for item in packages if item["package_id"] == "datalake")
-    assert datalake_package["health"]["status"] == "ok"
+    assert any(item["package_id"] == "efinance" for item in packages)
+    efinance_package = next(item for item in packages if item["package_id"] == "efinance")
+    assert efinance_package["health"]["status"] == "ok"
 
-    health_response = client.get("/api/admin/source-packages/datalake/health", headers=_auth_headers())
+    health_response = client.get("/api/admin/source-packages/efinance/health", headers=_auth_headers())
     assert health_response.status_code == 200
     assert health_response.json()["handler_count"] > 0
 
@@ -106,8 +108,8 @@ def test_admin_source_packages_and_instances(monkeypatch, tmp_path) -> None:
     assert list_response.status_code == 200
     instances = list_response.json()
     assert any(item["instance_id"] == "efinance-backup" for item in instances)
-    datalake_instance = next(item for item in instances if item["package_id"] == "datalake")
-    assert datalake_instance["secret_values"] == {"db_password": "***"}
+    tushare_instance = next(item for item in instances if item["package_id"] == "tushare")
+    assert tushare_instance["secret_values"] == {"token": "***"}
 
 
 def test_admin_unknown_resource_and_validation_errors(monkeypatch, tmp_path) -> None:
@@ -170,9 +172,10 @@ def test_admin_profiles_and_policies(monkeypatch, tmp_path) -> None:
     assert report_response.status_code == 200
     report_payload = report_response.json()
     assert report_payload["active_profile"] == published_profile["profile_id"]
-    assert "static_core" in report_payload["enabled_packages"]
+    assert "efinance" in report_payload["enabled_packages"]
+    assert "tushare" in report_payload["enabled_packages"]
     assert "datalake" not in report_payload["enabled_packages"]
-    assert any(item["package_id"] == "static_core" for item in report_payload["package_health"])
+    assert any(item["package_id"] == "efinance" for item in report_payload["package_health"])
     assert report_payload["source_instance_page"]["limit"] == 100
 
     filtered_report_response = client.get(
@@ -184,7 +187,7 @@ def test_admin_profiles_and_policies(monkeypatch, tmp_path) -> None:
 
     health_response = client.get("/api/admin/runtime-health", headers=_auth_headers())
     assert health_response.status_code == 200
-    assert any(item["source_instance_id"] == "static_core-default" for item in health_response.json()["source_instances"])
+    assert any(item["source_instance_id"] == "efinance-default" for item in health_response.json()["source_instances"])
 
     rollback_response = client.post(f"/api/admin/runtime-profiles/{default_profile_id}/rollback", headers=_auth_headers())
     assert rollback_response.status_code == 200
@@ -239,6 +242,12 @@ def test_admin_contract_matrix_reads_and_saves_package_selection(monkeypatch, tm
     matrix = matrix_response.json()
     package_ids = [item["package_id"] for item in matrix["packages"]]
     assert "tushare" in package_ids
+    doc_api_paths = {item.api_path for item in collect_all_doc_items() if item.api_path != "" and item.api_path != "/api/health"}
+    matrix_api_paths = {api_path for capability in matrix["capabilities"] for api_path in capability["api_paths"]}
+    matrix_api_docs = {api_doc["path"]: api_doc["href"] for capability in matrix["capabilities"] for api_doc in capability["api_docs"]}
+    assert matrix_api_paths == doc_api_paths
+    assert set(matrix_api_docs) == doc_api_paths
+    assert matrix_api_docs["/api/boards/catalog"] == "/doc-view/boards/catalog"
     finance_row = next(item for item in matrix["capabilities"] if item["capability_id"] == "stocks.finance.statements")
     finance_packages = {item["package_id"]: item for item in finance_row["packages"]}
     assert finance_packages["tushare"]["supported"] is True
@@ -249,19 +258,17 @@ def test_admin_contract_matrix_reads_and_saves_package_selection(monkeypatch, tm
     assert news_row["policy_managed"] is True
     assert news_row["result_shape"] == "event_stream"
     assert "append_dedupe" in news_row["allowed_merge_strategies"]
-    assert news_packages["news_store"]["supported"] is True
-    assert news_packages["news_store"]["enabled"] is True
-    assert news_packages["datalake"]["enabled"] is False
+    assert all(not item["supported"] for item in news_packages.values())
+    assert all(not item["enabled"] for item in news_packages.values())
 
     save_response = client.put(
         "/api/admin/capability-matrix",
         headers=_auth_headers(),
-        json={"contracts": [{"capability_id": "stocks.quotes.daily", "enabled_package_ids": ["static_core", "tushare"], "merge_strategy": "append_dedupe"}]},
+        json={"contracts": [{"capability_id": "stocks.quotes.daily", "enabled_package_ids": ["tushare"], "merge_strategy": "append_dedupe"}]},
     )
     assert save_response.status_code == 200
     daily_row = next(item for item in save_response.json()["capabilities"] if item["capability_id"] == "stocks.quotes.daily")
     daily_packages = {item["package_id"]: item for item in daily_row["packages"]}
-    assert daily_packages["static_core"]["enabled"] is True
     assert daily_packages["tushare"]["enabled"] is True
     assert daily_packages["efinance"]["enabled"] is False
     assert daily_row["merge_strategy"] == "append_dedupe"

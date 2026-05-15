@@ -10,6 +10,7 @@
 - `/docs/system/minimal-online-scope`
 - `/docs/system/minimal-regression`
 - `/docs/system/provider-coverage`
+- `/docs/system/capability-update-policy`
 - `/docs/system/provider-gap-candidates`
 
 ## 当前收口结论

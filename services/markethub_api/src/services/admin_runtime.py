@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 from pathlib import PurePosixPath
 
+from docs_all import collect_all_doc_items
 from quotemux.capabilities import get_capability_definition, list_public_api_bindings, normalize_capability_id
 from quotemux.config_runtime import ContractPolicyOverride, SourceInstanceConfig, get_config_runtime
 from quotemux.contracts.policies import get_contract_policy, list_contract_policies
@@ -20,6 +21,7 @@ from quotemux.runtime_core.audit import read_fallback_summary, record_provider_e
 from quotemux.runtime_core.health import get_provider_metrics
 from quotemux.source_packages.registry import clear_loaded_source_package_modules, refresh_default_source_package_registry
 from quotemux.store.admin import CachePolicyUpdate, CapturePolicyPayload, QuoteMuxCacheAdmin, QuoteMuxCaptureAdmin
+from quotemux.store.default_update_policy import cache_enabled_from_ttl_days as default_cache_enabled_from_ttl_days, get_capability_update_policy_default, ttl_seconds_from_days as default_ttl_seconds_from_days
 from quotemux.store.postgres import CACHE_NEVER_EXPIRE_TTL_SECONDS, _coverage_mode_for_capability, _key_fields_for_capability, _request_scope_fields_for_capability, _time_field_for_capability
 
 
@@ -29,6 +31,20 @@ DEFAULT_TTL_DAYS = 365
 DEFAULT_TTL_SECONDS = DEFAULT_TTL_DAYS * SECONDS_PER_DAY
 _CACHE_ADMIN = QuoteMuxCacheAdmin()
 _CAPTURE_ADMIN: QuoteMuxCaptureAdmin | None = None
+
+
+def _api_doc_payload_by_path() -> dict[str, dict[str, str]]:
+    payloads: dict[str, dict[str, str]] = {}
+    for item in collect_all_doc_items():
+        if item.api_path == "" or item.api_path == "/api/health":
+            continue
+        href = "/doc-view" if item.doc_path == "" else f"/doc-view/{item.doc_path}"
+        payloads[item.api_path] = {"path": item.api_path, "href": href}
+    return payloads
+
+
+def _api_doc_payloads(api_paths: tuple[str, ...], payloads_by_path: dict[str, dict[str, str]]) -> list[dict[str, str]]:
+    return [payloads_by_path[api_path] for api_path in api_paths if api_path in payloads_by_path]
 
 
 def _runtime():
@@ -132,7 +148,7 @@ def _uses_quotemux_namespace(package_root: Path) -> bool:
 
 
 def _copy_ignore_patterns(_: str, names: list[str]) -> set[str]:
-    ignored = {"__pycache__", ".git", "build", "dist"}
+    ignored = {"__pycache__", ".git", ".venv", "venv", "build", "dist"}
     return {name for name in names if name in ignored or name.endswith(".pyc") or name.endswith(".egg-info")}
 
 
@@ -434,13 +450,14 @@ def _serialize_policy(policy: ContractPolicyOverride) -> dict[str, object]:
 
 
 def _default_cache_policy_payload(capability_id: str) -> dict[str, object]:
-    capability = get_capability_definition(capability_id)
+    policy_default = get_capability_update_policy_default(capability_id)
+    cache_enabled = default_cache_enabled_from_ttl_days(policy_default.cache_ttl_days)
     return {
         "capability_id": capability_id,
-        "enabled": capability.store_enabled,
-        "read_enabled": capability.store_enabled,
-        "write_enabled": capability.store_enabled,
-        "ttl_seconds": DEFAULT_TTL_SECONDS,
+        "enabled": cache_enabled,
+        "read_enabled": cache_enabled,
+        "write_enabled": cache_enabled,
+        "ttl_seconds": default_ttl_seconds_from_days(policy_default.cache_ttl_days),
         "time_field": _time_field_for_capability(capability_id),
         "key_fields": list(_key_fields_for_capability(capability_id)),
         "request_scope_fields": list(_request_scope_fields_for_capability(capability_id)),
@@ -475,28 +492,27 @@ def _ttl_seconds_from_days(ttl_days: int) -> int:
 
 
 def cache_effective_for_capability(capability_id: str, ttl_days: int) -> bool:
-    ttl_keeps_cache_enabled = ttl_days == CACHE_NEVER_EXPIRE_TTL_SECONDS or ttl_days > 0
-    if not ttl_keeps_cache_enabled:
-        return False
     try:
         capture_policy = get_capture_policy(capability_id)
+        if bool(capture_policy["enabled"]):
+            return True
     except Exception:
-        return True
-    return not bool(capture_policy["enabled"])
+        pass
+    return ttl_days == CACHE_NEVER_EXPIRE_TTL_SECONDS or ttl_days > 0
 
 
 def _sync_cache_policy_for_capture(capability_id: str, capture_enabled: bool) -> None:
     current_cache_policy = _cache_policy_payload(capability_id)
     ttl_seconds = int(current_cache_policy["ttl_seconds"])
     ttl_keeps_cache_enabled = _cache_enabled_by_ttl_seconds(ttl_seconds)
-    cache_effective = ttl_keeps_cache_enabled and not capture_enabled
+    cache_enabled = capture_enabled or ttl_keeps_cache_enabled
     _CACHE_ADMIN.update_policy(
         CachePolicyUpdate(
             capability_id=capability_id,
-            enabled=cache_effective,
+            enabled=cache_enabled,
             ttl_seconds=ttl_seconds,
-            read_enabled=cache_effective,
-            write_enabled=ttl_keeps_cache_enabled,
+            read_enabled=cache_enabled,
+            write_enabled=cache_enabled,
         )
     )
 
@@ -505,6 +521,7 @@ def _capability_settings_row(
     capability_id: str,
     policies: dict[str, ContractPolicyOverride] | None = None,
     packages: tuple[object, ...] | None = None,
+    api_doc_payloads_by_path: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, object]:
     normalized_capability_id = normalize_capability_id(capability_id)
     active_policies = _all_policies_by_contract() if policies is None else policies
@@ -526,6 +543,7 @@ def _capability_settings_row(
             available_package_ids.append(manifest.package_id)
     base_policy = get_contract_policy(normalized_capability_id)
     capability = get_capability_definition(normalized_capability_id)
+    api_doc_payloads = _api_doc_payload_by_path() if api_doc_payloads_by_path is None else api_doc_payloads_by_path
     cache_policy = _cache_policy_payload(normalized_capability_id)
     ttl_days = ttl_days_from_cache_policy(cache_policy)
     cache_effective = cache_effective_for_capability(normalized_capability_id, ttl_days)
@@ -536,6 +554,7 @@ def _capability_settings_row(
         "capability_id": normalized_capability_id,
         "contract_name": normalized_capability_id,
         "api_paths": list(capability.api_paths),
+        "api_docs": _api_doc_payloads(capability.api_paths, api_doc_payloads),
         "mode": "" if policy is None else policy.mode,
         "policy_managed": policy is not None,
         "result_shape": get_contract_result_shape(normalized_capability_id),
@@ -805,7 +824,8 @@ def save_contract_policy_override(contract_name: str, mode: str, source_order: t
 def get_contract_matrix() -> dict[str, object]:
     packages = _visible_manifests()
     policies = _all_policies_by_contract()
-    rows = [_capability_settings_row(contract_name, policies, packages) for contract_name in list_contract_names()]
+    api_doc_payloads_by_path = _api_doc_payload_by_path()
+    rows = [_capability_settings_row(contract_name, policies, packages, api_doc_payloads_by_path) for contract_name in list_contract_names()]
     return {
         "packages": [_serialize_package(item) for item in packages],
         "capabilities": rows,
@@ -839,14 +859,14 @@ def save_capability_settings(
     except Exception:
         capture_enabled = False
     ttl_keeps_cache_enabled = _cache_enabled_by_ttl_seconds(actual_cache_ttl_seconds)
-    cache_effective = ttl_keeps_cache_enabled and not capture_enabled
+    actual_cache_enabled = capture_enabled or ttl_keeps_cache_enabled
     _CACHE_ADMIN.update_policy(
         CachePolicyUpdate(
             capability_id=normalized_capability_id,
-            enabled=cache_effective,
+            enabled=actual_cache_enabled,
             ttl_seconds=actual_cache_ttl_seconds,
-            read_enabled=cache_effective,
-            write_enabled=ttl_keeps_cache_enabled,
+            read_enabled=actual_cache_enabled,
+            write_enabled=actual_cache_enabled,
         )
     )
     _record_admin_change(
@@ -855,7 +875,7 @@ def save_capability_settings(
         {
             "merge_strategy": merge_strategy,
             "ttl_days": actual_ttl_days,
-            "cache_effective": cache_effective,
+            "cache_effective": actual_cache_enabled,
             "cache_ttl_seconds": actual_cache_ttl_seconds,
         },
     )
@@ -872,6 +892,10 @@ def _resolve_ttl_days(ttl_days: int | None, cache_enabled: bool | None, current_
     current_ttl_days = ttl_days_from_cache_policy(current_cache_policy)
     if current_ttl_days == CACHE_NEVER_EXPIRE_TTL_SECONDS or current_ttl_days > 0:
         return current_ttl_days
+    capability_id = str(current_cache_policy["capability_id"])
+    policy_default = get_capability_update_policy_default(capability_id)
+    if policy_default.cache_ttl_days == CACHE_NEVER_EXPIRE_TTL_SECONDS or policy_default.cache_ttl_days > 0:
+        return policy_default.cache_ttl_days
     return DEFAULT_TTL_DAYS
 
 

@@ -10,18 +10,23 @@
 
 ## 启动方式
 
+本地开发：
+
 - `py -3.13 app.py`
 - `py -3.13 -m uvicorn app:app --host 0.0.0.0 --port 8803`
-- `docker build -f services/markethub_api/Dockerfile -t markethub_api:recover .`
+
+`yosef-server` 正式服务不使用 Docker，固定从 `/srv/markethub/current/services/markethub_api` 启动：
+
+- `set -a && . /srv/markethub/env/markethub.env && set +a && /srv/markethub/.venv/bin/python /srv/markethub/current/services/markethub_api/app.py`
 
 ## 推荐发布流程
 
 正式发布前固定执行：
 
 - 本地 `pytest`
-- 本地构建镜像
 - 上传发布产物
-- 目标环境加载镜像
+- 目标环境更新 `/srv/markethub/current`
+- 目标环境确认 `/srv/markethub/.venv` 依赖
 - 重启服务
 - 自动验收与回滚
 
