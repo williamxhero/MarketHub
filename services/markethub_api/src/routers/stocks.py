@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from data_threads import run_data_task
 from services import stocks
 from services.common import filter_response_fields
+from services.runtime_memory import run_with_memory_log
 
 
 router = APIRouter()
@@ -60,6 +61,19 @@ def _filter_quote_query_result(loader: Callable[..., object], args: tuple[object
     return {"items": filtered_items, "meta": payload["meta"]}
 
 
+def _quote_request_detail(codes: str, freq: str, start_date: str, end_date: str, limit: int | None) -> dict[str, object]:
+    code_count = len([item for item in codes.split(",") if item != ""])
+    return {"freq": freq, "code_count": code_count, "start_date": start_date, "end_date": end_date, "limit": limit or 0}
+
+
+def _filter_stock_quote_items(loader: Callable[..., list[object]], args: tuple[object, ...], fields: str, allowed_fields: set[str], detail: dict[str, object]) -> list[dict[str, object]]:
+    return run_with_memory_log("stocks.quotes", detail, lambda: _filter_items(loader, args, fields, allowed_fields))
+
+
+def _filter_stock_quote_query_result(loader: Callable[..., object], args: tuple[object, ...], fields: str, allowed_fields: set[str], detail: dict[str, object]) -> dict[str, object]:
+    return run_with_memory_log("stocks.quotes.query", detail, lambda: _filter_quote_query_result(loader, args, fields, allowed_fields))
+
+
 @router.get("/api/stocks/quotes")
 async def api_stock_quotes(
     code: str = Query(""),
@@ -77,8 +91,10 @@ async def api_stock_quotes(
     skip_suspended: bool = Query(True),
     fill_missing: bool = Query(False),
 ) -> list[dict[str, object]]:
+    actual_codes = codes if codes != "" else code
+    detail = _quote_request_detail(actual_codes, freq, start_date, end_date, limit)
     args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, fill_missing)
-    return await run_data_task(_filter_items, stocks.get_quotes, args, fields, STOCK_QUOTE_FIELDS)
+    return await run_data_task(_filter_stock_quote_items, stocks.get_quotes, args, fields, STOCK_QUOTE_FIELDS, detail)
 
 
 @router.get("/api/stocks/quotes/query")
@@ -98,8 +114,10 @@ async def api_stock_quotes_query(
     skip_suspended: bool = Query(True),
     fill_missing: bool = Query(False),
 ) -> dict[str, object]:
+    actual_codes = codes if codes != "" else code
+    detail = _quote_request_detail(actual_codes, freq, start_date, end_date, limit)
     args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, fill_missing)
-    return await run_data_task(_filter_quote_query_result, stocks.get_quotes_query_result, args, fields, STOCK_QUOTE_FIELDS)
+    return await run_data_task(_filter_stock_quote_query_result, stocks.get_quotes_query_result, args, fields, STOCK_QUOTE_FIELDS, detail)
 
 
 @router.get("/api/stocks/quotes/daily-snapshot")

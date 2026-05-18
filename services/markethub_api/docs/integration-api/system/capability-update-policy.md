@@ -6,7 +6,7 @@
 
 当前策略是所有普通 API capability 均接入 Store。高复用、公共范围、全市场或适合预计算的 capability 打开定时更新；个股级、低频、重型数据默认只开缓存 TTL。派生能力也以自身 capability 写入 Store，默认 provider 统一为 `derived_core`，QuoteMux 只负责转发。
 
-Task Center 已注册每小时调用一次 `/api/admin/capture/run-due-async`。打开定时更新后，capture 仍只会按 capability 自身的日、周、月、年到期规则运行；每小时任务只是负责检查是否到期。
+Task Center 已注册每天北京时间 20:00 调用一次 `/api/admin/capture/run-due-async`。打开定时更新后，capture 仍只会按 capability 自身的日、周、月、年到期规则运行；每天任务只是负责检查是否到期。
 
 ## 规则
 

@@ -23,6 +23,7 @@ from quotemux.source_packages.registry import clear_loaded_source_package_module
 from quotemux.store.admin import CachePolicyUpdate, CapturePolicyPayload, QuoteMuxCacheAdmin, QuoteMuxCaptureAdmin
 from quotemux.store.default_update_policy import cache_enabled_from_ttl_days as default_cache_enabled_from_ttl_days, get_capability_update_policy_default, ttl_seconds_from_days as default_ttl_seconds_from_days
 from quotemux.store.postgres import CACHE_NEVER_EXPIRE_TTL_SECONDS, _coverage_mode_for_capability, _key_fields_for_capability, _request_scope_fields_for_capability, _time_field_for_capability
+from services.runtime_memory import run_with_memory_log
 
 
 MANIFEST_FILE_NAME = "quotemux_package.json"
@@ -954,11 +955,13 @@ def list_capture_runs(capability_id: str = "", status: str = "", limit: int = 10
 
 
 def run_capture(capability_id: str) -> dict[str, object]:
-    return _capture_admin().run_capture(capability_id)
+    capture_admin = _capture_admin()
+    return run_with_memory_log("capture.run_one", {"capability_id": capability_id}, lambda: capture_admin.run_capture(capability_id))
 
 
 def run_due_captures() -> list[dict[str, object]]:
-    return list(_capture_admin().run_due_captures())
+    capture_admin = _capture_admin()
+    return list(run_with_memory_log("capture.run_due", {"source": "admin_runtime"}, capture_admin.run_due_captures))
 
 
 def _time_from_text(value: str):
