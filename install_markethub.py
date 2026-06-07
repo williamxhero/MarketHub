@@ -62,7 +62,7 @@ def _verify_install(python_executable: Path) -> None:
 def _print_next_steps(python_executable: Path) -> None:
     print(f"Python: {python_executable}")
     print("启动命令:")
-    print(f"  {python_executable} {MARKETHUB_ROOT / 'services' / 'markethub_api' / 'app.py'}")
+    print(f"  {python_executable} {MARKETHUB_ROOT / 'scripts' / 'run_api.py'}")
     print("启动后访问: http://127.0.0.1:8803/admin")
     print("然后点击: 安装或更新全部 Packages")
 

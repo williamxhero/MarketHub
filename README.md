@@ -97,15 +97,33 @@ python3.13 install_markethub.py
 
 点完后去喝口水。这个按钮会在后台调用 `QuoteMux` 的本体能力，自动从官方弹药库（[QuoteMux_Packages](https://github.com/williamxhero/QuoteMux_Packages)）把所有远程接入包一次性拉取并安装完毕。
 
-## 日常使用：手动启动服务
+## 日常使用：一键启动服务
 
-如果你已经走完了上面的安装流程，以后想要单独启动服务，可以直接在 MarketHub 目录下执行：
+如果你已经走完了上面的安装流程，以后想要单独启动服务，可以直接在 `MarketHub` 目录下执行统一启动脚本：
+
+**Windows:**
 
 PowerShell
 
 ```
 powershell -ExecutionPolicy Bypass -File scripts/run_api.ps1
 ```
+
+**Linux:**
+
+Bash
+
+```
+bash scripts/run_api.sh
+```
+
+**通用入口（Windows / Linux 都可用）：**
+
+```
+python scripts/run_api.py
+```
+
+这个启动脚本会固定使用工作区根目录下的 `.venv`，不会误用系统 Python。
 
 启动后的默认服务地址：
 

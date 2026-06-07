@@ -22,6 +22,9 @@ configure_python_path()
 from app import app
 from docs_all import collect_all_doc_items
 from quotemux.config_runtime import get_config_runtime, reset_config_runtime_cache
+from quotemux.config_runtime.models import SourceInstanceConfig
+from quotemux.infra.provider_config import get_tushare_token
+from quotemux.source_packages.instance_context import use_source_instance
 from services import admin_runtime
 
 
@@ -156,6 +159,27 @@ def test_admin_unknown_resource_and_validation_errors(monkeypatch, tmp_path) -> 
     assert unknown_response.json()["code"] == "UNKNOWN_RESOURCE"
     assert invalid_instance_response.status_code == 422
     assert invalid_instance_response.json()["code"] == "VALIDATION_FAILED"
+
+
+def test_tushare_token_prefers_source_instance_secret(monkeypatch, tmp_path) -> None:
+    _configure_admin_runtime(monkeypatch, tmp_path)
+    monkeypatch.setenv("TS_TOKEN", "env-token")
+    source_instance = SourceInstanceConfig(
+        instance_id="tushare-primary",
+        package_id="tushare",
+        display_name="Tushare 涓诲疄渚?",
+        enabled=True,
+        priority=1,
+        timeout_seconds=None,
+        config_values={"timeout_seconds": "15"},
+        secret_values={"token": "instance-token"},
+        tags=(),
+    )
+
+    with use_source_instance(source_instance):
+        assert get_tushare_token() == "instance-token"
+
+    assert get_tushare_token() == "env-token"
 
 
 def test_admin_profiles_and_policies(monkeypatch, tmp_path) -> None:
