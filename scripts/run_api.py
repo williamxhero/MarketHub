@@ -37,6 +37,9 @@ def _assert_layout(python_executable: Path) -> None:
 
 def _run_api(python_executable: Path) -> None:
     env = os.environ.copy()
+    env.setdefault(MARKETHUB_PROJECT_ROOT, str(MARKETHUB_ROOT))
+    env.setdefault(QUOTEMUX_RUNTIME_ROOT, str(WORKSPACE_ROOT / runtime))
+    env.setdefault(DATALAKE_ROOT, str(WORKSPACE_ROOT / datalake))
     subprocess.run([str(python_executable), str(APP_PATH)], cwd=str(SERVICE_ROOT), env=env, check=True)
 
 

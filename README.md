@@ -31,8 +31,8 @@ PowerShell
 ```
 mkdir D:\market_stack
 cd D:\market_stack
-git clone https://github.com/williamxhero/QuoteMux.git
-git clone https://github.com/williamxhero/MarketHub.git
+git clone --branch main https://github.com/williamxhero/QuoteMux.git
+git clone --branch main https://github.com/williamxhero/MarketHub.git
 ```
 
 **Linux:**
@@ -42,8 +42,8 @@ Bash
 ```
 mkdir -p ~/market_stack
 cd ~/market_stack
-git clone https://github.com/williamxhero/QuoteMux.git
-git clone https://github.com/williamxhero/MarketHub.git
+git clone --branch main https://github.com/williamxhero/QuoteMux.git
+git clone --branch main https://github.com/williamxhero/MarketHub.git
 ```
 
 然后，你需要把 `install_markethub.py` 脚本放到这个工作区的根目录下。搞定后，你的目录结构看起来必须是这样的：
@@ -74,7 +74,7 @@ py -3.13 install_markethub.py
 Bash
 
 ```
-python3.13 install_markethub.py
+python3 install_markethub.py
 ```
 
 这个脚本会自动帮你搞定所有的前置脏活：

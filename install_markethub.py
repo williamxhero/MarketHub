@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -15,7 +16,8 @@ def main() -> None:
     _assert_layout()
     python_executable = _ensure_venv()
     _install_core_projects(python_executable)
-    _build_console()
+    _prepare_workspace()
+    _ensure_workspace_directories()
     _verify_install(python_executable)
     _print_next_steps(python_executable)
 
@@ -45,6 +47,19 @@ def _install_core_projects(python_executable: Path) -> None:
     subprocess.run([str(python_executable), "-m", "pip", "install", "--upgrade", "pip"], check=True)
     subprocess.run([str(python_executable), "-m", "pip", "install", "-e", str(QUOTEMUX_ROOT)], check=True)
     subprocess.run([str(python_executable), "-m", "pip", "install", "-r", str(MARKETHUB_ROOT / "requirements.dev.txt")], check=True)
+
+
+def _prepare_workspace() -> None:
+    console_root = MARKETHUB_ROOT / 'services' / 'markethub_console'
+    source_path = console_root / 'web' / 'index.html'
+    target_root = console_root / 'dist'
+    target_root.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source_path, target_root / 'index.html')
+
+
+def _ensure_workspace_directories() -> None:
+    (ROOT / 'datalake').mkdir(parents=True, exist_ok=True)
+    (ROOT / 'runtime').mkdir(parents=True, exist_ok=True)
 
 
 def _build_console() -> None:
