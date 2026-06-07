@@ -664,6 +664,7 @@
               <p>查看当前已注册 package 的状态，支持导入目录和取消注册。</p>
             </div>
             <div class="toolbar">
+              <button class="button-accent" id="install-all-packages">安装或更新全部 Packages</button>
               <button id="import-directory">导入目录</button>
               <input class="hidden-file-input" id="directory-input" type="file" webkitdirectory directory multiple />
             </div>
@@ -1416,6 +1417,19 @@
       }
     }
 
+    async function installAllPackages() {
+      try {
+        setSummary("正在安装或更新全部 Packages...");
+        await request("/api/admin/source-packages/install-all", {
+          method: "POST",
+        });
+        await loadAll();
+        setSummary("全部 Packages 已安装或更新。\n矩阵和状态已刷新。");
+      } catch (error) {
+        setSummary(`安装全部 Packages 失败: ${error.message}`);
+      }
+    }
+
     async function saveMatrix() {
       try {
         const checkedInputs = Array.from(matrixWrap.querySelectorAll("input[data-capability-id][data-package-id]:checked"));
@@ -1438,6 +1452,7 @@
       }
     }
 
+    document.getElementById("install-all-packages").addEventListener("click", installAllPackages);
     document.getElementById("import-directory").addEventListener("click", importPackageDirectory);
     document.getElementById("save-matrix").addEventListener("click", saveMatrix);
     document.getElementById("close-capability-editor").addEventListener("click", closeCapabilityEditor);

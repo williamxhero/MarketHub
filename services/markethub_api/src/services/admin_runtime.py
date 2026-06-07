@@ -636,6 +636,13 @@ def refresh_source_packages() -> list[dict[str, object]]:
     return packages
 
 
+def install_all_source_packages() -> list[dict[str, object]]:
+    _runtime().install_all_packages()
+    packages = refresh_source_packages()
+    _record_admin_change("install_all_source_packages", "source_packages", {"package_count": len(packages)})
+    return packages
+
+
 def import_source_package(path_text: str) -> dict[str, object]:
     source_root = Path(path_text)
     if not source_root.is_dir():

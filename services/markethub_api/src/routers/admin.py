@@ -96,6 +96,11 @@ async def api_admin_source_packages_refresh() -> list[dict[str, object]]:
     return admin_runtime.refresh_source_packages()
 
 
+@router.post("/api/admin/source-packages/install-all")
+async def api_admin_source_packages_install_all() -> list[dict[str, object]]:
+    return admin_runtime.install_all_source_packages()
+
+
 @router.post("/api/admin/source-packages/import")
 async def api_admin_source_packages_import(payload: ImportSourcePackagePayload) -> dict[str, object]:
     return admin_runtime.import_source_package(payload.path)

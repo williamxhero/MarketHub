@@ -65,6 +65,27 @@ def test_admin_does_not_require_token(monkeypatch, tmp_path) -> None:
     assert write_response.status_code == 200
 
 
+def test_admin_install_all_source_packages_uses_quotemux_runtime(monkeypatch, tmp_path) -> None:
+    _configure_admin_runtime(monkeypatch, tmp_path)
+
+    class FakeRuntime:
+        def install_all_packages(self):
+            return None
+
+        def refresh_source_packages(self):
+            return get_config_runtime().refresh_source_packages()
+
+        def get_package_health(self, package_id: str):
+            return get_config_runtime().get_package_health(package_id)
+
+    monkeypatch.setattr(admin_runtime, "_runtime", lambda: FakeRuntime())
+
+    response = client.post("/api/admin/source-packages/install-all", headers=_auth_headers())
+
+    assert response.status_code == 200
+    assert any(item["package_id"] == "efinance" for item in response.json())
+
+
 def test_admin_source_packages_and_instances(monkeypatch, tmp_path) -> None:
     _configure_admin_runtime(monkeypatch, tmp_path)
 
