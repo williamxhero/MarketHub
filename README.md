@@ -20,6 +20,8 @@
 
 一键安装脚本 `install_markethub.py` **并不是**在 MarketHub 仓库内部运行的。它要求你必须有一个**统一的工作区根目录**，并且要把 QuoteMux 和 MarketHub 这两个仓库并排放在一起。
 
+另外，**正式运行前还需要先准备 PostgreSQL + TimescaleDB**。当前 MarketHub/QuoteMux 的默认运行口径依赖本地 PostgreSQL，并要求目标数据库已启用 `timescaledb` 扩展。
+
 **最标准的操作姿势如下：**
 
 先建一个工作区目录，把两个仓库 clone 下来。
