@@ -4,7 +4,7 @@
 
 ## 结论
 
-当前策略是所有普通 API capability 均接入 Store。高复用、公共范围、全市场或适合预计算的 capability 打开定时更新；个股级、低频、重型数据默认只开缓存 TTL。派生能力也以自身 capability 写入 Store，默认 provider 统一为 `derived_core`，QuoteMux 只负责转发。
+当前策略是所有普通 API capability 均接入 Store。高复用、公共范围、全市场或适合预计算的 capability 打开定时更新；个股级、低频、重型数据默认只开缓存 TTL。显式登记在 `DERIVED_CAPABILITY_BASE_IDS` 的派生视图不独立配置 TTL、cache policy、capture policy；它们继承主 capability 的配置，并在运行时由主数据派生。其他以 `derived_core` 物化的能力仍以自身 capability 写入 Store。
 
 Task Center 已注册每天北京时间 20:00 调用一次 `/api/admin/capture/run-due-async`。打开定时更新后，capture 仍只会按 capability 自身的日、周、月、年到期规则运行；每天任务只是负责检查是否到期。
 
@@ -12,6 +12,8 @@ Task Center 已注册每天北京时间 20:00 调用一次 `/api/admin/capture/r
 
 - `定时更新`：后台预采集。必须同时保持缓存开启，否则 capture 预检查会跳过。
 - `TTL only`：不预采集，请求命中后写入缓存，后续请求在 TTL 内读缓存。
+- `派生视图`：必须显式登记到 `DERIVED_CAPABILITY_BASE_IDS`，不按名称、路径或 `next` / `previous` 等后缀自动推断；无独立 TTL、缓存策略、采集策略和更新频率。
+- 新增类似窗口 API 时，只有把 `derived.capability -> root.capability` 手动写入 `DERIVED_CAPABILITY_BASE_IDS` 才会继承主 capability；配置表之外一律按普通 capability 处理。
 - `暂不配置`：当前默认表不再保留该状态；新增 capability 如普通 API 尚未接入 Store，才临时使用。
 - TTL 建议里的 `-1` 表示永不过期。只适合历史稳定或静态定义类数据。
 - 当前 Console 的定时选项只表达周期：无、每天、每周日、每月最后一天、每年最后一天；不要把它理解为精确盘后执行时间。
@@ -33,9 +35,9 @@ Task Center 已注册每天北京时间 20:00 调用一次 `/api/admin/capture/r
 | `indexes.profile` | `/api/indexes/{index_code}/profile` | TTL only | 无 | 365 天 | 是 | 单指数画像低频，按需缓存即可。 |
 | `indexes.quotes.daily` | `/api/indexes/quotes` | 定时更新 | 每天 | 30 天 | 是 | 指数日线是核心行情。 |
 | `markets.calendar.trading` | `/api/markets/calendar/trading` | 定时更新 | 每月最后一天 | -1 | 是 | 交易日历是基础依赖，月更未来窗口。 |
-| `markets.calendar.trading.next` | `/api/markets/calendar/trading/next` | TTL only | 无 | 30 天 | 是 | 可由交易日历快速派生，没必要单独预采集。 |
-| `markets.calendar.trading.previous` | `/api/markets/calendar/trading/previous` | TTL only | 无 | 365 天 | 是 | 历史结果稳定，可按需缓存。 |
-| `markets.calendar.trading.yearly` | `/api/markets/calendar/trading/yearly` | TTL only | 无 | 3650 天 | 是 | 年度视图可由交易日历派生，首次请求缓存即可。 |
+| `markets.calendar.trading.next` | `/api/markets/calendar/trading/next` | 派生视图 | 继承 `markets.calendar.trading` | 无独立 TTL | 否 | 显式登记为 `markets.calendar.trading` 的派生视图，运行时读取主交易日历并截取结果。 |
+| `markets.calendar.trading.previous` | `/api/markets/calendar/trading/previous` | 派生视图 | 继承 `markets.calendar.trading` | 无独立 TTL | 否 | 显式登记为 `markets.calendar.trading` 的派生视图，运行时读取主交易日历并截取结果。 |
+| `markets.calendar.trading.yearly` | `/api/markets/calendar/trading/yearly` | 派生视图 | 继承 `markets.calendar.trading` | 无独立 TTL | 否 | 显式登记为 `markets.calendar.trading` 的派生视图，运行时读取主交易日历并按年份范围返回。 |
 | `markets.connect.active_top10` | `/api/markets/connect/active-top10` | 定时更新 | 每天 | 180 天 | 是 | 互联互通活跃榜是日频市场事件。 |
 | `markets.connect.capital_flow` | `/api/markets/connect/capital-flow` | 定时更新 | 每天 | 180 天 | 是 | 互联互通资金流是日频市场数据。 |
 | `markets.connect.quotas` | `/api/markets/connect/quotas` | 定时更新 | 每天 | 180 天 | 是 | 额度数据随交易日更新。 |
@@ -92,7 +94,7 @@ Task Center 已注册每天北京时间 20:00 调用一次 `/api/admin/capture/r
 | `stocks.quotes.auctions` | `/api/stocks/{code}/quotes/auctions` | 定时更新 | 每天 | 30 天 | 是 | 个股竞价行情已接入 Store，适合每天更新。 |
 | `stocks.quotes.daily` | `/api/stocks/quotes` | 定时更新 | 每天 | 30 天 | 是 | 股票日线是核心行情，适合每日滚动补最近交易日。 |
 | `stocks.quotes.daily_snapshot` | `/api/stocks/quotes/daily-snapshot` | 定时更新 | 每天 | 30 天 | 是 | 单日全市场快照高复用。 |
-| `stocks.quotes.intraday` | `/api/stocks/quotes` | TTL only | 无 | 1 天 | 是 | 分钟线体量大且盘中时效强，不适合当前每日 capture 预跑。 |
+| `stocks.quotes.intraday` | `/api/stocks/quotes` | 定时更新 | 每天 | -1 | 是 | 分钟线默认永久缓存，并由每日 capture 维护最近交易日窗口，兼顾盘中复用与离线底座。 |
 | `stocks.reference.bse_code_mappings` | `/api/stocks/reference/bse-code-mappings` | 定时更新 | 每月最后一天 | -1 | 是 | 北交所代码映射低频变化，月更即可。 |
 | `stocks.reference.hk_connect_targets` | `/api/stocks/reference/hk-connect-targets` | 定时更新 | 每月最后一天 | 365 天 | 是 | 沪深港通标的范围低频调整，月更即可。 |
 | `stocks.research.reports` | `/api/stocks/{code}/research/reports` | TTL only | 无 | 180 天 | 是 | 个股研报按需查询；公共排行由 `rankings.research.reports` 日更。 |
@@ -102,9 +104,9 @@ Task Center 已注册每天北京时间 20:00 调用一次 `/api/admin/capture/r
 
 ## 当前默认开启的定时更新清单
 
-当前默认开启 45 条 capability：
+当前默认开启 46 条 capability：
 
-- 每天：`stocks.quotes.daily`、`stocks.quotes.daily_snapshot`、`stocks.quotes.auctions`、`stocks.factors.technical`、`stocks.indicators.daily_basic`、`stocks.indicators.daily_valuation`、`stocks.indicators.daily_market_value`、`stocks.indicators.money_flow`、`stocks.indicators.risk_flags`、`stocks.indicators.ah_comparisons`、`stocks.indicators.chip_distribution`、`stocks.indicators.chip_performance`、`stocks.indicators.premarket`、`stocks.signals.hl`、`stocks.signals.nine_turn`、`boards.quotes.daily`、`boards.indicators.money_flow`、`boards.indicators.money_flow.snapshot`、`indexes.quotes.daily`、`markets.trading.open_auctions`、`markets.events.news`、`markets.indicators.main_capital_flow`、`markets.connect.capital_flow`、`markets.connect.quotas`、`markets.connect.active_top10`、`markets.events.block_trades`、`markets.participants.dragon_tiger`、`markets.participants.dragon_tiger.institutions`、`markets.participants.hot_money.details`、`rankings.research.reports`
+- 每天：`stocks.quotes.daily`、`stocks.quotes.intraday`、`stocks.quotes.daily_snapshot`、`stocks.quotes.auctions`、`stocks.factors.technical`、`stocks.indicators.daily_basic`、`stocks.indicators.daily_valuation`、`stocks.indicators.daily_market_value`、`stocks.indicators.money_flow`、`stocks.indicators.risk_flags`、`stocks.indicators.ah_comparisons`、`stocks.indicators.chip_distribution`、`stocks.indicators.chip_performance`、`stocks.indicators.premarket`、`stocks.signals.hl`、`stocks.signals.nine_turn`、`boards.quotes.daily`、`boards.indicators.money_flow`、`boards.indicators.money_flow.snapshot`、`indexes.quotes.daily`、`markets.trading.open_auctions`、`markets.events.news`、`markets.indicators.main_capital_flow`、`markets.connect.capital_flow`、`markets.connect.quotas`、`markets.connect.active_top10`、`markets.events.block_trades`、`markets.participants.dragon_tiger`、`markets.participants.dragon_tiger.institutions`、`markets.participants.hot_money.details`、`rankings.research.reports`
 - 每周日：`boards.members`、`indexes.members`、`rankings.research.broker_monthly_picks`、`stocks.ownership.shareholders.changes`
 - 每月最后一天：`stocks.catalog`、`stocks.catalog.archive`、`stocks.profile.management_rewards`、`stocks.profile.managers`、`boards.catalog`、`boards.reference.categories`、`indexes.catalog`、`markets.calendar.trading`、`markets.participants.hot_money`、`stocks.reference.bse_code_mappings`、`stocks.reference.hk_connect_targets`
 

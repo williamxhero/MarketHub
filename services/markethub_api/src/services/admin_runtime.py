@@ -12,7 +12,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 
 from docs_all import collect_all_doc_items
-from quotemux.capabilities import get_capability_definition, list_public_api_bindings, normalize_capability_id
+from quotemux.capabilities import get_capability_config_root, get_capability_definition, list_public_api_bindings, normalize_capability_id
 from quotemux.config_runtime import ContractPolicyOverride, SourceInstanceConfig, get_config_runtime
 from quotemux.contracts.policies import get_contract_policy, list_contract_policies
 from quotemux.contracts.registry import get_contract_allowed_merge_strategies, get_contract_result_shape, list_contract_names
@@ -437,7 +437,7 @@ def _serialize_profile(profile) -> dict[str, object]:
 
 
 def _serialize_policy(policy: ContractPolicyOverride) -> dict[str, object]:
-    capability_id = normalize_capability_id(policy.contract_name)
+    capability_id = get_capability_config_root(policy.contract_name)
     base_policy = get_contract_policy(capability_id)
     return {
         "capability_id": capability_id,
@@ -451,26 +451,28 @@ def _serialize_policy(policy: ContractPolicyOverride) -> dict[str, object]:
 
 
 def _default_cache_policy_payload(capability_id: str) -> dict[str, object]:
-    policy_default = get_capability_update_policy_default(capability_id)
+    root_capability_id = get_capability_config_root(capability_id)
+    policy_default = get_capability_update_policy_default(root_capability_id)
     cache_enabled = default_cache_enabled_from_ttl_days(policy_default.cache_ttl_days)
     return {
-        "capability_id": capability_id,
+        "capability_id": root_capability_id,
         "enabled": cache_enabled,
         "read_enabled": cache_enabled,
         "write_enabled": cache_enabled,
         "ttl_seconds": default_ttl_seconds_from_days(policy_default.cache_ttl_days),
-        "time_field": _time_field_for_capability(capability_id),
-        "key_fields": list(_key_fields_for_capability(capability_id)),
-        "request_scope_fields": list(_request_scope_fields_for_capability(capability_id)),
-        "coverage_mode": _coverage_mode_for_capability(capability_id),
+        "time_field": _time_field_for_capability(root_capability_id),
+        "key_fields": list(_key_fields_for_capability(root_capability_id)),
+        "request_scope_fields": list(_request_scope_fields_for_capability(root_capability_id)),
+        "coverage_mode": _coverage_mode_for_capability(root_capability_id),
     }
 
 
 def _cache_policy_payload(capability_id: str) -> dict[str, object]:
+    root_capability_id = get_capability_config_root(capability_id)
     try:
-        return _CACHE_ADMIN.get_policy(capability_id)
+        return _CACHE_ADMIN.get_policy(root_capability_id)
     except Exception:
-        return _default_cache_policy_payload(capability_id)
+        return _default_cache_policy_payload(root_capability_id)
 
 
 def ttl_days_from_cache_policy(cache_policy: dict[str, object]) -> int:
@@ -493,8 +495,9 @@ def _ttl_seconds_from_days(ttl_days: int) -> int:
 
 
 def cache_effective_for_capability(capability_id: str, ttl_days: int) -> bool:
+    root_capability_id = get_capability_config_root(capability_id)
     try:
-        capture_policy = get_capture_policy(capability_id)
+        capture_policy = get_capture_policy(root_capability_id)
         if bool(capture_policy["enabled"]):
             return True
     except Exception:
@@ -503,13 +506,14 @@ def cache_effective_for_capability(capability_id: str, ttl_days: int) -> bool:
 
 
 def _sync_cache_policy_for_capture(capability_id: str, capture_enabled: bool) -> None:
-    current_cache_policy = _cache_policy_payload(capability_id)
+    root_capability_id = get_capability_config_root(capability_id)
+    current_cache_policy = _cache_policy_payload(root_capability_id)
     ttl_seconds = int(current_cache_policy["ttl_seconds"])
     ttl_keeps_cache_enabled = _cache_enabled_by_ttl_seconds(ttl_seconds)
     cache_enabled = capture_enabled or ttl_keeps_cache_enabled
     _CACHE_ADMIN.update_policy(
         CachePolicyUpdate(
-            capability_id=capability_id,
+            capability_id=root_capability_id,
             enabled=cache_enabled,
             ttl_seconds=ttl_seconds,
             read_enabled=cache_enabled,
@@ -524,7 +528,7 @@ def _capability_settings_row(
     packages: tuple[object, ...] | None = None,
     api_doc_payloads_by_path: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, object]:
-    normalized_capability_id = normalize_capability_id(capability_id)
+    normalized_capability_id = get_capability_config_root(capability_id)
     active_policies = _all_policies_by_contract() if policies is None else policies
     visible_packages = _visible_manifests() if packages is None else packages
     policy = active_policies.get(normalized_capability_id)
@@ -584,7 +588,7 @@ def _filter_source_instance_counts(
     offset: int,
     limit: int,
 ) -> dict[str, object]:
-    capability_id = normalize_capability_id(contract_name) if contract_name != "" else ""
+    capability_id = get_capability_config_root(contract_name) if contract_name != "" else ""
     counts = summary.get("source_instance_counts", {})
     rows = list(counts.values()) if isinstance(counts, dict) else []
     filtered_rows: list[dict[str, object]] = []
@@ -593,14 +597,14 @@ def _filter_source_instance_counts(
             continue
         if profile_id != "" and row.get("profile_id") != profile_id:
             continue
-        if capability_id != "" and normalize_capability_id(str(row.get("contract_name", ""))) != capability_id:
+        if capability_id != "" and get_capability_config_root(str(row.get("contract_name", ""))) != capability_id:
             continue
         if package_id != "" and row.get("package_id") != package_id:
             continue
         if source_instance_id != "" and row.get("source_instance_id") != source_instance_id:
             continue
         row = dict(row)
-        row["capability_id"] = normalize_capability_id(str(row.get("contract_name", "")))
+        row["capability_id"] = get_capability_config_root(str(row.get("contract_name", "")))
         filtered_rows.append(row)
     actual_limit = max(1, min(limit, 500))
     actual_offset = max(0, offset)
@@ -820,7 +824,7 @@ def list_contract_policy_overrides() -> list[dict[str, object]]:
 
 
 def save_contract_policy_override(contract_name: str, mode: str, source_order: tuple[str, ...], merge_strategy: str = "") -> dict[str, object]:
-    capability_id = normalize_capability_id(contract_name)
+    capability_id = get_capability_config_root(contract_name)
     base_policy = get_contract_policy(capability_id)
     actual_merge_strategy = merge_strategy if merge_strategy != "" else base_policy.merge_strategy
     policy = ContractPolicyOverride(contract_name=capability_id, mode=mode, source_order=source_order, merge_strategy=actual_merge_strategy)
@@ -852,7 +856,7 @@ def save_capability_settings(
     ttl_days: int | None,
     cache_enabled: bool | None = None,
 ) -> dict[str, object]:
-    normalized_capability_id = normalize_capability_id(capability_id)
+    normalized_capability_id = get_capability_config_root(capability_id)
     policy = _all_policies_by_contract().get(normalized_capability_id)
     if policy is not None:
         actual_merge_strategy = merge_strategy if merge_strategy != "" else policy.merge_strategy
@@ -916,11 +920,11 @@ def list_capture_overview() -> list[dict[str, object]]:
 
 
 def get_capture_policy(capability_id: str) -> dict[str, object]:
-    return _capture_admin().get_policy(capability_id)
+    return _capture_admin().get_policy(get_capability_config_root(capability_id))
 
 
 def save_capture_policy(capability_id: str, payload: dict[str, object]) -> dict[str, object]:
-    normalized_capability_id = normalize_capability_id(capability_id)
+    normalized_capability_id = get_capability_config_root(capability_id)
     current = get_capture_policy(normalized_capability_id)
     schedule = _fixed_capture_schedule(payload, current)
     updated = _capture_admin().update_policy(
@@ -958,12 +962,14 @@ def _fixed_capture_schedule(payload: dict[str, object], current: dict[str, objec
 
 
 def list_capture_runs(capability_id: str = "", status: str = "", limit: int = 100) -> list[dict[str, object]]:
-    return list(_capture_admin().list_runs(capability_id, status, limit))
+    root_capability_id = "" if capability_id == "" else get_capability_config_root(capability_id)
+    return list(_capture_admin().list_runs(root_capability_id, status, limit))
 
 
 def run_capture(capability_id: str) -> dict[str, object]:
     capture_admin = _capture_admin()
-    return run_with_memory_log("capture.run_one", {"capability_id": capability_id}, lambda: capture_admin.run_capture(capability_id))
+    root_capability_id = get_capability_config_root(capability_id)
+    return run_with_memory_log("capture.run_one", {"capability_id": root_capability_id}, lambda: capture_admin.run_capture(root_capability_id))
 
 
 def run_due_captures() -> list[dict[str, object]]:
@@ -986,7 +992,7 @@ def save_contract_matrix(contracts: tuple[dict[str, object], ...]) -> dict[str, 
     changed_contracts: list[str] = []
     for contract_payload in contracts:
         contract_name = str(contract_payload.get("capability_id", "") or contract_payload.get("contract_name", ""))
-        capability_id = normalize_capability_id(contract_name)
+        capability_id = get_capability_config_root(contract_name)
         policy = policies.get(capability_id)
         if policy is None:
             continue

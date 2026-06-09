@@ -21,4 +21,5 @@
 ## 补充说明
 
 - 结果按日期升序返回，最多返回 `n` 个开市日。
-- 执行时会先读取 QuoteMux Store 的 `markets.calendar.trading.previous`；未命中时按 Capability Matrix 读取交易日历并截取最近 `n` 个结果。
+- 该接口是显式登记在 `DERIVED_CAPABILITY_BASE_IDS` 的派生视图；不独立配置 TTL、缓存策略、采集策略或更新频率。
+- 执行时读取主 capability `markets.calendar.trading` 的 QuoteMux Store 和配置，再从交易日历中截取 `trade_date` 之前最多 `n` 个开市日。

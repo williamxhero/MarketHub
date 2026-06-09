@@ -17,3 +17,9 @@
 - `exchange`（`str`）：交易所标识，如 `SSE`、`SZSE`、`BSE`、`HKEX`。
 - `trade_date`（`str`）：交易日日期。
 - `is_open`（`bool`）：是否为开市日。
+
+## 补充说明
+
+- 该接口是显式登记在 `DERIVED_CAPABILITY_BASE_IDS` 的派生视图；不独立配置 TTL、缓存策略、采集策略或更新频率。
+- 执行时读取主 capability `markets.calendar.trading` 的 QuoteMux Store 和配置，再按 `start_year` / `end_year` 生成年度日期范围。
+- 默认 provider 候选源继承主交易日历：`static_core -> Tushare -> AKShare emergency`。

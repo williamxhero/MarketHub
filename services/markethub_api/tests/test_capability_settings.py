@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -16,7 +16,9 @@ from runtime_paths import configure_python_path
 configure_python_path()
 
 from app import app
+from quotemux.capabilities import DERIVED_CAPABILITY_BASE_IDS, get_capability_config_root, is_independently_configurable_capability_id
 from quotemux.config_runtime import reset_config_runtime_cache
+from quotemux.contracts.policies import get_contract_policy
 from quotemux.store.default_update_policy import get_capability_update_policy_default, ttl_seconds_from_days
 from services import admin_runtime
 
@@ -24,6 +26,8 @@ from services import admin_runtime
 client = TestClient(app)
 TMP_ROOT = Path(__file__).resolve().parents[3] / ".tmp" / "capability_settings_tests"
 STOCK_DAILY_POLICY_DEFAULT = get_capability_update_policy_default("stocks.quotes.daily")
+STOCK_INTRADAY_POLICY_DEFAULT = get_capability_update_policy_default("stocks.quotes.intraday")
+TRADING_CALENDAR_POLICY_DEFAULT = get_capability_update_policy_default("markets.calendar.trading")
 
 
 class FakeCacheAdmin:
@@ -122,6 +126,25 @@ def test_capability_settings_reads_current_merge_and_cache(monkeypatch) -> None:
     assert payload["cache_policy"]["ttl_seconds"] == ttl_seconds_from_days(STOCK_DAILY_POLICY_DEFAULT.cache_ttl_days)
     assert payload["cache_policy"]["time_field"] != ""
     assert payload["cache_policy"]["key_fields"] != []
+
+
+def test_capability_settings_reads_intraday_default_capture_cache(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "read_intraday_default")
+    fake_cache_admin = FakeCacheAdmin()
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=True))
+
+    response = client.get("/api/admin/capability-settings/stocks.quotes.intraday")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["capability_id"] == "stocks.quotes.intraday"
+    assert payload["ttl_days"] == STOCK_INTRADAY_POLICY_DEFAULT.cache_ttl_days
+    assert payload["cache_effective"] is True
+    assert payload["cache_policy"]["enabled"] is True
+    assert payload["cache_policy"]["read_enabled"] is True
+    assert payload["cache_policy"]["write_enabled"] is True
+    assert payload["cache_policy"]["ttl_seconds"] == ttl_seconds_from_days(STOCK_INTRADAY_POLICY_DEFAULT.cache_ttl_days)
 
 
 def test_capability_settings_updates_ttl_days_with_capture_disabled(monkeypatch) -> None:
@@ -379,3 +402,79 @@ def test_capture_policy_enables_cache_even_when_ttl_zero(monkeypatch) -> None:
     assert payload["cache_policy"]["enabled"] is True
     assert payload["cache_policy"]["read_enabled"] is True
     assert payload["cache_policy"]["write_enabled"] is True
+
+
+def test_derived_capability_roots_are_explicit() -> None:
+    assert DERIVED_CAPABILITY_BASE_IDS["markets.calendar.trading.next"] == "markets.calendar.trading"
+    assert get_capability_config_root("markets.calendar.trading.next") == "markets.calendar.trading"
+    assert is_independently_configurable_capability_id("markets.calendar.trading.next") is False
+    assert get_contract_policy("markets.calendar.trading.next").name == "markets.calendar.trading"
+    assert get_capability_update_policy_default("markets.calendar.trading.next").capability_id == "markets.calendar.trading"
+    assert get_capability_config_root("markets.calendar.trading.future") == "markets.calendar.trading.future"
+    assert is_independently_configurable_capability_id("markets.calendar.trading.future") is True
+
+
+def test_derived_calendar_settings_use_trading_calendar_root(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "derived_settings")
+    fake_cache_admin = FakeCacheAdmin()
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
+
+    response = client.get("/api/admin/capability-settings/markets.calendar.trading.next")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["capability_id"] == "markets.calendar.trading"
+    assert payload["contract_name"] == "markets.calendar.trading"
+    assert payload["ttl_days"] == TRADING_CALENDAR_POLICY_DEFAULT.cache_ttl_days
+    assert payload["cache_policy"]["capability_id"] == "markets.calendar.trading"
+    assert "markets.calendar.trading.next" not in fake_cache_admin._policies
+
+
+def test_derived_calendar_capture_policy_uses_trading_calendar_root(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "derived_capture")
+    fake_cache_admin = FakeCacheAdmin()
+    fake_capture_admin = FakeCaptureAdmin(enabled=False)
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", fake_cache_admin)
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", fake_capture_admin)
+
+    detail_response = client.get("/api/admin/capture-policies/markets.calendar.trading.previous")
+    update_response = client.put(
+        "/api/admin/capture-policies/markets.calendar.trading.previous",
+        json={
+            "enabled": True,
+            "cadence": "monthly",
+            "run_time": "00:00:00",
+            "timezone": "Asia/Shanghai",
+            "weekday": None,
+            "month": None,
+            "month_day": 31,
+            "scope_profile": "trading_calendar_year_window",
+            "window_count": 2,
+            "batch_size": 1,
+            "notes": "",
+        },
+    )
+
+    assert detail_response.status_code == 200
+    assert detail_response.json()["capability_id"] == "markets.calendar.trading"
+    assert update_response.status_code == 200
+    payload = update_response.json()
+    assert payload["capability_id"] == "markets.calendar.trading"
+    assert fake_capture_admin.policy["capability_id"] == "markets.calendar.trading"
+    assert "markets.calendar.trading.previous" not in fake_cache_admin._policies
+
+
+def test_capability_matrix_hides_derived_calendar_capabilities(monkeypatch) -> None:
+    _configure_admin_runtime(monkeypatch, "derived_matrix")
+    monkeypatch.setattr(admin_runtime, "_CACHE_ADMIN", FakeCacheAdmin())
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", FakeCaptureAdmin(enabled=False))
+
+    response = client.get("/api/admin/capability-matrix")
+
+    assert response.status_code == 200
+    capability_ids = {item["capability_id"] for item in response.json()["capabilities"]}
+    assert "markets.calendar.trading" in capability_ids
+    assert "markets.calendar.trading.next" not in capability_ids
+    assert "markets.calendar.trading.previous" not in capability_ids
+    assert "markets.calendar.trading.yearly" not in capability_ids

@@ -20,6 +20,6 @@
 
 ## 补充说明
 
-- 默认 provider 候选是 `static_core -> Tushare -> AKShare emergency`。
-- 主路径先读取 QuoteMux Store 的 `markets.calendar.trading.yearly`，未命中时按 Capability Matrix 并发读取年度区间日历。
-- Runtime Profile 会按 Capability Matrix 勾选的源并发读取年度区间日历，再按该 capability 的 `merge_strategy` 合并后返回。
+- 该接口是显式登记在 `DERIVED_CAPABILITY_BASE_IDS` 的派生视图；不独立配置 TTL、缓存策略、采集策略或更新频率。
+- 执行时读取主 capability `markets.calendar.trading` 的 QuoteMux Store 和配置，再按 `start_year` / `end_year` 生成年度日期范围。
+- 默认 provider 候选源继承主交易日历：`static_core -> Tushare -> AKShare emergency`。

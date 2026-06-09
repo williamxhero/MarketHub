@@ -118,9 +118,9 @@
 | MarketHub API | 本地能力 / Store | OpenTDX | Tushare | B3 后备 | 实时 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `/api/markets/calendar/trading` | `markets.calendar.trading` Store + `static_core` |  | `trade_cal` | `akshare` | 否 | 默认候选源是 `static_core -> Tushare -> AKShare emergency`，Capability Matrix 勾选的源会并发参与并按 `merge_strategy` 合并。`AKShare` 只作为应急日历，不视为正式 `trade_cal` 等价物。 |
-| `/api/markets/calendar/trading/previous` | `ref.trade_calendar` |  | `trade_cal` | `akshare` | 否 | 先补齐参考日前的交易日历缺口，再截取最近 `n` 个结果。 |
-| `/api/markets/calendar/trading/next` | `ref.trade_calendar` |  | `trade_cal` | `akshare` | 否 | 先补齐参考日后的交易日历缺口，再截取最近 `n` 个结果。 |
-| `/api/markets/calendar/trading/yearly` | `markets.calendar.trading.yearly` Store + `static_core` |  | `trade_cal` | `akshare` | 否 | 复用交易日历能力的默认候选源 `static_core -> Tushare -> AKShare emergency`，按 `merge_strategy` 合并。 |
+| `/api/markets/calendar/trading/previous` | 派生视图，继承 `markets.calendar.trading` Store |  | `trade_cal` | `akshare` | 否 | 显式登记后从主交易日历派生，不独立配置 Store、TTL、采集策略或更新频率；运行时截取参考日前最近 `n` 个开市日。 |
+| `/api/markets/calendar/trading/next` | 派生视图，继承 `markets.calendar.trading` Store |  | `trade_cal` | `akshare` | 否 | 显式登记后从主交易日历派生，不独立配置 Store、TTL、采集策略或更新频率；运行时截取参考日后最近 `n` 个开市日。 |
+| `/api/markets/calendar/trading/yearly` | 派生视图，继承 `markets.calendar.trading` Store |  | `trade_cal` | `akshare` | 否 | 显式登记后从主交易日历派生，不独立配置 Store、TTL、采集策略或更新频率；运行时按年份范围读取主日历。 |
 | `/api/markets/events/news` | `news_store` |  |  | 否 | 统一新闻事件流正式主入口。默认通过 `news_store` 读取 `fact.news_event_agent_view`，仅在 `include_sources=true` 时再补查 `fact.news_event_source`。 |
 | `/api/markets/indicators/main-capital-flow` |  |  | `moneyflow_mkt_dc` | 否 | 市场主力资金。 |
 | `/api/markets/connect/capital-flow` |  |  | `moneyflow_hsgt` | 否 | 互联互通资金流。 |
