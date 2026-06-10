@@ -218,7 +218,7 @@ async def connection_diagnostics() -> dict[str, object]:
     return {
         "provider_runtime": get_provider_metrics(),
         "fallback_runtime": read_fallback_summary(),
-        "datalake_db_pool": get_pool_metrics(),
+        "store_db_pool": get_pool_metrics(),
         "data_thread_pool": get_data_thread_pool_metrics(),
         "sync_thread_pool": get_sync_thread_pool_metrics(),
     }

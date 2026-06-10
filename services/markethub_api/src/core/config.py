@@ -26,35 +26,33 @@ INTEGRATION_DOCS_ROOT = DOCS_ROOT / "integration-api"
 STATIC_INDEX_PATH = SERVER_ROOT / "static" / "index.html"
 STATIC_FAVICON_PATH = SERVER_ROOT / "static" / "favicon.svg"
 
-def _get_datalake_root() -> Path:
-    path_text = os.getenv("DATALAKE_ROOT", "")
+def _get_data_root() -> Path:
+    path_text = os.getenv("MARKETHUB_DATA_ROOT", "")
     if path_text:
         return Path(path_text)
-    return Path("C:/STOCKS/datalake")
+    return Path("C:/STOCKS/markethub")
 
 
-DATALAKE_ROOT = _get_datalake_root()
+DATA_ROOT = _get_data_root()
 
 
 def _get_db_port() -> int:
-    text = os.getenv("DL_DB_PORT", "55432")
+    text = os.getenv("MARKETHUB_DB_PORT", "55432")
     try:
         return int(text)
     except ValueError:
         return 55432
 
 
-DL_DB_HOST = os.getenv("DL_DB_HOST", "localhost")
-DL_DB_PORT = _get_db_port()
-DL_DB_NAME = os.getenv("DL_DB_NAME", "datalake_dev")
-DL_DB_USER = os.getenv("DL_DB_USER", "datalake")
-DL_DB_PASSWORD = os.getenv("DL_DB_PASSWORD", "datalake_dev_password")
-DL_DB_CONNECT_TIMEOUT = 3
+DB_HOST = os.getenv("MARKETHUB_DB_HOST", "localhost")
+DB_PORT = _get_db_port()
+DB_NAME = os.getenv("MARKETHUB_DB_NAME", "markethub_dev")
+DB_USER = os.getenv("MARKETHUB_DB_USER", "markethub")
+DB_PASSWORD = os.getenv("MARKETHUB_DB_PASSWORD", "markethub_dev_password")
+DB_CONNECT_TIMEOUT = 3
 
 DATE_FORMAT = "%Y%m%d"
 DATETIME_FORMAT = "%Y%m%d %H:%M:%S"
 
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 5000
-
-TS_TOKEN = os.getenv("TS_TOKEN", "") or os.getenv("DL_TS_TOKEN", "")

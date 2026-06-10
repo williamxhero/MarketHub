@@ -140,7 +140,7 @@ async def api_stock_catalog(
     list_status: str = Query(""),
     is_hs: str = Query(""),
     include_delisted: bool = Query(False),
-    limit: int = Query(200, ge=1, le=5000),
+    limit: int = Query(5000, ge=1, le=5000),
     offset: int = Query(0, ge=0),
 ) -> list[dict[str, object]]:
     del market

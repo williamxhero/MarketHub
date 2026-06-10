@@ -31,20 +31,20 @@
 ## 运行前环境
 
 至少需要：
-- `DL_DB_HOST`
-- `DL_DB_PORT`
-- `DL_DB_NAME`
-- `DL_DB_USER`
-- `DL_DB_PASSWORD`
-- `DATALAKE_ROOT`
+- `MARKETHUB_DB_HOST`
+- `MARKETHUB_DB_PORT`
+- `MARKETHUB_DB_NAME`
+- `MARKETHUB_DB_USER`
+- `MARKETHUB_DB_PASSWORD`
+- `MARKETHUB_DATA_ROOT`
 
-如需访问真实 provider，还需要：
-- `DL_TS_TOKEN` 或 `TS_TOKEN`
+如需访问真实 provider，还需要在 source instance 配置中写入统一密钥字段：
+- `secret_values.api_key`
 
 ## 当前来源优先级
 
 - 股票、板块、指数相关接口按 `capability_id` 进入 QuoteMux Store，Store 未命中时再按 Capability Matrix 启用的 source package 并发取数。
-- `datalake` 只保留为未来一次性导入来源，不再作为默认运行时 provider。
+- `datalake` source 已废弃；运行时不再把它作为 provider、默认候选源或隐藏 fallback。
 - 指数接口当前能力链路为 `static_core / Store -> Tushare/OpenTDX -> efinance -> mootdx -> akshare`。
 
 ## 最小验收

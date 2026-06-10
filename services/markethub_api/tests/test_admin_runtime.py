@@ -23,7 +23,7 @@ from app import app
 from docs_all import collect_all_doc_items
 from quotemux.config_runtime import get_config_runtime, reset_config_runtime_cache
 from quotemux.config_runtime.models import SourceInstanceConfig
-from quotemux.infra.provider_config import get_tushare_token
+from quotemux.infra.provider_config import get_provider_api_key
 from quotemux.source_packages.instance_context import use_source_instance
 from services import admin_runtime
 
@@ -133,7 +133,7 @@ def test_admin_source_packages_and_instances(monkeypatch, tmp_path) -> None:
     instances = list_response.json()
     assert any(item["instance_id"] == "efinance-backup" for item in instances)
     tushare_instance = next(item for item in instances if item["package_id"] == "tushare")
-    assert tushare_instance["secret_values"] == {"token": "***"}
+    assert tushare_instance["secret_values"] == {"api_key": "***"}
 
 
 def test_admin_unknown_resource_and_validation_errors(monkeypatch, tmp_path) -> None:
@@ -161,9 +161,8 @@ def test_admin_unknown_resource_and_validation_errors(monkeypatch, tmp_path) -> 
     assert invalid_instance_response.json()["code"] == "VALIDATION_FAILED"
 
 
-def test_tushare_token_prefers_source_instance_secret(monkeypatch, tmp_path) -> None:
+def test_provider_api_key_reads_source_instance_secret(monkeypatch, tmp_path) -> None:
     _configure_admin_runtime(monkeypatch, tmp_path)
-    monkeypatch.setenv("TS_TOKEN", "env-token")
     source_instance = SourceInstanceConfig(
         instance_id="tushare-primary",
         package_id="tushare",
@@ -172,14 +171,14 @@ def test_tushare_token_prefers_source_instance_secret(monkeypatch, tmp_path) -> 
         priority=1,
         timeout_seconds=None,
         config_values={"timeout_seconds": "15"},
-        secret_values={"token": "instance-token"},
+        secret_values={"api_key": "instance-api-key"},
         tags=(),
     )
 
     with use_source_instance(source_instance):
-        assert get_tushare_token() == "instance-token"
+        assert get_provider_api_key() == "instance-api-key"
 
-    assert get_tushare_token() == "env-token"
+    assert get_provider_api_key() == ""
 
 
 def test_admin_profiles_and_policies(monkeypatch, tmp_path) -> None:
@@ -287,7 +286,12 @@ def test_admin_contract_matrix_reads_and_saves_package_selection(monkeypatch, tm
     matrix = matrix_response.json()
     package_ids = [item["package_id"] for item in matrix["packages"]]
     assert "tushare" in package_ids
-    doc_api_paths = {item.api_path for item in collect_all_doc_items() if item.api_path != "" and item.api_path != "/api/health"}
+    derived_calendar_paths = {
+        "/api/markets/calendar/trading/previous",
+        "/api/markets/calendar/trading/next",
+        "/api/markets/calendar/trading/yearly",
+    }
+    doc_api_paths = {item.api_path for item in collect_all_doc_items() if item.api_path != "" and item.api_path != "/api/health" and item.api_path not in derived_calendar_paths}
     matrix_api_paths = {api_path for capability in matrix["capabilities"] for api_path in capability["api_paths"]}
     matrix_api_docs = {api_doc["path"]: api_doc["href"] for capability in matrix["capabilities"] for api_doc in capability["api_docs"]}
     assert matrix_api_paths == doc_api_paths

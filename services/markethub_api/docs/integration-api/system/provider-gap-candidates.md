@@ -54,7 +54,7 @@
 - `get_all_securities('index')`
 - `get_price`
 - `get_index_stocks`
-- 由于指数能力已经由 `datalake + A2/B3` 完成现网接入，所以 SuperMind 当前不构成 gap。
+- 由于指数能力已经由现有 source package 覆盖，所以 SuperMind 当前不构成 gap。
 - `query_iwencai` / `get_iwencai` 仍然不建议并入 MarketHub 主路径。
 
 ## 重新打开 gap 的条件

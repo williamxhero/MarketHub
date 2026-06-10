@@ -31,12 +31,12 @@ def _wait_until(checker, timeout_seconds: float = 1.0) -> None:
 
 def test_queued_gm_request_does_not_hold_global_provider_gate(monkeypatch) -> None:
     gm_gate = provider_runtime.ProviderGate("gm", provider_runtime.ProviderPolicy(1, 0.0, 0, 0.3))
-    db_gate = provider_runtime.ProviderGate("datalake_db", provider_runtime.ProviderPolicy(1, 0.0, 0, 0.3))
+    db_gate = provider_runtime.ProviderGate("store_db", provider_runtime.ProviderPolicy(1, 0.0, 0, 0.3))
     gm_release = threading.Event()
     gm_started = threading.Event()
     queued_finished = threading.Event()
     monkeypatch.setattr(provider_runtime, "_GLOBAL_GATE", threading.BoundedSemaphore(2))
-    monkeypatch.setattr(provider_runtime, "_GATES", {"gm": gm_gate, "datalake_db": db_gate})
+    monkeypatch.setattr(provider_runtime, "_GATES", {"gm": gm_gate, "store_db": db_gate})
 
     def _blocking_gm() -> str:
         gm_started.set()
@@ -62,7 +62,7 @@ def test_queued_gm_request_does_not_hold_global_provider_gate(monkeypatch) -> No
     _wait_until(lambda: gm_gate.snapshot()["queued"] == 1)
 
     start = time.monotonic()
-    result = provider_runtime.call_provider_api("datalake_db", "query_dataframe", lambda: "db")
+    result = provider_runtime.call_provider_api("store_db", "query_dataframe", lambda: "db")
     elapsed = time.monotonic() - start
 
     gm_release.set()
