@@ -17,6 +17,7 @@ from quotemux.config_runtime import ContractPolicyOverride, SourceInstanceConfig
 from quotemux.contracts.policies import get_contract_policy, list_contract_policies
 from quotemux.contracts.registry import get_contract_allowed_merge_strategies, get_contract_result_shape, list_contract_names
 from quotemux.contracts.strategies import list_merge_strategies
+from quotemux.infra.db.availability import get_fact_ref_availability
 from quotemux.runtime_core.audit import read_fallback_summary, record_provider_event
 from quotemux.runtime_core.health import get_provider_metrics
 from quotemux.source_packages.registry import clear_loaded_source_package_modules, refresh_default_source_package_registry
@@ -1030,6 +1031,7 @@ def get_runtime_health() -> dict[str, object]:
             for item in instances
         ],
         "provider_runtime": get_provider_metrics(),
+        "fact_ref_availability": get_fact_ref_availability(),
     }
 
 

@@ -28,6 +28,8 @@ from quotemux.capabilities import list_public_api_bindings
 from quotemux.config_runtime.runtime import reset_config_runtime_cache
 from quotemux.runtime_core.registry import get_default_source_registry
 from quotemux.models import BoardMoneyFlowItem, BoardQuoteItem, IndexQuoteItem, NewsEventItem, NewsEventQueryResult, NewsEventSourceItem, StockBasicInfo, StockQuoteCodeSummary, StockQuoteItem, StockQuotesMeta, StockQuotesQueryResult
+from quotemux.query_engine import CapabilityQuerySpec, execute_capability_query
+from quotemux.runtime_core.executor import ProviderStep
 from quotemux.source_packages.registry import refresh_default_source_package_registry
 from quotemux.store.postgres import CacheScope, _coverage_mode_for_capability, _payload_matches_scope, _request_scope_fields_for_capability
 from quotemux_packages.tushare import stocks as tushare_stocks
@@ -86,9 +88,10 @@ def test_health_endpoint() -> None:
 
 def test_public_api_routes_are_all_bound_to_capabilities() -> None:
     ignored_paths = {
-        "/api/console/config",
-        "/api/diagnostics/connections",
-        "/api/health",
+            "/api/console/config",
+            "/api/diagnostics/connections",
+            "/api/diagnostics/fact-ref",
+            "/api/health",
         "/api/openapi",
         "/api/openapi.json",
     }
@@ -101,8 +104,8 @@ def test_public_api_routes_are_all_bound_to_capabilities() -> None:
 
     binding_paths = [item.api_path for item in list_public_api_bindings()]
 
-    assert len(route_paths) == 79
-    assert len(binding_paths) == 79
+    assert len(route_paths) == 80
+    assert len(binding_paths) == 80
     assert sorted(route_paths) == sorted(binding_paths)
 
 
@@ -213,6 +216,22 @@ def test_stock_daily_snapshot_endpoint(monkeypatch) -> None:
     assert payload[0]['pre_close'] == 10.0
 
 
+def test_stock_daily_window_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        stocks,
+        'get_market_daily_window',
+        lambda start_date, end_date, limit, offset: [
+            StockQuoteItem(code='600000', trade_time='2025-01-02', freq='1d', close=10.2, pre_close=10.0, change=0.2, pct_chg=2.0, adjust='none')
+        ],
+    )
+    response = client.get('/api/stocks/quotes/daily-window', params={'start_date': '2025-01-01', 'end_date': '2025-01-02'})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]['code'] == '600000'
+    assert payload[0]['trade_time'] == '2025-01-02'
+    assert payload[0]['freq'] == '1d'
+
+
 def test_stock_catalog_endpoint_defaults_to_full_market_limit(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -238,7 +257,7 @@ def test_stock_catalog_cache_scope_uses_catalog_query_fields() -> None:
         time_end=datetime(2026, 1, 1),
     )
 
-    assert fields == ('codes', 'name', 'exchange', 'list_status', 'include_delisted', 'limit', 'offset')
+    assert fields == ('codes', 'name', 'exchange', 'list_status', 'include_delisted')
     assert _coverage_mode_for_capability('stocks.catalog') == 'snapshot'
     assert _payload_matches_scope({'code': '600000', 'name': '浦发银行'}, scope)
     assert not _payload_matches_scope({'code': '000001', 'name': '平安银行'}, scope)
@@ -325,6 +344,16 @@ def test_daily_snapshot_doc_endpoint_contains_formal_snapshot_entry() -> None:
     assert '`fact.stock_daily_1d`' in payload['content']
     assert '`BJSE`' in payload['content']
     assert '`stocks.quotes.daily_snapshot`' in payload['content']
+
+
+def test_daily_window_doc_endpoint_contains_backtest_entry() -> None:
+    response = client.get('/docs/stocks/quotes-daily-window')
+    assert response.status_code == 200
+    payload = response.json()
+    assert '`GET` 返回指定日期区间内的全市场股票日线。' in payload['content']
+    assert '不需要传 `code` 或 `codes`。' in payload['content']
+    assert '`fact.stock_daily_1d`' in payload['content']
+    assert '不复用 `/api/stocks/quotes` 的逐股票缺口补源链路' in payload['content']
 
 
 def test_quotes_doc_endpoint_mentions_fact_stock_daily_1d_and_bjse() -> None:
@@ -549,7 +578,7 @@ def test_quotes_doc_mentions_automatic_gap_fill() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert '`stocks.quotes.daily`' in payload['content']
-    assert 'Capability Matrix 勾选的源并发取数' in payload['content']
+    assert 'Capability Matrix 勾选的源补齐本地缺口' in payload['content']
 
 
 def test_trading_calendar_doc_mentions_ts_gap_fill() -> None:
@@ -672,4 +701,59 @@ def test_market_news_doc_endpoint() -> None:
     assert '`crawl_time`' in payload['content']
     assert '`announcement_time`' in payload['content']
     assert '`published_at` 已从对外响应移除' in payload['content']
+
+
+def test_fact_ref_complete_hit_does_not_write_cache(monkeypatch) -> None:
+    written_items: list[StockQuoteItem] = []
+
+    def fail_store_write(*args, **kwargs):
+        raise AssertionError('fact/ref 完整命中不应写 Cache Store')
+
+    monkeypatch.setattr('quotemux.query_engine.store_result', fail_store_write)
+    items, report = execute_capability_query(
+        CapabilityQuerySpec(
+            capability_id='stocks.quotes.daily',
+            store_identity={'codes': ['000001'], 'freq': '1d'},
+            model_type=StockQuoteItem,
+            key_fields=('code', 'trade_time', 'freq'),
+            sort_fields=('code', 'trade_time'),
+            request_builder=lambda current_items: [],
+            provider_steps=(ProviderStep(name='provider', fetcher=lambda: []),),
+            source_order=('provider',),
+            base_items=[StockQuoteItem(code='000001', trade_time='2026-06-09', freq='1d', close=10.0)],
+            base_source_name='fact.stock_daily_1d',
+            fact_ref_writer=lambda provider_items: written_items.extend(provider_items) is None,
+        )
+    )
+
+    assert [item.code for item in items] == ['000001']
+    assert written_items == []
+    assert report.source_hit_counts['fact.stock_daily_1d'] == 1
+
+
+def test_fact_ref_gap_fill_writes_fact_ref_not_cache(monkeypatch) -> None:
+    written_items: list[StockQuoteItem] = []
+
+    def fail_store_write(*args, **kwargs):
+        raise AssertionError('有 fact/ref 的补洞结果不应写 Cache Store')
+
+    monkeypatch.setattr('quotemux.query_engine.store_result', fail_store_write)
+    items, _ = execute_capability_query(
+        CapabilityQuerySpec(
+            capability_id='stocks.quotes.daily',
+            store_identity={'codes': ['000001'], 'freq': '1d'},
+            model_type=StockQuoteItem,
+            key_fields=('code', 'trade_time', 'freq'),
+            sort_fields=('code', 'trade_time'),
+            request_builder=lambda current_items: [] if len(current_items) >= 2 else [('000001', '2026-06-10', '2026-06-10')],
+            provider_steps=(ProviderStep(name='provider', fetcher=lambda code, start_date, end_date: [StockQuoteItem(code=code, trade_time=start_date, freq='1d', close=11.0)]),),
+            source_order=('provider',),
+            base_items=[StockQuoteItem(code='000001', trade_time='2026-06-09', freq='1d', close=10.0)],
+            base_source_name='fact.stock_daily_1d',
+            fact_ref_writer=lambda provider_items: written_items.extend(provider_items) is None,
+        )
+    )
+
+    assert [item.trade_time for item in items] == ['2026-06-09', '2026-06-10']
+    assert [item.trade_time for item in written_items] == ['2026-06-10']
 

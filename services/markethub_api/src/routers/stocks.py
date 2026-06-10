@@ -131,6 +131,18 @@ async def api_stock_daily_snapshot(
     return await run_data_task(_filter_items, stocks.get_market_daily_snapshot, args, fields, STOCK_QUOTE_FIELDS)
 
 
+@router.get("/api/stocks/quotes/daily-window")
+async def api_stock_daily_window(
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    fields: str = Query(""),
+    limit: int = Query(50000, ge=1),
+    offset: int = Query(0, ge=0),
+) -> list[dict[str, object]]:
+    args = (start_date, end_date, limit, offset)
+    return await run_data_task(_filter_items, stocks.get_market_daily_window, args, fields, STOCK_QUOTE_FIELDS)
+
+
 @router.get("/api/stocks/catalog")
 async def api_stock_catalog(
     codes: str = Query(""),

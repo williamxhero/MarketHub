@@ -11,6 +11,10 @@
 - `/docs/system/minimal-regression`
 - `/docs/system/provider-coverage`
 - `/docs/system/capability-update-policy`
+- `/docs/system/unified-store-provider-query-plan`
+- `/docs/system/fact-ref-store-design-review`
+- `/docs/system/capability-store-metadata`
+- `/docs/system/stock-daily-backtest-optimization`
 - `/docs/system/provider-unification-todo`
 - `/docs/system/provider-gap-candidates`
 

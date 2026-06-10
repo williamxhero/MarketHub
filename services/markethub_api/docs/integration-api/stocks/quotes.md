@@ -46,11 +46,12 @@
 - 不传 `limit` 时，服务端返回请求范围内的完整结果。
 - 传入 `limit` 时，`limit` 表示调用方主动裁剪总返回条数；该兼容接口不返回截断元信息。
 - 需要判断是否完整、是否截断、每只股票实际起止时间时，使用 `/api/stocks/quotes/query`。
-- `freq=1d/1w/1mo` 先读 QuoteMux Store 的 `stocks.quotes.daily`；Store 未命中时按 Capability Matrix 勾选的源并发取数，其中 `1w`、`1mo` 在日线基础上聚合。
+- `freq=1d/1w/1mo` 先读 QuoteMux Store 的 `stocks.quotes.daily`；Store 未命中时先读本地 `fact.stock_daily_1d`，仍有缺口时才按 Capability Matrix 勾选的源补源，其中 `1w`、`1mo` 在日线基础上聚合。
 - `fact.stock_daily_1d` 已纳入 `BJSE` 正式日线口径，所以 `1d` 日线查询会正常返回北京证券交易所股票。
 - `freq=1m/5m/15m/30m/60m` 先读 QuoteMux Store 的 `stocks.quotes.intraday`，未命中时走 `OpenTDX -> efinance -> mootdx -> akshare`。
 - `freq=1d/1w/1mo` 的默认 provider 候选是 `static_core -> Tushare -> efinance -> mootdx -> akshare`。
-- Runtime Profile 会按 Capability Matrix 勾选的源并发取数，再按该 capability 的 `merge_strategy` 合并成一份结果。
+- Runtime Profile 会按 Capability Matrix 勾选的源补齐本地缺口，再按该 capability 的 `merge_strategy` 合并成一份结果。
 - 如果需求是按 `trade_date` 直接拿全市场日线快照，请使用 `GET /api/stocks/quotes/daily-snapshot`，不要再拼大批量 `codes`。
+- 如果需求是按日期区间读取全市场日线，请使用 `GET /api/stocks/quotes/daily-window`，不要把全市场拆成大量 `codes` 批次。
 - `open`、`high`、`low`、`close`、`volume`、`amount` 按底层真实值返回；底层该行为空时，接口返回 `null`。
 - `pre_close`、`change`、`pct_chg` 由服务层根据上一条可用收盘价计算；上一条收盘价不存在或不可用时，这几个字段返回 `null`。

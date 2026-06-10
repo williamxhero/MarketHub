@@ -19,6 +19,7 @@ from core.config import HOST, PORT, STATIC_FAVICON_PATH, STATIC_INDEX_PATH
 from data_threads import get_data_thread_pool_metrics
 from quotemux.config_runtime.validation import ConfigValidationError
 from quotemux.models import ApiError
+from quotemux.infra.db.availability import get_fact_ref_availability
 from quotemux.infra.db.client import close_pool, get_pool_metrics
 from quotemux.runtime_core.audit import read_fallback_summary
 from quotemux.runtime_core.health import get_provider_metrics
@@ -222,6 +223,11 @@ async def connection_diagnostics() -> dict[str, object]:
         "data_thread_pool": get_data_thread_pool_metrics(),
         "sync_thread_pool": get_sync_thread_pool_metrics(),
     }
+
+
+@app.get("/api/diagnostics/fact-ref")
+async def fact_ref_diagnostics() -> dict[str, object]:
+    return get_fact_ref_availability()
 
 
 if __name__ == "__main__":
