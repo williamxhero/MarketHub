@@ -18,3 +18,5 @@ services/markethub_api/src/data/*.db
 services/markethub_console/dist/
 /docs
 /AGENTS.md
+/scripts/test.ps1
+/scripts/build_console.ps1
