@@ -59,7 +59,7 @@ SUMMARY_BY_API_PATH = {
     "/api/stocks/{code}/indicators/chip-performance": "返回单只股票的筹码盈亏分布数据。",
     "/api/stocks/indicators/daily-basic": "返回股票日频基础指标。",
     "/api/stocks/quotes/daily-snapshot": "返回指定交易日的全市场股票日线快照。",
-    "/api/stocks/quotes/daily-window": "返回指定日期区间内的全市场股票日线。",
+    "/api/stocks/quotes/daily-local-window": "返回指定日期区间内的全市场股票日线。",
     "/api/boards/indicators/money-flow": "返回指定交易日的全市场板块资金流快照。",
     "/api/stocks/indicators/daily-market-value": "返回股票日频市值指标。",
     "/api/stocks/indicators/daily-valuation": "返回股票日频估值指标。",

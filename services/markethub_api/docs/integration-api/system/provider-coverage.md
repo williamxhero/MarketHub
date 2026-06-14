@@ -152,7 +152,7 @@
 
 ## 股票日线状态字段
 
-- `/api/stocks/quotes`、`/api/stocks/quotes/query`、`/api/stocks/quotes/daily-snapshot`、`/api/stocks/quotes/daily-window` 返回股票日线时支持 `is_suspended` 和 `is_st` 字段。
+- `/api/stocks/quotes`、`/api/stocks/quotes/query`、`/api/stocks/quotes/daily-snapshot`、`/api/stocks/quotes/daily-local-window` 返回股票日线时支持 `is_suspended` 和 `is_st` 字段。
 - `fact.stock_daily_1d` 是股票日线状态字段的本地权威落点；provider 或 source package 返回的数据写入事实表后，后续查询统一从事实表读取。
 - `Tushare`、`AKShare`、`efinance`、`mootdx`、`OpenTDX` 等 provider 未明确返回停牌或 ST 状态时，系统默认写入 `false`。
 - `skip_suspended=true` 时过滤停牌占位行。

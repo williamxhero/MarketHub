@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from core.config import DEFAULT_LIMIT
-from quotemux import QuoteMux, StockDailySnapshotRequest, StockDailyWindowRequest, StockQuotesRequest
+from quotemux import QuoteMux, StockDailyLocalWindowRequest, StockDailySnapshotRequest, StockQuotesRequest
 from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialStatementItem, StockManagerItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
 from services.common import ensure_limit, require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
 
@@ -89,9 +89,9 @@ def get_market_daily_snapshot(trade_date: str, limit: int, offset: int, skip_sus
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def get_market_daily_window(start_date: str, end_date: str, limit: int, offset: int, skip_suspended: bool, skip_st: bool) -> list[StockQuoteItem]:
+def get_market_daily_local_window(start_date: str, end_date: str, limit: int, offset: int, skip_suspended: bool, skip_st: bool) -> list[StockQuoteItem]:
     try:
-        return _QUOTEMUX.stocks.get_daily_window(StockDailyWindowRequest(start_date=start_date, end_date=end_date, limit=limit, offset=offset, skip_suspended=skip_suspended, skip_st=skip_st))
+        return _QUOTEMUX.stocks.get_daily_local_window(StockDailyLocalWindowRequest(start_date=start_date, end_date=end_date, limit=limit, offset=offset, skip_suspended=skip_suspended, skip_st=skip_st))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

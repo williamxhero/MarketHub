@@ -139,8 +139,8 @@ async def api_stock_daily_snapshot(
     return await run_quote_task(_filter_items, stocks.get_market_daily_snapshot, args, fields, STOCK_QUOTE_FIELDS)
 
 
-@router.get("/api/stocks/quotes/daily-window")
-async def api_stock_daily_window(
+@router.get("/api/stocks/quotes/daily-local-window")
+async def api_stock_daily_local_window(
     start_date: str = Query(...),
     end_date: str = Query(...),
     fields: str = Query(""),
@@ -150,7 +150,7 @@ async def api_stock_daily_window(
     skip_st: bool = Query(False),
 ) -> list[dict[str, object]]:
     args = (start_date, end_date, limit, offset, skip_suspended, skip_st)
-    return await run_quote_task(_filter_items, stocks.get_market_daily_window, args, fields, STOCK_QUOTE_FIELDS)
+    return await run_quote_task(_filter_items, stocks.get_market_daily_local_window, args, fields, STOCK_QUOTE_FIELDS)
 
 
 @router.get("/api/stocks/catalog")
