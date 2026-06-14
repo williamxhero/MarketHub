@@ -102,8 +102,11 @@ def test_public_api_routes_are_all_bound_to_capabilities() -> None:
 
     binding_paths = [item.api_path for item in list_public_api_bindings()]
 
-    assert len(route_paths) == 80
-    assert len(binding_paths) == 80
+    assert len(route_paths) == 79
+    assert len(binding_paths) == 79
+    assert "/api/stocks/quotes" in route_paths
+    assert "/api/stocks/quotes/query" not in route_paths
+    assert "/api/stocks/quotes/query" not in binding_paths
     assert sorted(route_paths) == sorted(binding_paths)
 
 
@@ -137,12 +140,19 @@ def test_openapi_endpoint() -> None:
 
 
 def test_stock_quotes_limit_has_no_artificial_upper_bound(monkeypatch) -> None:
-    monkeypatch.setattr(stocks, 'get_quotes', lambda *args: [])
+    monkeypatch.setattr(
+        stocks,
+        'get_quotes_query_result',
+        lambda *args: StockQuotesQueryResult(
+            items=[],
+            meta=StockQuotesMeta(total_rows=0, returned_rows=0, complete=True, truncated=False, codes=[]),
+        ),
+    )
 
     response = client.get('/api/stocks/quotes', params={'codes': '603158', 'limit': 50000})
 
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()['items'] == []
 
 
 def test_connection_diagnostics_endpoint() -> None:
@@ -219,23 +229,6 @@ def test_stock_daily_snapshot_endpoint(monkeypatch) -> None:
 def test_stock_quotes_endpoint_forwards_skip_filters(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_get_quotes(*args):
-        captured["args"] = args
-        return [StockQuoteItem(code="600000", trade_time="2025-01-02", freq="1d", close=10.0, adjust="none", is_suspended=False, is_st=True)]
-
-    monkeypatch.setattr(stocks, "get_quotes", fake_get_quotes)
-    response = client.get("/api/stocks/quotes", params={"code": "600000", "skip_suspended": "false", "skip_st": "true", "fill_missing": "true", "fields": "code,is_suspended,is_st"})
-
-    assert response.status_code == 200
-    assert captured["args"][11] is False
-    assert captured["args"][12] is True
-    assert captured["args"][13] is True
-    assert response.json() == [{"code": "600000", "is_suspended": False, "is_st": True}]
-
-
-def test_stock_quotes_query_endpoint_forwards_skip_filters(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
     def fake_get_quotes_query_result(*args):
         captured["args"] = args
         return StockQuotesQueryResult(
@@ -244,13 +237,20 @@ def test_stock_quotes_query_endpoint_forwards_skip_filters(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(stocks, "get_quotes_query_result", fake_get_quotes_query_result)
-    response = client.get("/api/stocks/quotes/query", params={"code": "600000", "skip_suspended": "false", "skip_st": "true", "fill_missing": "true", "fields": "code,is_suspended,is_st"})
+    response = client.get("/api/stocks/quotes", params={"code": "600000", "skip_suspended": "false", "skip_st": "true", "fill_missing": "true", "fields": "code,is_suspended,is_st"})
 
     assert response.status_code == 200
     assert captured["args"][11] is False
     assert captured["args"][12] is True
     assert captured["args"][13] is True
     assert response.json()["items"] == [{"code": "600000", "is_suspended": False, "is_st": True}]
+    assert response.json()["meta"]["complete"] is True
+
+
+def test_stock_quotes_query_old_endpoint_not_found() -> None:
+    response = client.get("/api/stocks/quotes/query", params={"code": "600000"})
+
+    assert response.status_code == 404
 
 
 def test_stock_daily_snapshot_endpoint_forwards_skip_filters(monkeypatch) -> None:
@@ -655,7 +655,7 @@ def test_daily_indicator_service_rejects_large_code_batch() -> None:
 
 
 
-def test_stock_quotes_query_endpoint_filters_item_fields(monkeypatch) -> None:
+def test_stock_quotes_endpoint_filters_item_fields(monkeypatch) -> None:
     monkeypatch.setattr(
         stocks,
         'get_quotes_query_result',
@@ -680,7 +680,7 @@ def test_stock_quotes_query_endpoint_filters_item_fields(monkeypatch) -> None:
         ),
     )
 
-    response = client.get('/api/stocks/quotes/query', params={'code': '600000', 'fields': 'code,close'})
+    response = client.get('/api/stocks/quotes', params={'code': '600000', 'fields': 'code,close'})
 
     assert response.status_code == 200
     payload = response.json()

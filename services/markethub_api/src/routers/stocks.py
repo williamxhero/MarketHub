@@ -66,42 +66,12 @@ def _quote_request_detail(codes: str, freq: str, start_date: str, end_date: str,
     return {"freq": freq, "code_count": code_count, "start_date": start_date, "end_date": end_date, "limit": limit or 0}
 
 
-def _filter_stock_quote_items(loader: Callable[..., list[object]], args: tuple[object, ...], fields: str, allowed_fields: set[str], detail: dict[str, object]) -> list[dict[str, object]]:
-    return run_with_memory_log("stocks.quotes", detail, lambda: _filter_items(loader, args, fields, allowed_fields))
-
-
 def _filter_stock_quote_query_result(loader: Callable[..., object], args: tuple[object, ...], fields: str, allowed_fields: set[str], detail: dict[str, object]) -> dict[str, object]:
-    return run_with_memory_log("stocks.quotes.query", detail, lambda: _filter_quote_query_result(loader, args, fields, allowed_fields))
+    return run_with_memory_log("stocks.quotes", detail, lambda: _filter_quote_query_result(loader, args, fields, allowed_fields))
 
 
 @router.get("/api/stocks/quotes")
 async def api_stock_quotes(
-    code: str = Query(""),
-    codes: str = Query(""),
-    freq: str = Query("1d"),
-    trade_date: str = Query(""),
-    start_date: str = Query(""),
-    end_date: str = Query(""),
-    start_time: str = Query(""),
-    end_time: str = Query(""),
-    count: int | None = Query(None, ge=1),
-    adjust: str = Query("none"),
-    fields: str = Query(""),
-    limit: int | None = Query(None, ge=1),
-    skip_suspended: bool = Query(True),
-    skip_st: bool = Query(False),
-    fill_missing: bool = Query(False),
-) -> list[dict[str, object]]:
-    actual_codes = codes if codes != "" else code
-    detail = _quote_request_detail(actual_codes, freq, start_date, end_date, limit)
-    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, skip_st, fill_missing)
-    is_heavy = int(detail["code_count"]) > 5 or int(detail["limit"]) > 2000
-    runner = run_quote_task if is_heavy else run_data_task
-    return await runner(_filter_stock_quote_items, stocks.get_quotes, args, fields, STOCK_QUOTE_FIELDS, detail)
-
-
-@router.get("/api/stocks/quotes/query")
-async def api_stock_quotes_query(
     code: str = Query(""),
     codes: str = Query(""),
     freq: str = Query("1d"),

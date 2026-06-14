@@ -112,7 +112,6 @@ MarketHub 当前不再承载 `factor.*` 的对外接口职责。
 ???????????
 
 - `/api/stocks/quotes?freq=1d`
-- `/api/stocks/quotes/query?freq=1d`
 - `/api/stocks/quotes/daily-snapshot`
 - `/api/stocks/quotes/daily-local-window`
 

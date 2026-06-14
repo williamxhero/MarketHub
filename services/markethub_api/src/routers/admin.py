@@ -203,25 +203,21 @@ async def api_admin_runtime_profiles_rollback(profile_id: str) -> dict[str, obje
     return admin_runtime.rollback_runtime_profile(profile_id)
 
 
-@router.get("/api/admin/contract-policies")
 @router.get("/api/admin/capability-policies")
 async def api_admin_contract_policies() -> list[dict[str, object]]:
     return admin_runtime.list_contract_policy_overrides()
 
 
-@router.put("/api/admin/contract-policies/{contract_name}")
 @router.put("/api/admin/capability-policies/{contract_name}")
 async def api_admin_contract_policy_update(contract_name: str, payload: ContractPolicyPayload) -> dict[str, object]:
     return admin_runtime.save_contract_policy_override(contract_name, payload.mode, tuple(payload.source_order), payload.merge_strategy)
 
 
-@router.get("/api/admin/contract-matrix")
 @router.get("/api/admin/capability-matrix")
 async def api_admin_contract_matrix() -> dict[str, object]:
     return admin_runtime.get_contract_matrix()
 
 
-@router.put("/api/admin/contract-matrix")
 @router.put("/api/admin/capability-matrix")
 async def api_admin_contract_matrix_update(payload: ContractMatrixPayload) -> dict[str, object]:
     contracts = tuple(

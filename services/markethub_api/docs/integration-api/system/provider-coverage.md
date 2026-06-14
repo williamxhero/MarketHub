@@ -152,7 +152,7 @@
 
 ## 股票日线状态字段
 
-- `/api/stocks/quotes`、`/api/stocks/quotes/query`、`/api/stocks/quotes/daily-snapshot`、`/api/stocks/quotes/daily-local-window` 返回股票日线时支持 `is_suspended` 和 `is_st` 字段。
+- `/api/stocks/quotes`、`/api/stocks/quotes/daily-snapshot`、`/api/stocks/quotes/daily-local-window` 返回股票日线时支持 `is_suspended` 和 `is_st` 字段。
 - `fact.stock_daily_1d` 是股票日线状态字段的本地权威落点；provider 或 source package 返回的数据写入事实表后，后续查询统一从事实表读取。
 - `Tushare`、`AKShare`、`efinance`、`mootdx`、`OpenTDX` 等 provider 未明确返回停牌或 ST 状态时，系统默认写入 `false`。
 - `skip_suspended=true` 时过滤停牌占位行。
@@ -160,7 +160,7 @@
 
 ## 股票日线停牌补洞策略
 
-- `/api/stocks/quotes` 与 `/api/stocks/quotes/query` 的 `freq=1d/1w/1mo` 会先读 `fact.stock_daily_1d`，历史交易日缺口才进入 provider 补缺链路。
+- `/api/stocks/quotes` 的 `freq=1d/1w/1mo` 会先读 `fact.stock_daily_1d`，历史交易日缺口才进入 provider 补缺链路。
 - provider 补缺后仍缺少的历史交易日，如果能找到该股票前一个交易日，系统会写入一条 `is_suspended=true` 的停牌占位日线，避免后续重复触发同一缺口。
 - 停牌占位日线使用前一个交易日 `close` 填充 `open/high/low/close`，`volume=0`，`amount=0`，`is_st` 沿用前一个交易日。
 - `fill_missing=false` 默认不返回停牌占位行；只有 `fill_missing=true&skip_suspended=false` 才返回 `is_suspended=true` 行。
