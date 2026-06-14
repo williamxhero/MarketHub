@@ -7,17 +7,22 @@ from io import BytesIO
 import json
 import os
 import shutil
+import threading
+import uuid
 import zipfile
 from pathlib import Path
 from pathlib import PurePosixPath
 
 from docs_all import collect_all_doc_items
+import pandas as pd
+from psycopg.types.json import Jsonb
 from quotemux.capabilities import get_capability_config_root, get_capability_definition, list_public_api_bindings, normalize_capability_id
 from quotemux.config_runtime import ContractPolicyOverride, SourceInstanceConfig, get_config_runtime
 from quotemux.contracts.policies import get_contract_policy, list_contract_policies
 from quotemux.contracts.registry import get_contract_allowed_merge_strategies, get_contract_result_shape, list_contract_names
 from quotemux.contracts.strategies import list_merge_strategies
 from quotemux.infra.db.availability import get_fact_ref_availability
+from quotemux.store.cache_db import execute_many, execute_sql, query_dataframe
 from quotemux.runtime_core.audit import read_fallback_summary, record_provider_event
 from quotemux.runtime_core.health import get_provider_metrics
 from quotemux.source_packages.registry import clear_loaded_source_package_modules, refresh_default_source_package_registry
@@ -33,6 +38,31 @@ DEFAULT_TTL_DAYS = 365
 DEFAULT_TTL_SECONDS = DEFAULT_TTL_DAYS * SECONDS_PER_DAY
 _CACHE_ADMIN = QuoteMuxCacheAdmin()
 _CAPTURE_ADMIN: QuoteMuxCaptureAdmin | None = None
+_WARMUP_RUNNER_LOCK = threading.Lock()
+
+WARMUP_TASK_STATUS_QUEUED = 'queued'
+WARMUP_TASK_STATUS_RUNNING = 'running'
+WARMUP_TASK_STATUS_SUCCESS = 'success'
+WARMUP_TASK_STATUS_FAILED = 'failed'
+WARMUP_ACTIVE_TASK_STATUSES = (WARMUP_TASK_STATUS_QUEUED, WARMUP_TASK_STATUS_RUNNING)
+
+WARMUP_ITEM_STATUS_QUEUED = 'queued'
+WARMUP_ITEM_STATUS_RUNNING = 'running'
+WARMUP_ITEM_STATUS_SUCCESS = 'success'
+WARMUP_ITEM_STATUS_FAILED = 'failed'
+WARMUP_ITEM_STATUS_SKIPPED = 'skipped'
+WARMUP_FINISHED_ITEM_STATUSES = (WARMUP_ITEM_STATUS_SUCCESS, WARMUP_ITEM_STATUS_FAILED, WARMUP_ITEM_STATUS_SKIPPED)
+
+WARMUP_SCHEMA_SQL = (
+    'create table if not exists admin_warmup_tasks (task_id text primary key, status text not null, created_at timestamp without time zone not null default now(), started_at timestamp without time zone, finished_at timestamp without time zone, error_message text not null default '''')',
+    'create table if not exists admin_warmup_items (task_id text not null references admin_warmup_tasks(task_id) on delete cascade, position integer not null, capability_id text not null, status text not null, capture_run_id bigint, started_at timestamp without time zone, finished_at timestamp without time zone, error_message text not null default '''', detail_json jsonb not null default ''{}''::jsonb, primary key (task_id, position))',
+    'create index if not exists idx_admin_warmup_tasks_created_at on admin_warmup_tasks (created_at desc)',
+    'create index if not exists idx_admin_warmup_tasks_status on admin_warmup_tasks (status, created_at desc)',
+    'create index if not exists idx_admin_warmup_items_task_position on admin_warmup_items (task_id, position asc)',
+)
+
+_WARMUP_SCHEMA_READY = False
+_WARMUP_SCHEMA_FAILED = False
 
 
 def _api_doc_payload_by_path() -> dict[str, dict[str, str]]:
@@ -985,6 +1015,211 @@ def _time_from_text(value: str):
     if len(parts) == 2:
         return time(int(parts[0]), int(parts[1]))
     return time(int(parts[0]), int(parts[1]), int(parts[2]))
+
+
+def _is_empty_dataframe(frame: pd.DataFrame) -> bool:
+    return frame.empty
+
+
+def _datetime_from_value(value: object) -> datetime:
+    return pd.Timestamp(value).to_pydatetime()
+
+
+def _serialize_datetime(value: object) -> str:
+    if value is None:
+        return ''
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d %H:%M:%S')
+    return pd.Timestamp(value).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _ensure_warmup_schema() -> bool:
+    global _WARMUP_SCHEMA_FAILED, _WARMUP_SCHEMA_READY
+    if _WARMUP_SCHEMA_READY:
+        return True
+    if _WARMUP_SCHEMA_FAILED:
+        return False
+    for statement in WARMUP_SCHEMA_SQL:
+        if not execute_sql(statement):
+            _WARMUP_SCHEMA_FAILED = True
+            return False
+    _WARMUP_SCHEMA_READY = True
+    _WARMUP_SCHEMA_FAILED = False
+    return True
+
+
+def _normalize_warmup_capability_ids(capability_ids: tuple[str, ...]) -> tuple[str, ...]:
+    normalized_ids: list[str] = []
+    for capability_id in capability_ids:
+        root_capability_id = get_capability_config_root(capability_id)
+        get_capability_definition(root_capability_id)
+        if root_capability_id not in normalized_ids:
+            normalized_ids.append(root_capability_id)
+    if normalized_ids == []:
+        raise ValueError('capability_ids 不能为空')
+    return tuple(normalized_ids)
+
+
+def _warmup_task_rows(limit: int = 50) -> list[dict[str, object]]:
+    if not _ensure_warmup_schema():
+        return []
+    frame = query_dataframe(
+        'select task_id, status, created_at, started_at, finished_at, error_message from admin_warmup_tasks order by created_at desc limit %s',
+        (max(1, min(limit, 200)),),
+    )
+    if _is_empty_dataframe(frame):
+        return []
+    return [dict(row) for row in frame.to_dict('records')]
+
+
+def _warmup_item_rows(task_id: str) -> list[dict[str, object]]:
+    if not _ensure_warmup_schema():
+        return []
+    frame = query_dataframe(
+        'select task_id, position, capability_id, status, capture_run_id, started_at, finished_at, error_message, detail_json from admin_warmup_items where task_id = %s order by position asc',
+        (task_id,),
+    )
+    if _is_empty_dataframe(frame):
+        return []
+    return [dict(row) for row in frame.to_dict('records')]
+
+
+def _warmup_summary_payload(task_row: dict[str, object], item_rows: list[dict[str, object]]) -> dict[str, object]:
+    success_count = sum(1 for item in item_rows if str(item['status']) == WARMUP_ITEM_STATUS_SUCCESS)
+    failed_count = sum(1 for item in item_rows if str(item['status']) == WARMUP_ITEM_STATUS_FAILED)
+    skipped_count = sum(1 for item in item_rows if str(item['status']) == WARMUP_ITEM_STATUS_SKIPPED)
+    finished_count = sum(1 for item in item_rows if str(item['status']) in WARMUP_FINISHED_ITEM_STATUSES)
+    current_capability_id = ''
+    for item in item_rows:
+        if str(item['status']) == WARMUP_ITEM_STATUS_RUNNING:
+            current_capability_id = str(item['capability_id'])
+            break
+    if current_capability_id == '':
+        for item in item_rows:
+            if str(item['status']) == WARMUP_ITEM_STATUS_QUEUED:
+                current_capability_id = str(item['capability_id'])
+                break
+    return {
+        'task_id': str(task_row['task_id']),
+        'status': str(task_row['status']),
+        'created_at': _serialize_datetime(task_row.get('created_at')),
+        'started_at': _serialize_datetime(task_row.get('started_at')),
+        'finished_at': _serialize_datetime(task_row.get('finished_at')),
+        'total_count': len(item_rows),
+        'finished_count': finished_count,
+        'success_count': success_count,
+        'failed_count': failed_count,
+        'skipped_count': skipped_count,
+        'current_capability_id': current_capability_id,
+        'error_message': str(task_row.get('error_message', '')),
+    }
+
+
+def _warmup_item_payload(item_row: dict[str, object]) -> dict[str, object]:
+    detail_json = item_row['detail_json'] if isinstance(item_row.get('detail_json'), dict) else {}
+    capture_run_id = item_row.get('capture_run_id')
+    return {
+        'task_id': str(item_row['task_id']),
+        'position': int(item_row['position']),
+        'capability_id': str(item_row['capability_id']),
+        'status': str(item_row['status']),
+        'capture_run_id': None if pd.isna(capture_run_id) else int(capture_run_id),
+        'started_at': _serialize_datetime(item_row.get('started_at')),
+        'finished_at': _serialize_datetime(item_row.get('finished_at')),
+        'row_count': int(detail_json.get('row_count', 0)),
+        'coverage_count': int(detail_json.get('coverage_count', 0)),
+        'error_message': str(item_row.get('error_message', '')),
+        'detail_json': detail_json,
+    }
+
+
+def list_warmup_tasks(limit: int = 50) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
+    for task_row in _warmup_task_rows(limit):
+        item_rows = _warmup_item_rows(str(task_row['task_id']))
+        payloads.append(_warmup_summary_payload(task_row, item_rows))
+    return payloads
+
+
+def get_warmup_task(task_id: str) -> dict[str, object]:
+    task_rows = [row for row in _warmup_task_rows(200) if str(row['task_id']) == task_id]
+    if task_rows == []:
+        raise KeyError(f'未知 warmup 任务: {task_id}')
+    item_rows = _warmup_item_rows(task_id)
+    payload = _warmup_summary_payload(task_rows[0], item_rows)
+    payload['items'] = [_warmup_item_payload(item_row) for item_row in item_rows]
+    return payload
+
+
+def create_warmup_task(capability_ids: tuple[str, ...]) -> dict[str, object]:
+    normalized_ids = _normalize_warmup_capability_ids(capability_ids)
+    if not _ensure_warmup_schema():
+        raise RuntimeError('warmup schema 初始化失败')
+    active_rows = query_dataframe(
+        'select task_id from admin_warmup_tasks where status in (%s, %s) order by created_at desc limit 1',
+        WARMUP_ACTIVE_TASK_STATUSES,
+    )
+    if not _is_empty_dataframe(active_rows):
+        active_task_id = str(active_rows.iloc[0]['task_id'])
+        raise RuntimeError(f'已有预热任务正在执行: {active_task_id}')
+    task_id = str(uuid.uuid4())
+    if not execute_sql('insert into admin_warmup_tasks (task_id, status) values (%s, %s)', (task_id, WARMUP_TASK_STATUS_QUEUED)):
+        raise RuntimeError('预热任务创建失败')
+    params = [(task_id, index + 1, capability_id, WARMUP_ITEM_STATUS_QUEUED) for index, capability_id in enumerate(normalized_ids)]
+    if not execute_many('insert into admin_warmup_items (task_id, position, capability_id, status) values (%s, %s, %s, %s)', params):
+        raise RuntimeError('预热任务明细创建失败')
+    return get_warmup_task(task_id)
+
+
+def run_warmup_task(task_id: str) -> dict[str, object]:
+    if not _ensure_warmup_schema():
+        raise RuntimeError('warmup schema 初始化失败')
+    with _WARMUP_RUNNER_LOCK:
+        execute_sql(
+            'update admin_warmup_tasks set status = %s, started_at = coalesce(started_at, now()), error_message = %s where task_id = %s and status = %s',
+            (WARMUP_TASK_STATUS_RUNNING, '', task_id, WARMUP_TASK_STATUS_QUEUED),
+        )
+    task_failed = False
+    task_error_message = ''
+    for item_row in _warmup_item_rows(task_id):
+        if str(item_row['status']) in WARMUP_FINISHED_ITEM_STATUSES:
+            continue
+        execute_sql(
+            'update admin_warmup_items set status = %s, started_at = coalesce(started_at, now()), error_message = %s where task_id = %s and position = %s',
+            (WARMUP_ITEM_STATUS_RUNNING, '', task_id, int(item_row['position'])),
+        )
+        try:
+            capture_result = run_capture(str(item_row['capability_id']))
+            capture_status = str(capture_result.get('status', ''))
+            item_status = WARMUP_ITEM_STATUS_SUCCESS if capture_status == 'success' else WARMUP_ITEM_STATUS_SKIPPED if capture_status == 'skipped' else WARMUP_ITEM_STATUS_FAILED
+            detail_json = {
+                'row_count': int(capture_result.get('row_count', 0)),
+                'coverage_count': int(capture_result.get('coverage_count', 0)),
+                'capture_status': capture_status,
+                'capture_detail': capture_result.get('detail_json', {}) if isinstance(capture_result.get('detail_json'), dict) else {},
+            }
+            execute_sql(
+                'update admin_warmup_items set status = %s, capture_run_id = %s, finished_at = now(), error_message = %s, detail_json = %s where task_id = %s and position = %s',
+                (item_status, capture_result.get('id'), str(capture_result.get('error_message', '')), Jsonb(detail_json), task_id, int(item_row['position'])),
+            )
+            if item_status == WARMUP_ITEM_STATUS_FAILED:
+                task_failed = True
+                task_error_message = str(capture_result.get('error_message', ''))
+                break
+        except Exception as exc:
+            execute_sql(
+                'update admin_warmup_items set status = %s, finished_at = now(), error_message = %s, detail_json = %s where task_id = %s and position = %s',
+                (WARMUP_ITEM_STATUS_FAILED, str(exc), Jsonb({'error': str(exc), 'error_type': type(exc).__name__}), task_id, int(item_row['position'])),
+            )
+            task_failed = True
+            task_error_message = str(exc)
+            break
+    final_status = WARMUP_TASK_STATUS_FAILED if task_failed else WARMUP_TASK_STATUS_SUCCESS
+    execute_sql(
+        'update admin_warmup_tasks set status = %s, finished_at = now(), error_message = %s where task_id = %s',
+        (final_status, task_error_message, task_id),
+    )
+    return get_warmup_task(task_id)
 
 
 def save_contract_matrix(contracts: tuple[dict[str, object], ...]) -> dict[str, object]:

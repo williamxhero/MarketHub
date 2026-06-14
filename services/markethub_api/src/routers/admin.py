@@ -49,6 +49,10 @@ class PublishProfilePayload(BaseModel):
     note: str = ""
 
 
+class WarmupTaskCreatePayload(BaseModel):
+    capability_ids: list[str]
+
+
 class ContractPolicyPayload(BaseModel):
     mode: str
     source_order: list[str]
@@ -290,6 +294,23 @@ async def api_admin_run_due_captures() -> list[dict[str, object]]:
 async def api_admin_run_due_captures_async(background_tasks: BackgroundTasks) -> dict[str, object]:
     background_tasks.add_task(admin_runtime.run_due_captures)
     return {"accepted": True}
+
+
+@router.get('/api/admin/warmups')
+async def api_admin_warmups(limit: int = Query(50, ge=1, le=200)) -> list[dict[str, object]]:
+    return admin_runtime.list_warmup_tasks(limit)
+
+
+@router.get('/api/admin/warmups/{task_id}')
+async def api_admin_warmup_detail(task_id: str) -> dict[str, object]:
+    return admin_runtime.get_warmup_task(task_id)
+
+
+@router.post('/api/admin/warmups')
+async def api_admin_warmups_create(payload: WarmupTaskCreatePayload, background_tasks: BackgroundTasks) -> dict[str, object]:
+    task = admin_runtime.create_warmup_task(tuple(payload.capability_ids))
+    background_tasks.add_task(admin_runtime.run_warmup_task, str(task['task_id']))
+    return task
 
 
 @router.get("/api/admin/runtime-health")

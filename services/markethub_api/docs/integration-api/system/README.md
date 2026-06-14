@@ -12,6 +12,11 @@
 - `/docs/system/capability-update-policy`
 - `/docs/system/capability-store-metadata`
 
+其中 `/docs/system/capability-update-policy` 同时约束两类后台更新入口：
+
+- 定时到期检查：`POST /api/admin/capture/run-due-async`
+- 手动大范围预热：`POST /api/admin/warmups`
+
 ## 当前收口结论
 
 - MarketHub 当前承载 A 股股票市场基础数据，以及统一新闻事件只读查询。

@@ -8,6 +8,8 @@
 
 Task Center 已注册每天北京时间 20:00 调用一次 `/api/admin/capture/run-due-async`。打开定时更新后，capture 仍只会按 capability 自身的日、周、月、年到期规则运行；每天任务只是负责检查是否到期。
 
+另外，`POST /api/admin/warmups` 已作为独立的手动大范围预热入口存在。它接收显式 capability 列表，创建后台 warmup 任务后异步串行执行，并把总体进度、逐项结果和最近历史持久化给 `/admin` 页面查询。这个入口用于人工触发的大批量预热，不参与日常到期检查，也不替代 `run-due-async` 的定时更新职责。
+
 ## 规则
 
 - `定时更新`：后台预采集。必须同时保持缓存开启，否则 capture 预检查会跳过。

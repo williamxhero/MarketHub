@@ -643,6 +643,7 @@
       </div>
       <nav class="rail-nav">
         <a href="#packages">Source Packages</a>
+        <a href="#warmups">Warmups</a>
         <a href="#policies">Capability Matrix</a>
       </nav>
       <div class="hero-status" id="summary">等待加载...</div>
@@ -670,6 +671,27 @@
             </div>
           </div>
           <div class="package-list" id="package-list"></div>
+        </section>
+
+        <section id="warmups">
+          <div class="section-head">
+            <div>
+              <h3>Warmups</h3>
+              <p>手动选择 capability，创建后台预热任务，并查看进度和结果。</p>
+            </div>
+            <div class="toolbar">
+              <button class="button-accent" id="start-warmup">开始预热</button>
+            </div>
+          </div>
+          <div class="detail-grid">
+            <label class="field full">
+              <span class="field-label">Capabilities</span>
+              <select id="warmup-capabilities" multiple size="8"></select>
+            </label>
+          </div>
+          <div class="info-grid" id="warmup-summary-grid"></div>
+          <div class="matrix-wrap" id="warmup-items-wrap"></div>
+          <div class="matrix-wrap" id="warmup-history-wrap"></div>
         </section>
 
         <section id="policies">
@@ -808,12 +830,18 @@
     const cacheCoverageMode = document.getElementById("cache-coverage-mode");
     const cacheKeyFields = document.getElementById("cache-key-fields");
     const cacheRequestScopeFields = document.getElementById("cache-request-scope-fields");
+    const warmupCapabilities = document.getElementById("warmup-capabilities");
+    const warmupSummaryGrid = document.getElementById("warmup-summary-grid");
+    const warmupItemsWrap = document.getElementById("warmup-items-wrap");
+    const warmupHistoryWrap = document.getElementById("warmup-history-wrap");
     let adminApiBaseUrl = "";
     let matrixPayload = { packages: [], capabilities: [] };
     let activeCapabilityId = "";
     let activeCapturePolicy = {};
     let rememberedTtlDays = String(DEFAULT_TTL_DAYS);
     let activeTtlDays = DEFAULT_TTL_DAYS;
+    let activeWarmupTaskId = "";
+    let warmupPollTimer = 0;
 
     async function loadConsoleConfig() {
       const response = await fetch("/api/console/config");
@@ -858,6 +886,136 @@
 
     function setSummary(text) {
       summary.textContent = text;
+    }
+
+    function renderWarmupCapabilityOptions(capabilities) {
+      warmupCapabilities.innerHTML = (capabilities || []).map((capability) => {
+        const capabilityId = capability.capability_id || "";
+        return `<option value="${escapeHtml(capabilityId)}">${escapeHtml(capabilityId)}</option>`;
+      }).join("");
+    }
+
+    function renderWarmupSummary(task) {
+      if (!task) {
+        warmupSummaryGrid.innerHTML = "";
+        return;
+      }
+      const cards = [
+        ["Task", task.task_id || ""],
+        ["Status", task.status || ""],
+        ["Progress", `${task.finished_count || 0} / ${task.total_count || 0}`],
+        ["Current", task.current_capability_id || ""],
+      ];
+      warmupSummaryGrid.innerHTML = cards.map(([label, value]) => `
+        <div class="info-card">
+          <strong>${escapeHtml(label)}</strong>
+          <span>${escapeHtml(value)}</span>
+        </div>
+      `).join("");
+    }
+
+    function renderWarmupItems(task) {
+      const items = task?.items || [];
+      if (items.length === 0) {
+        warmupItemsWrap.innerHTML = '<div class="empty-state">当前没有 warmup 明细。</div>';
+        return;
+      }
+      const rows = items.map((item) => `
+        <tr>
+          <td>${escapeHtml(item.capability_id || "")}</td>
+          <td>${escapeHtml(item.status || "")}</td>
+          <td>${escapeHtml(String(item.row_count || 0))}</td>
+          <td>${escapeHtml(String(item.coverage_count || 0))}</td>
+          <td>${escapeHtml(item.capture_run_id == null ? "" : String(item.capture_run_id))}</td>
+          <td>${escapeHtml(item.error_message || "")}</td>
+        </tr>
+      `).join("");
+      warmupItemsWrap.innerHTML = `
+        <table class="matrix" style="min-width: 840px">
+          <thead><tr><th>Capability</th><th>Status</th><th>Rows</th><th>Coverage</th><th>Capture Run</th><th>Error</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function renderWarmupHistory(tasks) {
+      if (!tasks || tasks.length === 0) {
+        warmupHistoryWrap.innerHTML = '<div class="empty-state">当前没有 warmup 历史。</div>';
+        return;
+      }
+      const rows = tasks.map((task) => `
+        <tr>
+          <td>${escapeHtml(task.task_id || "")}</td>
+          <td>${escapeHtml(task.status || "")}</td>
+          <td>${escapeHtml(task.created_at || "")}</td>
+          <td>${escapeHtml(task.finished_at || "")}</td>
+          <td>${escapeHtml(`${task.finished_count || 0} / ${task.total_count || 0}`)}</td>
+        </tr>
+      `).join("");
+      warmupHistoryWrap.innerHTML = `
+        <table class="matrix" style="min-width: 760px">
+          <thead><tr><th>Task</th><th>Status</th><th>Created</th><th>Finished</th><th>Progress</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function stopWarmupPolling() {
+      if (warmupPollTimer !== 0) {
+        window.clearTimeout(warmupPollTimer);
+        warmupPollTimer = 0;
+      }
+    }
+
+    async function pollWarmupTask() {
+      if (activeWarmupTaskId === "") {
+        return;
+      }
+      try {
+        const task = await request(`/api/admin/warmups/${encodeURIComponent(activeWarmupTaskId)}`);
+        renderWarmupSummary(task);
+        renderWarmupItems(task);
+        if (task.status === "queued" || task.status === "running") {
+          warmupPollTimer = window.setTimeout(pollWarmupTask, 2000);
+          return;
+        }
+        stopWarmupPolling();
+        await loadWarmupHistory();
+      } catch (error) {
+        stopWarmupPolling();
+        setSummary(`加载 warmup 进度失败: ${error.message}`);
+      }
+    }
+
+    async function loadWarmupHistory() {
+      const tasks = await request("/api/admin/warmups");
+      renderWarmupHistory(tasks);
+      if (activeWarmupTaskId === "" && tasks.length > 0) {
+        activeWarmupTaskId = tasks[0].task_id || "";
+      }
+    }
+
+    async function startWarmup() {
+      const capabilityIds = Array.from(warmupCapabilities.selectedOptions || []).map((option) => option.value).filter((value) => value !== "");
+      if (capabilityIds.length === 0) {
+        setSummary("请先选择至少一个 capability。");
+        return;
+      }
+      try {
+        setSummary("正在创建 warmup 任务...");
+        const task = await request("/api/admin/warmups", {
+          method: "POST",
+          body: JSON.stringify({ capability_ids: capabilityIds }),
+        });
+        activeWarmupTaskId = task.task_id || "";
+        renderWarmupSummary(task);
+        renderWarmupItems(task);
+        await loadWarmupHistory();
+        stopWarmupPolling();
+        warmupPollTimer = window.setTimeout(pollWarmupTask, 2000);
+      } catch (error) {
+        setSummary(`创建 warmup 任务失败: ${error.message}`);
+      }
     }
 
     function renderPackages(packages) {
@@ -1296,13 +1454,29 @@
 
     async function loadAll() {
       try {
-        const [packages, matrix, capturePolicies] = await Promise.all([
+        const [packages, matrix, capturePolicies, warmups] = await Promise.all([
           request("/api/admin/source-packages"),
           request("/api/admin/capability-matrix"),
           request("/api/admin/capture-policies"),
+          request("/api/admin/warmups"),
         ]);
         renderPackages(packages);
         renderMatrix(matrix, capturePolicies);
+        renderWarmupCapabilityOptions(matrix.capabilities || []);
+        renderWarmupHistory(warmups);
+        if (warmups.length > 0) {
+          activeWarmupTaskId = warmups[0].task_id || "";
+          const activeTask = await request(`/api/admin/warmups/${encodeURIComponent(activeWarmupTaskId)}`);
+          renderWarmupSummary(activeTask);
+          renderWarmupItems(activeTask);
+          if (activeTask.status === "queued" || activeTask.status === "running") {
+            stopWarmupPolling();
+            warmupPollTimer = window.setTimeout(pollWarmupTask, 2000);
+          }
+        } else {
+          renderWarmupSummary(null);
+          renderWarmupItems({ items: [] });
+        }
         setSummary([
           `packages = ${packages.length}`,
           `capabilities = ${(matrix.capabilities || []).length}`,
@@ -1454,6 +1628,7 @@
 
     document.getElementById("install-all-packages").addEventListener("click", installAllPackages);
     document.getElementById("import-directory").addEventListener("click", importPackageDirectory);
+    document.getElementById("start-warmup").addEventListener("click", startWarmup);
     document.getElementById("save-matrix").addEventListener("click", saveMatrix);
     document.getElementById("close-capability-editor").addEventListener("click", closeCapabilityEditor);
     document.getElementById("close-capability-editor-top").addEventListener("click", closeCapabilityEditor);

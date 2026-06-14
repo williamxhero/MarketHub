@@ -99,6 +99,11 @@ python3 install_markethub.py
 
 点完后去喝口水。这个按钮会在后台调用 `QuoteMux` 的本体能力，自动从官方弹药库（[QuoteMux_Packages](https://github.com/williamxhero/QuoteMux_Packages)）把所有远程接入包一次性拉取并安装完毕。
 
+管理后台同时还提供两个常用运维区：
+
+- **Capabilities**：查看 capability 矩阵、缓存 TTL 和定时更新策略。
+- **Warmups**：手动发起大范围预热后台任务。该入口会调用 `POST /api/admin/warmups` 创建异步任务，避免批量预热直接占住 HTTP 请求；任务创建后可以在页面里持续查看总体进度、逐项状态和最近历史。
+
 ## 日常使用：一键启动服务
 
 如果你已经走完了上面的安装流程，以后想要单独启动服务，可以直接在 `MarketHub` 目录下执行统一启动脚本：
