@@ -48,7 +48,7 @@ def _venv_python_executable() -> Path:
 def _install_core_projects(python_executable: Path) -> None:
     subprocess.run([str(python_executable), "-m", "pip", "install", "--upgrade", "pip"], check=True)
     subprocess.run([str(python_executable), "-m", "pip", "install", "-e", str(QUOTEMUX_ROOT)], check=True)
-    subprocess.run([str(python_executable), "-m", "pip", "install", "-r", str(MARKETHUB_ROOT / "requirements.dev.txt")], check=True)
+    subprocess.run([str(python_executable), "-m", "pip", "install", "-r", str(MARKETHUB_ROOT / "requirements.txt")], check=True)
 
 
 def _prepare_workspace() -> None:
