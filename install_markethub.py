@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,7 @@ ROOT = Path(__file__).resolve().parent
 VENV_ROOT = ROOT / ".venv"
 QUOTEMUX_ROOT = ROOT / "QuoteMux"
 MARKETHUB_ROOT = ROOT / "MarketHub"
+RUNTIME_ROOT = Path(os.getenv("MARKETHUB_RUNTIME_ROOT", str(ROOT / "runtime"))).expanduser().resolve()
 
 
 def main() -> None:
@@ -59,7 +61,52 @@ def _prepare_workspace() -> None:
 
 def _ensure_workspace_directories() -> None:
     (ROOT / 'datalake').mkdir(parents=True, exist_ok=True)
-    (ROOT / 'runtime').mkdir(parents=True, exist_ok=True)
+    (RUNTIME_ROOT / 'cache_payloads').mkdir(parents=True, exist_ok=True)
+    (RUNTIME_ROOT / 'data-update').mkdir(parents=True, exist_ok=True)
+    (RUNTIME_ROOT / 'env').mkdir(parents=True, exist_ok=True)
+    (RUNTIME_ROOT / 'logs').mkdir(parents=True, exist_ok=True)
+    (RUNTIME_ROOT / 'package_venvs').mkdir(parents=True, exist_ok=True)
+    (RUNTIME_ROOT / 'runtime').mkdir(parents=True, exist_ok=True)
+    (RUNTIME_ROOT / 'scripts').mkdir(parents=True, exist_ok=True)
+    (RUNTIME_ROOT / 'store').mkdir(parents=True, exist_ok=True)
+    _write_default_environment()
+    _install_runtime_scripts()
+
+
+def _write_default_environment() -> None:
+    env_path = RUNTIME_ROOT / "env" / "markethub.env"
+    if env_path.exists():
+        return
+    env_path.write_text(
+        "\n".join(
+            [
+                "MARKETHUB_HOST=127.0.0.1",
+                "MARKETHUB_PORT=8803",
+                f"MARKETHUB_DATA_ROOT={RUNTIME_ROOT / 'store'}",
+                "MARKETHUB_DB_HOST=localhost",
+                "MARKETHUB_DB_PORT=55432",
+                "MARKETHUB_DB_NAME=markethub_dev",
+                "MARKETHUB_DB_USER=markethub",
+                "MARKETHUB_DB_PASSWORD=markethub_dev_password",
+                f"MARKETHUB_RUNTIME_ROOT={RUNTIME_ROOT}",
+                f"MARKETHUB_LOG_ROOT={RUNTIME_ROOT / 'logs'}",
+                f"MARKETHUB_DATA_UPDATE_ROOT={RUNTIME_ROOT / 'data-update'}",
+                f"QUOTEMUX_RUNTIME_ROOT={RUNTIME_ROOT / 'runtime'}",
+                f"QUOTEMUX_CACHE_PAYLOAD_ROOT={RUNTIME_ROOT / 'cache_payloads'}",
+                f"QUOTEMUX_PACKAGE_VENV_ROOT={RUNTIME_ROOT / 'package_venvs'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _install_runtime_scripts() -> None:
+    source_path = MARKETHUB_ROOT / "scripts" / "global-data-update.sh"
+    target_path = RUNTIME_ROOT / "scripts" / "global-data-update.sh"
+    shutil.copyfile(source_path, target_path)
+    if not sys.platform.startswith("win"):
+        target_path.chmod(0o755)
 
 
 def _build_console() -> None:
