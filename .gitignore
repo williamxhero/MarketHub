@@ -17,3 +17,4 @@ docs/markethub_independent_todo_*.md
 services/markethub_api/src/data/*.db
 services/markethub_console/dist/
 /docs
+/AGENTS.md
