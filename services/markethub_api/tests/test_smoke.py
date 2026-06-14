@@ -155,9 +155,11 @@ def test_connection_diagnostics_endpoint() -> None:
     assert 'provider_runtime' in payload
     assert 'store_db_pool' in payload
     assert 'data_thread_pool' in payload
+    assert 'quote_thread_pool' in payload
     assert 'sync_thread_pool' in payload
     assert 'providers' in payload['provider_runtime']
     assert payload['data_thread_pool']['total_tokens'] == 64
+    assert payload['quote_thread_pool']['total_tokens'] == 6
     assert payload['sync_thread_pool']['total_tokens'] == 100
 
 
@@ -204,8 +206,8 @@ def test_stock_daily_snapshot_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(
         stocks,
         'get_market_daily_snapshot',
-        lambda trade_date, limit, offset: [
-            StockQuoteItem(code='600000', trade_time='2025-01-02', freq='1d', open=10.0, high=10.5, low=9.8, close=10.2, pre_close=10.0, change=0.2, pct_chg=2.0, volume=12345.0, amount=67890.0, adjust='none')
+        lambda trade_date, limit, offset, skip_suspended, skip_st: [
+            StockQuoteItem(code='600000', trade_time='2025-01-02', freq='1d', open=10.0, high=10.5, low=9.8, close=10.2, pre_close=10.0, change=0.2, pct_chg=2.0, volume=12345.0, amount=67890.0, adjust='none', is_suspended=False, is_st=False)
         ],
     )
     response = client.get('/api/stocks/quotes/daily-snapshot', params={'trade_date': '2025-01-02'})
@@ -216,12 +218,77 @@ def test_stock_daily_snapshot_endpoint(monkeypatch) -> None:
     assert payload[0]['pre_close'] == 10.0
 
 
+def test_stock_quotes_endpoint_forwards_skip_filters(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get_quotes(*args):
+        captured["args"] = args
+        return [StockQuoteItem(code="600000", trade_time="2025-01-02", freq="1d", close=10.0, adjust="none", is_suspended=False, is_st=True)]
+
+    monkeypatch.setattr(stocks, "get_quotes", fake_get_quotes)
+    response = client.get("/api/stocks/quotes", params={"code": "600000", "skip_suspended": "false", "skip_st": "true", "fill_missing": "true", "fields": "code,is_suspended,is_st"})
+
+    assert response.status_code == 200
+    assert captured["args"][11] is False
+    assert captured["args"][12] is True
+    assert captured["args"][13] is True
+    assert response.json() == [{"code": "600000", "is_suspended": False, "is_st": True}]
+
+
+def test_stock_quotes_query_endpoint_forwards_skip_filters(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get_quotes_query_result(*args):
+        captured["args"] = args
+        return StockQuotesQueryResult(
+            items=[StockQuoteItem(code="600000", trade_time="2025-01-02", freq="1d", close=10.0, adjust="none", is_suspended=False, is_st=True)],
+            meta=StockQuotesMeta(total_rows=1, returned_rows=1, complete=True, truncated=False, codes=[]),
+        )
+
+    monkeypatch.setattr(stocks, "get_quotes_query_result", fake_get_quotes_query_result)
+    response = client.get("/api/stocks/quotes/query", params={"code": "600000", "skip_suspended": "false", "skip_st": "true", "fill_missing": "true", "fields": "code,is_suspended,is_st"})
+
+    assert response.status_code == 200
+    assert captured["args"][11] is False
+    assert captured["args"][12] is True
+    assert captured["args"][13] is True
+    assert response.json()["items"] == [{"code": "600000", "is_suspended": False, "is_st": True}]
+
+
+def test_stock_daily_snapshot_endpoint_forwards_skip_filters(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get_market_daily_snapshot(*args):
+        captured["args"] = args
+        return []
+
+    monkeypatch.setattr(stocks, "get_market_daily_snapshot", fake_get_market_daily_snapshot)
+    response = client.get("/api/stocks/quotes/daily-snapshot", params={"trade_date": "2025-01-02", "skip_suspended": "false", "skip_st": "true"})
+
+    assert response.status_code == 200
+    assert captured["args"] == ("2025-01-02", 10000, 0, False, True)
+
+
+def test_stock_daily_window_endpoint_forwards_skip_filters(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get_market_daily_window(*args):
+        captured["args"] = args
+        return []
+
+    monkeypatch.setattr(stocks, "get_market_daily_window", fake_get_market_daily_window)
+    response = client.get("/api/stocks/quotes/daily-window", params={"start_date": "2025-01-01", "end_date": "2025-01-02", "skip_suspended": "false", "skip_st": "true"})
+
+    assert response.status_code == 200
+    assert captured["args"] == ("2025-01-01", "2025-01-02", 50000, 0, False, True)
+
+
 def test_stock_daily_window_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(
         stocks,
         'get_market_daily_window',
-        lambda start_date, end_date, limit, offset: [
-            StockQuoteItem(code='600000', trade_time='2025-01-02', freq='1d', close=10.2, pre_close=10.0, change=0.2, pct_chg=2.0, adjust='none')
+        lambda start_date, end_date, limit, offset, skip_suspended, skip_st: [
+            StockQuoteItem(code='600000', trade_time='2025-01-02', freq='1d', close=10.2, pre_close=10.0, change=0.2, pct_chg=2.0, adjust='none', is_suspended=False, is_st=False)
         ],
     )
     response = client.get('/api/stocks/quotes/daily-window', params={'start_date': '2025-01-01', 'end_date': '2025-01-02'})
@@ -354,6 +421,25 @@ def test_daily_window_doc_endpoint_contains_backtest_entry() -> None:
     assert '不需要传 `code` 或 `codes`。' in payload['content']
     assert '`fact.stock_daily_1d`' in payload['content']
     assert '不复用 `/api/stocks/quotes` 的逐股票缺口补源链路' in payload['content']
+
+
+def test_quotes_doc_mentions_daily_filter_flags() -> None:
+    response = client.get('/docs/stocks/quotes')
+    assert response.status_code == 200
+    payload = response.json()
+    assert '`is_suspended`' in payload['content']
+    assert '`is_st`' in payload['content']
+    assert '`skip_suspended`' in payload['content']
+    assert '`skip_st`' in payload['content']
+
+
+def test_quotes_query_doc_mentions_st_filter_meta_behavior() -> None:
+    response = client.get('/docs/stocks/quotes-query')
+    assert response.status_code == 200
+    payload = response.json()
+    assert '`skip_st`' in payload['content']
+    assert 'row_count=0' in payload['content']
+    assert 'complete=false' in payload['content']
 
 
 def test_quotes_doc_endpoint_mentions_fact_stock_daily_1d_and_bjse() -> None:

@@ -16,7 +16,7 @@ from pathlib import Path
 import anyio.to_thread
 
 from core.config import HOST, PORT, STATIC_FAVICON_PATH, STATIC_INDEX_PATH
-from data_threads import get_data_thread_pool_metrics
+from data_threads import get_data_thread_pool_metrics, get_quote_thread_pool_metrics
 from quotemux.config_runtime.validation import ConfigValidationError
 from quotemux.models import ApiError
 from quotemux.infra.db.availability import get_fact_ref_availability
@@ -221,6 +221,7 @@ async def connection_diagnostics() -> dict[str, object]:
         "fallback_runtime": read_fallback_summary(),
         "store_db_pool": get_pool_metrics(),
         "data_thread_pool": get_data_thread_pool_metrics(),
+        "quote_thread_pool": get_quote_thread_pool_metrics(),
         "sync_thread_pool": get_sync_thread_pool_metrics(),
     }
 

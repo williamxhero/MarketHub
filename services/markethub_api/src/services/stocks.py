@@ -25,9 +25,9 @@ def get_quotes(
     adjust: str,
     limit: int | None,
     skip_suspended: bool,
+    skip_st: bool,
     fill_missing: bool,
 ) -> list[StockQuoteItem]:
-    del skip_suspended, fill_missing
     return _QUOTEMUX.stocks.get_quotes(
         StockQuotesRequest(
             codes=require_codes(code, codes),
@@ -40,6 +40,9 @@ def get_quotes(
             count=count,
             adjust=require_adjust(adjust),
             limit=limit,
+            skip_suspended=skip_suspended,
+            skip_st=skip_st,
+            fill_missing=fill_missing,
         )
     )
 
@@ -57,9 +60,9 @@ def get_quotes_query_result(
     adjust: str,
     limit: int | None,
     skip_suspended: bool,
+    skip_st: bool,
     fill_missing: bool,
 ) -> StockQuotesQueryResult:
-    del skip_suspended, fill_missing
     return _QUOTEMUX.stocks.get_quotes_query_result(
         StockQuotesRequest(
             codes=require_codes(code, codes),
@@ -72,20 +75,23 @@ def get_quotes_query_result(
             count=count,
             adjust=require_adjust(adjust),
             limit=limit,
+            skip_suspended=skip_suspended,
+            skip_st=skip_st,
+            fill_missing=fill_missing,
         )
     )
 
 
-def get_market_daily_snapshot(trade_date: str, limit: int, offset: int) -> list[StockQuoteItem]:
+def get_market_daily_snapshot(trade_date: str, limit: int, offset: int, skip_suspended: bool, skip_st: bool) -> list[StockQuoteItem]:
     try:
-        return _QUOTEMUX.stocks.get_daily_snapshot(StockDailySnapshotRequest(trade_date=trade_date, limit=limit, offset=offset))
+        return _QUOTEMUX.stocks.get_daily_snapshot(StockDailySnapshotRequest(trade_date=trade_date, limit=limit, offset=offset, skip_suspended=skip_suspended, skip_st=skip_st))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def get_market_daily_window(start_date: str, end_date: str, limit: int, offset: int) -> list[StockQuoteItem]:
+def get_market_daily_window(start_date: str, end_date: str, limit: int, offset: int, skip_suspended: bool, skip_st: bool) -> list[StockQuoteItem]:
     try:
-        return _QUOTEMUX.stocks.get_daily_window(StockDailyWindowRequest(start_date=start_date, end_date=end_date, limit=limit, offset=offset))
+        return _QUOTEMUX.stocks.get_daily_window(StockDailyWindowRequest(start_date=start_date, end_date=end_date, limit=limit, offset=offset, skip_suspended=skip_suspended, skip_st=skip_st))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -156,7 +162,7 @@ def _rsi(series: pd.Series, period: int) -> pd.Series:
 def get_technical_factors(code: str, trade_date: str, start_date: str, end_date: str, adjust: str) -> list[TechnicalFactorItem]:
     actual_adjust = require_adjust(adjust)
     actual_code = require_codes(code, "")[0]
-    quote_items = get_quotes(actual_code, "", "1d", trade_date, start_date, end_date, "", "", None, actual_adjust, 5000, True, False)
+    quote_items = get_quotes(actual_code, "", "1d", trade_date, start_date, end_date, "", "", None, actual_adjust, 5000, True, False, False)
     if not quote_items:
         return []
     frame = pd.DataFrame([item.model_dump() for item in quote_items])

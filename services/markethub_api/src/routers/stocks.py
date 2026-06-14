@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, Query
 
-from data_threads import run_data_task
+from data_threads import run_data_task, run_quote_task
 from services import stocks
 from services.common import filter_response_fields
 from services.runtime_memory import run_with_memory_log
@@ -12,7 +12,7 @@ from services.runtime_memory import run_with_memory_log
 
 router = APIRouter()
 
-STOCK_QUOTE_FIELDS = {"code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount", "adjust"}
+STOCK_QUOTE_FIELDS = {"code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount", "adjust", "is_suspended", "is_st"}
 TECHNICAL_FIELDS = {
     "code",
     "trade_date",
@@ -89,12 +89,15 @@ async def api_stock_quotes(
     fields: str = Query(""),
     limit: int | None = Query(None, ge=1),
     skip_suspended: bool = Query(True),
+    skip_st: bool = Query(False),
     fill_missing: bool = Query(False),
 ) -> list[dict[str, object]]:
     actual_codes = codes if codes != "" else code
     detail = _quote_request_detail(actual_codes, freq, start_date, end_date, limit)
-    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, fill_missing)
-    return await run_data_task(_filter_stock_quote_items, stocks.get_quotes, args, fields, STOCK_QUOTE_FIELDS, detail)
+    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, skip_st, fill_missing)
+    is_heavy = int(detail["code_count"]) > 5 or int(detail["limit"]) > 2000
+    runner = run_quote_task if is_heavy else run_data_task
+    return await runner(_filter_stock_quote_items, stocks.get_quotes, args, fields, STOCK_QUOTE_FIELDS, detail)
 
 
 @router.get("/api/stocks/quotes/query")
@@ -112,12 +115,15 @@ async def api_stock_quotes_query(
     fields: str = Query(""),
     limit: int | None = Query(None, ge=1),
     skip_suspended: bool = Query(True),
+    skip_st: bool = Query(False),
     fill_missing: bool = Query(False),
 ) -> dict[str, object]:
     actual_codes = codes if codes != "" else code
     detail = _quote_request_detail(actual_codes, freq, start_date, end_date, limit)
-    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, fill_missing)
-    return await run_data_task(_filter_stock_quote_query_result, stocks.get_quotes_query_result, args, fields, STOCK_QUOTE_FIELDS, detail)
+    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, skip_st, fill_missing)
+    is_heavy = int(detail["code_count"]) > 5 or int(detail["limit"]) > 2000
+    runner = run_quote_task if is_heavy else run_data_task
+    return await runner(_filter_stock_quote_query_result, stocks.get_quotes_query_result, args, fields, STOCK_QUOTE_FIELDS, detail)
 
 
 @router.get("/api/stocks/quotes/daily-snapshot")
@@ -126,9 +132,11 @@ async def api_stock_daily_snapshot(
     fields: str = Query(""),
     limit: int = Query(10000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
+    skip_suspended: bool = Query(True),
+    skip_st: bool = Query(False),
 ) -> list[dict[str, object]]:
-    args = (trade_date, limit, offset)
-    return await run_data_task(_filter_items, stocks.get_market_daily_snapshot, args, fields, STOCK_QUOTE_FIELDS)
+    args = (trade_date, limit, offset, skip_suspended, skip_st)
+    return await run_quote_task(_filter_items, stocks.get_market_daily_snapshot, args, fields, STOCK_QUOTE_FIELDS)
 
 
 @router.get("/api/stocks/quotes/daily-window")
@@ -138,9 +146,11 @@ async def api_stock_daily_window(
     fields: str = Query(""),
     limit: int = Query(50000, ge=1),
     offset: int = Query(0, ge=0),
+    skip_suspended: bool = Query(True),
+    skip_st: bool = Query(False),
 ) -> list[dict[str, object]]:
-    args = (start_date, end_date, limit, offset)
-    return await run_data_task(_filter_items, stocks.get_market_daily_window, args, fields, STOCK_QUOTE_FIELDS)
+    args = (start_date, end_date, limit, offset, skip_suspended, skip_st)
+    return await run_quote_task(_filter_items, stocks.get_market_daily_window, args, fields, STOCK_QUOTE_FIELDS)
 
 
 @router.get("/api/stocks/catalog")

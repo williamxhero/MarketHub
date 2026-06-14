@@ -274,3 +274,15 @@ Cache Store -> provider 补洞 -> 写 Cache Store -> 合并返回
 事实表方向合理，不应该取消。
 
 当前真正合理且已落地的是股票分钟线、30m 派生线、股票日线、交易日历这几类。需要调整的是：代码和文档已经把指数、板块、股票/板块 reference 表当作本地 backend，但远端并没有这些表。下一步应补齐主链路 fact/ref 表，或在补齐前把文档和 diagnostics 明确标为目标状态而非当前状态。
+
+
+## ??????
+
+- `fact.stock_daily_1d` ?? `is_suspended boolean not null default false`?
+- `fact.stock_daily_1d` ?? `is_st boolean not null default false`?
+- ?????????????????? provider ??????????????
+- `skip_suspended` ? `skip_st` ?????????? API???????????????
+
+### 股票日线停牌占位
+
+`fact.stock_daily_1d.is_suspended=true` 表示该行是停牌日线，来源可以是 provider 明确返回的停牌状态，也可以是 QuoteMux 在历史交易日补洞时基于前一个交易日生成的停牌占位。占位行只用于补齐时间轴：`open/high/low/close` 等于前一个交易日 `close`，`volume=0`，`amount=0`，`is_st` 沿用前一个交易日。

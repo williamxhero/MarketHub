@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import anyio.to_thread
 from fastapi import APIRouter, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 
@@ -281,12 +282,12 @@ async def api_admin_capture_runs(
 
 @router.post("/api/admin/capture-runs/{capability_id}")
 async def api_admin_run_capture(capability_id: str) -> dict[str, object]:
-    return admin_runtime.run_capture(capability_id)
+    return await anyio.to_thread.run_sync(admin_runtime.run_capture, capability_id)
 
 
 @router.post("/api/admin/capture/run-due")
 async def api_admin_run_due_captures() -> list[dict[str, object]]:
-    return admin_runtime.run_due_captures()
+    return await anyio.to_thread.run_sync(admin_runtime.run_due_captures)
 
 
 @router.post("/api/admin/capture/run-due-async")
