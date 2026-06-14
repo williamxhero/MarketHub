@@ -1,22 +1,16 @@
 # system
 
-这里收口 MarketHub 的运行、部署、验收和边界说明。
+这里收口 MarketHub 的系统 API、系统设定、运行规则和验收边界。
 
 建议按顺序查看：
 
 - `/docs/system/runbook`
-- `/docs/system/deploy-process`
 - `/docs/system/health`
 - `/docs/system/minimal-online-scope`
 - `/docs/system/minimal-regression`
 - `/docs/system/provider-coverage`
 - `/docs/system/capability-update-policy`
-- `/docs/system/unified-store-provider-query-plan`
-- `/docs/system/fact-ref-store-design-review`
 - `/docs/system/capability-store-metadata`
-- `/docs/system/stock-daily-backtest-optimization`
-- `/docs/system/provider-unification-todo`
-- `/docs/system/provider-gap-candidates`
 
 ## 当前收口结论
 

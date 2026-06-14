@@ -10,3 +10,5 @@ efinance
 mootdx
 opentdx
 tushare==1.4.24
+pytest
+httpx
