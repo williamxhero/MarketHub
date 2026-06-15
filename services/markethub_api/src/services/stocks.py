@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import pandas as pd
 from fastapi import HTTPException
@@ -99,6 +99,21 @@ def get_market_daily_local_window(start_date: str, end_date: str, limit: int, of
 def get_money_flow(code: str, trade_date: str, start_date: str, end_date: str, view: str) -> list[StockMoneyFlowItem]:
     return _QUOTEMUX.stocks.get_money_flow(require_codes(code, "")[0], trade_date, start_date, end_date, require_money_flow_view(view))
 
+
+def get_money_flow_batch(codes: str, trade_date: str, view: str) -> list[StockMoneyFlowItem]:
+    ""批量查询多只股票的资金流数据""
+    from quotemux.utils import split_csv
+    code_list = require_codes("", codes)
+    view_type = require_money_flow_view(view)
+    results = []
+    for code in code_list:
+        try:
+            items = _QUOTEMUX.stocks.get_money_flow(code, trade_date, "", "", view_type)
+            results.extend(items)
+        except Exception:
+            # 跳过单只股票的错误，继续处理其他股票
+            pass
+    return results
 
 def get_financial_statements(code: str, codes: str, report_period: str, start_period: str, end_period: str, report_type: str) -> list[StockFinancialStatementItem]:
     return _QUOTEMUX.stocks.get_financial_statements(require_codes(code, codes), report_period, start_period, end_period, require_report_type(report_type))
