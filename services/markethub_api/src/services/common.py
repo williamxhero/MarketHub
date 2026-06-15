@@ -28,7 +28,7 @@ def require_codes(code: str, codes: str) -> list[str]:
 
 
 def optional_board_codes(board_code: str, board_codes: str) -> list[str]:
-    "`可选的板块代码参数，允许为空"`
+    """可选的板块代码参数，允许为空"""
     from quotemux.utils import split_csv
     items = []
     if board_code:
