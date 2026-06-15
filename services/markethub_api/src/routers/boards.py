@@ -47,6 +47,18 @@ async def api_board_quotes(
     return await run_data_task(_filter_items, boards.get_quotes, args, fields, BOARD_QUOTE_FIELDS)
 
 
+@router.get("/api/boards/quotes/daily-snapshot")
+async def api_board_daily_snapshot(
+    trade_date: str = Query(...),
+    fields: str = Query(""),
+    limit: int = Query(10000, ge=1, le=10000),
+    offset: int = Query(0, ge=0),
+) -> list[dict[str, object]]:
+    """获取指定交易日全市场板块快照，按涨跌幅排序"""
+    args = (trade_date, limit, offset)
+    return await run_data_task(_filter_items, boards.get_market_daily_snapshot, args, fields, BOARD_QUOTE_FIELDS)
+
+
 @router.get("/api/boards/catalog")
 async def api_board_catalog(
     category: str = Query(""),
@@ -99,6 +111,7 @@ async def api_board_money_flow_daily_snapshot(
     limit: int = Query(10000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
 ) -> list[dict[str, object]]:
+    """批量获取全市场板块资金流快照"""
     args = (trade_date, scope, limit, offset)
     return await run_data_task(_filter_items, boards.get_market_money_flow, args, fields, BOARD_MONEY_FLOW_FIELDS)
 
