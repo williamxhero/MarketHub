@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Sequence
 
@@ -26,6 +26,16 @@ def require_codes(code: str, codes: str) -> list[str]:
         raise HTTPException(status_code=400, detail="code 和 codes 至少需要传一个")
     return list(dict.fromkeys(items))
 
+
+def optional_board_codes(board_code: str, board_codes: str) -> list[str]:
+    "`可选的板块代码参数，允许为空"`
+    from quotemux.utils import split_csv
+    items = []
+    if board_code:
+        items.append(board_code.strip())
+    items.extend(item.strip() for item in split_csv(board_codes))
+    items = [item for item in items if item]
+    return list(dict.fromkeys(items))
 
 def require_board_codes(board_code: str, board_codes: str) -> list[str]:
     items = []
