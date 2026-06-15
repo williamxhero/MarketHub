@@ -101,7 +101,7 @@ def get_money_flow(code: str, trade_date: str, start_date: str, end_date: str, v
 
 
 def get_money_flow_batch(codes: str, trade_date: str, view: str) -> list[StockMoneyFlowItem]:
-    ""批量查询多只股票的资金流数据""
+    """批量查询多只股票的资金流数据"""
     from quotemux.utils import split_csv
     code_list = require_codes("", codes)
     view_type = require_money_flow_view(view)
