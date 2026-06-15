@@ -5,8 +5,11 @@
 - `/api/health`
 - `/api/openapi.json`
 - `/docs`
+- `/doc-view/`
 - `/docs/all`
 - `/doc-view/all`
+- `/docs/system/admin-warmups`
+- `/docs/sync-workflow`
 - `/docs/system/runbook`
 - `/docs/indexes`
 - `/docs/indexes/members`

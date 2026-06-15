@@ -53,8 +53,10 @@
 - `http://127.0.0.1:8803/api/health`
 - `http://127.0.0.1:8803/api/openapi.json`
 - `http://127.0.0.1:8803/docs`
+- `http://127.0.0.1:8803/doc-view/`
 - `http://127.0.0.1:8803/docs/all`
 - `http://127.0.0.1:8803/doc-view/all`
+- `http://127.0.0.1:8803/docs/system/admin-warmups`
 - `http://127.0.0.1:8803/api/stocks/catalog`
 - `http://127.0.0.1:8803/api/boards/catalog`
 - `http://127.0.0.1:8803/api/indexes/catalog`

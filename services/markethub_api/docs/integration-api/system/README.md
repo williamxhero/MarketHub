@@ -11,11 +11,14 @@
 - `/docs/system/provider-coverage`
 - `/docs/system/capability-update-policy`
 - `/docs/system/capability-store-metadata`
+- `/docs/system/admin-warmups`
 
 其中 `/docs/system/capability-update-policy` 同时约束两类后台更新入口：
 
 - 定时到期检查：`POST /api/admin/capture/run-due-async`
 - 手动大范围预热：`POST /api/admin/warmups`
+
+另外 `/docs/system/admin-warmups` 单独说明管理后台 Warmups 页面、后台任务状态和查询接口。
 
 ## 当前收口结论
 

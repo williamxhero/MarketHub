@@ -3,6 +3,7 @@ from __future__ import annotations
 
 PUBLIC_PAGE_ALIAS = {
     "docs/search-docs.md": "search-docs",
+    "docs/sync-workflow.md": "sync-workflow",
 }
 
 FILE_ALIAS_BY_PUBLIC_PATH = {value: key for key, value in PUBLIC_PAGE_ALIAS.items()}

@@ -24,6 +24,7 @@
 - `/docs`：程序对接根文档，也是当前起始入口。
 - `/docs/all`：全部已接入接口文档聚合页。
 - `/docs/search?q=stocks`：文档搜索接口，返回 JSON。
+- `/docs/sync-workflow`：文档同步更新流程。
 
 ## 基础接口总览
 
@@ -71,6 +72,7 @@
 - `/doc-view`：页面化文档首页。
 - `/doc-view/all`：页面化的全部文档聚合页。
 - `/doc-view/search`：页面化搜索入口。
+- `/doc-view/sync-workflow`：页面化的文档同步流程。
 
 ## 文档分组入口
 
@@ -80,6 +82,7 @@
 - `/docs/markets`：市场相关接口入口。
 - `/docs/rankings`：排行相关接口入口。
 - `/docs/system`：运行方式、边界、回归范围和来源口径说明。
+- `/docs/system/admin-warmups`：管理后台大范围预热和相关 admin 接口说明。
 
 ## 边界说明
 
