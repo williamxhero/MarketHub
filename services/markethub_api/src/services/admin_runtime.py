@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import binascii
@@ -54,11 +54,11 @@ WARMUP_ITEM_STATUS_SKIPPED = 'skipped'
 WARMUP_FINISHED_ITEM_STATUSES = (WARMUP_ITEM_STATUS_SUCCESS, WARMUP_ITEM_STATUS_FAILED, WARMUP_ITEM_STATUS_SKIPPED)
 
 WARMUP_SCHEMA_SQL = (
-    'create table if not exists admin_warmup_tasks (task_id text primary key, status text not null, created_at timestamp without time zone not null default now(), started_at timestamp without time zone, finished_at timestamp without time zone, error_message text not null default '''')',
-    'create table if not exists admin_warmup_items (task_id text not null references admin_warmup_tasks(task_id) on delete cascade, position integer not null, capability_id text not null, status text not null, capture_run_id bigint, started_at timestamp without time zone, finished_at timestamp without time zone, error_message text not null default '''', detail_json jsonb not null default ''{}''::jsonb, primary key (task_id, position))',
-    'create index if not exists idx_admin_warmup_tasks_created_at on admin_warmup_tasks (created_at desc)',
-    'create index if not exists idx_admin_warmup_tasks_status on admin_warmup_tasks (status, created_at desc)',
-    'create index if not exists idx_admin_warmup_items_task_position on admin_warmup_items (task_id, position asc)',
+    "create table if not exists admin_warmup_tasks (task_id text primary key, status text not null, created_at timestamp without time zone not null default now(), started_at timestamp without time zone, finished_at timestamp without time zone, error_message text not null default '')",
+    "create table if not exists admin_warmup_items (task_id text not null references admin_warmup_tasks(task_id) on delete cascade, position integer not null, capability_id text not null, status text not null, capture_run_id bigint, started_at timestamp without time zone, finished_at timestamp without time zone, error_message text not null default '', detail_json jsonb not null default '{}'::jsonb, primary key (task_id, position))",
+    "create index if not exists idx_admin_warmup_tasks_created_at on admin_warmup_tasks (created_at desc)",
+    "create index if not exists idx_admin_warmup_tasks_status on admin_warmup_tasks (status, created_at desc)",
+    "create index if not exists idx_admin_warmup_items_task_position on admin_warmup_items (task_id, position asc)",
 )
 
 _WARMUP_SCHEMA_READY = False
