@@ -804,7 +804,6 @@
         </div>
       </div>
       <div class="modal-foot">
-        <button class="button-ghost" id="close-capability-editor">关闭</button>
         <button class="button-accent" id="save-capability-settings">保存</button>
       </div>
     </div>
@@ -844,8 +843,7 @@
         </label>
       </div>
       <div class="modal-foot">
-        <button class="button-ghost" id="close-api-key-editor">关闭</button>
-        <button class="button-accent" id="save-api-key">确定</button>
+        <button class="button-accent" id="save-api-key">保存</button>
       </div>
     </div>
   </div>
@@ -1090,7 +1088,7 @@
         const healthStatus = item.health?.status || "unknown";
         const isHealthy = healthStatus === "ok";
         const sourceInstance = selectSourceInstance(item.package_id);
-        const apiKeyDisabled = !item.secret_fields || !item.secret_fields.includes("api_key") || sourceInstance === null;
+        const apiKeyDisabled = sourceInstance === null;
         row.className = "package-row";
         row.innerHTML = `
           <div class="package-name"><span class="status-dot ${isHealthy ? "ok" : ""}"></span>${escapeHtml(item.display_name || item.package_id)}</div>
@@ -1111,15 +1109,11 @@
       });
     }
 
-    function openApiKeyEditor(packageId) {
+    async function openApiKeyEditor(packageId) {
       const sourcePackage = (matrixPayload.packages || []).find((item) => item.package_id === packageId);
       const sourceInstance = selectSourceInstance(packageId);
       if (!sourcePackage || !sourceInstance) {
         setSummary(`找不到 ${packageId} 对应的 source instance。`);
-        return;
-      }
-      if (!sourcePackage.secret_fields || !sourcePackage.secret_fields.includes("api_key")) {
-        setSummary(`${packageId} 不支持 api_key。`);
         return;
       }
       activeApiKeyPackageId = packageId;
@@ -1127,9 +1121,17 @@
       apiKeyPackageId.textContent = sourcePackage.package_id || "";
       apiKeyInstanceId.textContent = sourceInstance.instance_id || "";
       apiKeyEditorSubtitle.textContent = `写入 ${sourcePackage.display_name || sourcePackage.package_id} 的 QuoteMux 配置。`;
-      apiKeyInput.value = "";
       apiKeyEditor.classList.add("open");
       apiKeyEditor.setAttribute("aria-hidden", "false");
+      apiKeyInput.value = "";
+      try {
+        const payload = await request(`/api/admin/source-instances/${encodeURIComponent(activeApiKeyInstanceId)}/secrets/api_key`);
+        apiKeyInput.value = payload.secret_value || "";
+      } catch (error) {
+        closeApiKeyEditor();
+        setSummary(`加载 API Key 失败: ${error.message}`);
+        return;
+      }
       apiKeyInput.focus();
     }
 
@@ -1618,6 +1620,7 @@
       if (activeApiKeyInstanceId === "" || activeApiKeyPackageId === "") {
         return;
       }
+      const packageId = activeApiKeyPackageId;
       const apiKey = apiKeyInput.value;
       if (apiKey === "") {
         setSummary("请输入 API Key。");
@@ -1629,7 +1632,7 @@
         return;
       }
       try {
-        setSummary(`正在保存 ${activeApiKeyPackageId} API Key...`);
+        setSummary(`正在保存 ${packageId} API Key...`);
         await request(`/api/admin/source-instances/${encodeURIComponent(activeApiKeyInstanceId)}`, {
           method: "PUT",
           body: JSON.stringify({
@@ -1643,13 +1646,13 @@
         await request("/api/admin/runtime-profiles/publish", {
           method: "POST",
           body: JSON.stringify({
-            display_name: `配置 ${activeApiKeyPackageId} api_key`,
-            note: `写入 ${activeApiKeyPackageId} source instance api_key`,
+            display_name: `配置 ${packageId} api_key`,
+            note: `写入 ${packageId} source instance api_key`,
           }),
         });
         closeApiKeyEditor();
         await loadAll();
-        setSummary(`已保存 ${activeApiKeyPackageId} API Key。`);
+        setSummary(`已保存 ${packageId} API Key。`);
       } catch (error) {
         setSummary(`保存 API Key 失败: ${error.message}`);
       }
@@ -1785,10 +1788,8 @@
     document.getElementById("import-directory").addEventListener("click", importPackageDirectory);
     document.getElementById("start-warmup").addEventListener("click", startWarmup);
     document.getElementById("save-matrix").addEventListener("click", saveMatrix);
-    document.getElementById("close-capability-editor").addEventListener("click", closeCapabilityEditor);
     document.getElementById("close-capability-editor-top").addEventListener("click", closeCapabilityEditor);
     document.getElementById("save-capability-settings").addEventListener("click", saveCapabilitySettings);
-    document.getElementById("close-api-key-editor").addEventListener("click", closeApiKeyEditor);
     document.getElementById("close-api-key-editor-top").addEventListener("click", closeApiKeyEditor);
     document.getElementById("save-api-key").addEventListener("click", saveApiKey);
     cacheTtlDays.addEventListener("input", rememberTtlDays);

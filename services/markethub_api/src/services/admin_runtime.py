@@ -784,6 +784,17 @@ def list_source_instances() -> list[dict[str, object]]:
     return [_serialize_instance(item) for item in _runtime().list_source_instances()]
 
 
+def get_source_instance_secret_value(instance_id: str, secret_field: str) -> dict[str, str]:
+    instance = next((item for item in _runtime().list_source_instances() if item.instance_id == instance_id), None)
+    if instance is None:
+        raise KeyError(f"未知 source instance: {instance_id}")
+    return {
+        "instance_id": instance.instance_id,
+        "secret_field": secret_field,
+        "secret_value": instance.secret_values.get(secret_field, ""),
+    }
+
+
 def _merge_masked_secret_values(
     instance_id: str,
     package_id: str,

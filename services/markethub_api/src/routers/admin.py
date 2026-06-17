@@ -142,6 +142,11 @@ async def api_admin_source_instances() -> list[dict[str, object]]:
     return admin_runtime.list_source_instances()
 
 
+@router.get("/api/admin/source-instances/{instance_id}/secrets/{secret_field}")
+async def api_admin_source_instance_secret_value(instance_id: str, secret_field: str) -> dict[str, str]:
+    return admin_runtime.get_source_instance_secret_value(instance_id, secret_field)
+
+
 @router.post("/api/admin/source-instances")
 async def api_admin_source_instance_create(payload: SourceInstancePayload) -> dict[str, object]:
     return admin_runtime.save_source_instance(
