@@ -11,7 +11,7 @@
 - `trade_date`（类型：`str`）：交易日期，格式 `YYYY-MM-DD`。
 - `start_date`（类型：`str`）：起始日期，格式 `YYYY-MM-DD`。
 - `end_date`（类型：`str`）：结束日期，格式 `YYYY-MM-DD`。
-- `view`（类型：`str`；默认：`summary`）：资金流视图，可选 `summary`、`trend`、`breakdown`。
+- `view`（类型：`str`；默认：`main`）：资金流视图，当前固定使用 `main`。
 
 ## 返回类型
 

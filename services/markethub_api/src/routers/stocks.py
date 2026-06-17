@@ -209,7 +209,7 @@ async def api_stock_technical_factors(
 
 
 @router.get("/api/stocks/{code}/indicators/money-flow")
-async def api_stock_money_flow(code: str, trade_date: str = Query(""), start_date: str = Query(""), end_date: str = Query(""), view: str = Query("summary")) -> list[dict[str, object]]:
+async def api_stock_money_flow(code: str, trade_date: str = Query(""), start_date: str = Query(""), end_date: str = Query(""), view: str = Query("main")) -> list[dict[str, object]]:
     return await run_data_task(_dump_item_list, stocks.get_money_flow, (code, trade_date, start_date, end_date, view))
 
 
@@ -219,7 +219,7 @@ async def api_stock_money_flow(code: str, trade_date: str = Query(""), start_dat
 async def api_stock_money_flow_batch(
     codes: str = Query(...),
     trade_date: str = Query(...),
-    view: str = Query("summary"),
+    view: str = Query("main"),
 ) -> list[dict[str, object]]:
     """批量查询多只股票的资金流数据"""
     return await run_data_task(_dump_item_list, stocks.get_money_flow_batch, (codes, trade_date, view))

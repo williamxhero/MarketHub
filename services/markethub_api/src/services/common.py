@@ -95,8 +95,8 @@ def require_adjust(adjust: str) -> str:
 
 
 def require_money_flow_view(view: str) -> str:
-    actual = view or "summary"
-    if actual not in {"summary", "trend", "breakdown"}:
+    actual = view or "main"
+    if actual not in {"main"}:
         raise HTTPException(status_code=400, detail="view 不合法")
     return actual
 

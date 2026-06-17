@@ -10,5 +10,6 @@
 - `/docs/stocks/quotes-daily-snapshot`
 - `/docs/stocks/quotes-daily-local-window`
 - `/docs/stocks/indicators/money-flow`
+- `/docs/stocks/indicators/money-flow-batch`
 - `/docs/stocks/finance/statements`
 - `/docs/stocks/ownership/shareholders/top10`

@@ -33,6 +33,7 @@ def _install_all_packages(python_executable: Path) -> None:
     env = os.environ.copy()
     env.setdefault('MARKETHUB_PROJECT_ROOT', str(MARKETHUB_ROOT))
     env.setdefault('QUOTEMUX_RUNTIME_ROOT', str(WORKSPACE_ROOT / 'runtime'))
+    env.setdefault('QUOTEMUX_PACKAGE_REPO_SPEC', str(WORKSPACE_ROOT / 'QuoteMux_Packages'))
     env.setdefault('DATALAKE_ROOT', str(WORKSPACE_ROOT / 'datalake'))
     subprocess.run(
         [str(python_executable), '-c', 'from quotemux import install_all_packages; print(install_all_packages())'],

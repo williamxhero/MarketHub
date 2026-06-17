@@ -6,6 +6,7 @@
 
 - `/docs/boards/catalog`
 - `/docs/boards/quotes`
+- `/docs/boards/quotes-daily-snapshot`
 - `/docs/boards/profile`
 - `/docs/boards/members`
 - `/docs/boards/members/history`

@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from core.config import DEFAULT_LIMIT
 from quotemux import QuoteMux
 from quotemux.models import BoardCatalogItem, BoardCategoryItem, BoardMemberHistoryItem, BoardMemberItem, BoardMoneyFlowItem, BoardQuoteItem
-from services.common import ensure_limit, optional_board_codes, require_board_codes, require_board_money_flow_scope, require_board_quote_freq
+from services.common import ensure_limit, optional_board_codes, require_board_money_flow_scope, require_board_quote_freq
 
 
 MAX_BOARD_MONEY_FLOW_SNAPSHOT_LIMIT = 10000
@@ -24,11 +24,11 @@ def get_quotes(
     count: int | None,
     limit: int,
 ) -> list[BoardQuoteItem]:
-    # 允许空板块代码用于市场快照查询
+    # 允许空板块代码用于市场快照查询。
     actual_board_codes = optional_board_codes(board_code, board_codes)
     if not actual_board_codes and trade_date == "":
         raise HTTPException(status_code=400, detail="board_code/board_codes 和 trade_date 至少需要传一个")
-    
+
     return _QUOTEMUX.boards.get_quotes(
         actual_board_codes,
         require_board_quote_freq(freq),
@@ -43,14 +43,12 @@ def get_quotes(
 
 
 def get_market_daily_snapshot(trade_date: str, limit: int, offset: int) -> list[BoardQuoteItem]:
-    """获取指定交易日全市场板块快照"""
     if trade_date == "":
         raise HTTPException(status_code=400, detail="trade_date 不能为空")
     if limit < 1 or limit > 10000:
         raise HTTPException(status_code=400, detail="limit 必须在 1 到 10000 之间")
     if offset < 0:
         raise HTTPException(status_code=400, detail="offset 不能小于 0")
-    
     return _QUOTEMUX.boards.get_market_daily_snapshot(trade_date, limit, offset)
 
 
