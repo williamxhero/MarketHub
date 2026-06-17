@@ -220,11 +220,18 @@
 
     .package-row {
       display: grid;
-      grid-template-columns: minmax(160px, 220px) minmax(280px, 1fr) 110px 92px;
+      grid-template-columns: minmax(160px, 220px) minmax(280px, 1fr) 110px auto;
       gap: 18px;
       align-items: center;
       padding: 15px 0;
       border-bottom: 1px solid var(--line);
+    }
+
+    .package-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
     .package-name {
@@ -803,6 +810,46 @@
     </div>
   </div>
 
+  <div class="modal-root" id="api-key-editor" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="api-key-editor-title">
+      <div class="modal-head">
+        <div>
+          <h3 id="api-key-editor-title">API Key</h3>
+          <p id="api-key-editor-subtitle">写入 QuoteMux source instance 的 secret_values.api_key。</p>
+        </div>
+        <button class="button-ghost button-small" id="close-api-key-editor-top">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="info-grid">
+          <div class="info-card">
+            <strong>Package</strong>
+            <span id="api-key-package-id"></span>
+          </div>
+          <div class="info-card">
+            <strong>Instance</strong>
+            <span id="api-key-instance-id"></span>
+          </div>
+          <div class="info-card">
+            <strong>Secret Field</strong>
+            <span>api_key</span>
+          </div>
+          <div class="info-card">
+            <strong>Scope</strong>
+            <span>QuoteMux</span>
+          </div>
+        </div>
+        <label class="field full" style="margin-top: 16px;">
+          <span class="field-label">API Key</span>
+          <input id="api-key-input" type="text" autocomplete="off" />
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button class="button-ghost" id="close-api-key-editor">关闭</button>
+        <button class="button-accent" id="save-api-key">确定</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const DEFAULT_TTL_DAYS = 365;
     const CACHE_NEVER_EXPIRE_TTL_DAYS = -1;
@@ -834,10 +881,19 @@
     const warmupSummaryGrid = document.getElementById("warmup-summary-grid");
     const warmupItemsWrap = document.getElementById("warmup-items-wrap");
     const warmupHistoryWrap = document.getElementById("warmup-history-wrap");
+    const apiKeyEditor = document.getElementById("api-key-editor");
+    const apiKeyEditorSubtitle = document.getElementById("api-key-editor-subtitle");
+    const apiKeyPackageId = document.getElementById("api-key-package-id");
+    const apiKeyInstanceId = document.getElementById("api-key-instance-id");
+    const apiKeyInput = document.getElementById("api-key-input");
     let adminApiBaseUrl = "";
     let matrixPayload = { packages: [], capabilities: [] };
+    let sourceInstances = [];
+    let sourceInstancesByPackageId = {};
     let activeCapabilityId = "";
     let activeCapturePolicy = {};
+    let activeApiKeyPackageId = "";
+    let activeApiKeyInstanceId = "";
     let rememberedTtlDays = String(DEFAULT_TTL_DAYS);
     let activeTtlDays = DEFAULT_TTL_DAYS;
     let activeWarmupTaskId = "";
@@ -1018,6 +1074,11 @@
       }
     }
 
+    function selectSourceInstance(packageId) {
+      const instances = sourceInstancesByPackageId[packageId] || [];
+      return instances[0] || null;
+    }
+
     function renderPackages(packages) {
       packageList.innerHTML = "";
       if (packages.length === 0) {
@@ -1028,18 +1089,55 @@
         const row = document.createElement("div");
         const healthStatus = item.health?.status || "unknown";
         const isHealthy = healthStatus === "ok";
+        const sourceInstance = selectSourceInstance(item.package_id);
+        const apiKeyDisabled = !item.secret_fields || !item.secret_fields.includes("api_key") || sourceInstance === null;
         row.className = "package-row";
         row.innerHTML = `
-          <div class="package-name">${escapeHtml(item.display_name || item.package_id)}</div>
+          <div class="package-name"><span class="status-dot ${isHealthy ? "ok" : ""}"></span>${escapeHtml(item.display_name || item.package_id)}</div>
           <div class="package-desc">${escapeHtml(item.description || "")}</div>
-          <div class="health"><span class="status-dot ${isHealthy ? "ok" : ""}"></span>${escapeHtml(healthStatus)}</div>
-          <button class="button-danger button-small" data-package-delete="${escapeHtml(item.package_id)}">删除</button>
+          <div class="health"></div>
+          <div class="package-actions">
+            <button class="button-ghost button-small" data-package-api-key="${escapeHtml(item.package_id)}" ${apiKeyDisabled ? "disabled" : ""}>api key</button>
+            <button class="button-danger button-small" data-package-delete="${escapeHtml(item.package_id)}">删除</button>
+          </div>
         `;
         packageList.appendChild(row);
+      });
+      packageList.querySelectorAll("[data-package-api-key]").forEach((button) => {
+        button.addEventListener("click", () => openApiKeyEditor(button.dataset.packageApiKey));
       });
       packageList.querySelectorAll("[data-package-delete]").forEach((button) => {
         button.addEventListener("click", () => unregisterPackage(button.dataset.packageDelete));
       });
+    }
+
+    function openApiKeyEditor(packageId) {
+      const sourcePackage = (matrixPayload.packages || []).find((item) => item.package_id === packageId);
+      const sourceInstance = selectSourceInstance(packageId);
+      if (!sourcePackage || !sourceInstance) {
+        setSummary(`找不到 ${packageId} 对应的 source instance。`);
+        return;
+      }
+      if (!sourcePackage.secret_fields || !sourcePackage.secret_fields.includes("api_key")) {
+        setSummary(`${packageId} 不支持 api_key。`);
+        return;
+      }
+      activeApiKeyPackageId = packageId;
+      activeApiKeyInstanceId = sourceInstance.instance_id || "";
+      apiKeyPackageId.textContent = sourcePackage.package_id || "";
+      apiKeyInstanceId.textContent = sourceInstance.instance_id || "";
+      apiKeyEditorSubtitle.textContent = `写入 ${sourcePackage.display_name || sourcePackage.package_id} 的 QuoteMux 配置。`;
+      apiKeyInput.value = "";
+      apiKeyEditor.classList.add("open");
+      apiKeyEditor.setAttribute("aria-hidden", "false");
+      apiKeyInput.focus();
+    }
+
+    function closeApiKeyEditor() {
+      activeApiKeyPackageId = "";
+      activeApiKeyInstanceId = "";
+      apiKeyEditor.classList.remove("open");
+      apiKeyEditor.setAttribute("aria-hidden", "true");
     }
 
     function capturePolicyMap(capturePolicies) {
@@ -1454,12 +1552,28 @@
 
     async function loadAll() {
       try {
-        const [packages, matrix, capturePolicies, warmups] = await Promise.all([
+        const [packages, matrix, capturePolicies, warmups, instances] = await Promise.all([
           request("/api/admin/source-packages"),
           request("/api/admin/capability-matrix"),
           request("/api/admin/capture-policies"),
           request("/api/admin/warmups"),
+          request("/api/admin/source-instances"),
         ]);
+        sourceInstances = instances;
+        sourceInstancesByPackageId = instances.reduce((map, instance) => {
+          const packageId = instance.package_id || "";
+          if (packageId === "") {
+            return map;
+          }
+          if (!map[packageId]) {
+            map[packageId] = [];
+          }
+          map[packageId].push(instance);
+          return map;
+        }, {});
+        Object.values(sourceInstancesByPackageId).forEach((items) => {
+          items.sort((left, right) => (left.priority - right.priority) || String(left.instance_id || "").localeCompare(String(right.instance_id || "")));
+        });
         renderPackages(packages);
         renderMatrix(matrix, capturePolicies);
         renderWarmupCapabilityOptions(matrix.capabilities || []);
@@ -1497,6 +1611,47 @@
         await loadAll();
       } catch (error) {
         setSummary(`取消注册失败: ${error.message}`);
+      }
+    }
+
+    async function saveApiKey() {
+      if (activeApiKeyInstanceId === "" || activeApiKeyPackageId === "") {
+        return;
+      }
+      const apiKey = apiKeyInput.value;
+      if (apiKey === "") {
+        setSummary("请输入 API Key。");
+        return;
+      }
+      const sourceInstance = (sourceInstances || []).find((item) => item.instance_id === activeApiKeyInstanceId);
+      if (!sourceInstance) {
+        setSummary(`找不到 ${activeApiKeyInstanceId} 对应的 source instance。`);
+        return;
+      }
+      try {
+        setSummary(`正在保存 ${activeApiKeyPackageId} API Key...`);
+        await request(`/api/admin/source-instances/${encodeURIComponent(activeApiKeyInstanceId)}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            ...sourceInstance,
+            secret_values: {
+              ...(sourceInstance.secret_values || {}),
+              api_key: apiKey,
+            },
+          }),
+        });
+        await request("/api/admin/runtime-profiles/publish", {
+          method: "POST",
+          body: JSON.stringify({
+            display_name: `配置 ${activeApiKeyPackageId} api_key`,
+            note: `写入 ${activeApiKeyPackageId} source instance api_key`,
+          }),
+        });
+        closeApiKeyEditor();
+        await loadAll();
+        setSummary(`已保存 ${activeApiKeyPackageId} API Key。`);
+      } catch (error) {
+        setSummary(`保存 API Key 失败: ${error.message}`);
       }
     }
 
@@ -1633,6 +1788,9 @@
     document.getElementById("close-capability-editor").addEventListener("click", closeCapabilityEditor);
     document.getElementById("close-capability-editor-top").addEventListener("click", closeCapabilityEditor);
     document.getElementById("save-capability-settings").addEventListener("click", saveCapabilitySettings);
+    document.getElementById("close-api-key-editor").addEventListener("click", closeApiKeyEditor);
+    document.getElementById("close-api-key-editor-top").addEventListener("click", closeApiKeyEditor);
+    document.getElementById("save-api-key").addEventListener("click", saveApiKey);
     cacheTtlDays.addEventListener("input", rememberTtlDays);
     cachePermanent.addEventListener("change", () => {
       saveManualPermanent();
@@ -1645,6 +1803,10 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && capabilityEditor.classList.contains("open")) {
         closeCapabilityEditor();
+        return;
+      }
+      if (event.key === "Escape" && apiKeyEditor.classList.contains("open")) {
+        closeApiKeyEditor();
       }
     });
     document.addEventListener("DOMContentLoaded", loadAll);

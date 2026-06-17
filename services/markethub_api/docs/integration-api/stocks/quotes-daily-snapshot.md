@@ -9,7 +9,7 @@
 - `limit`（`int`）：返回记录上限。
 - `offset`（`int`）：结果偏移量。
 - `skip_suspended`（`bool`）：过滤停牌行。
-- `skip_st`（`bool`）：如果某只股票在快照内 `is_st=true`，则整只股票过滤。
+- `skip_st`（`bool`）：过滤 ST 股票。
 
 ## 返回类型
 
@@ -35,7 +35,6 @@
 
 ## 补充说明
 
-- 不需要传 `code` 或 `codes`。
-- 主路径先读 `stocks.quotes.daily_snapshot`，未命中时先读本地 `fact.stock_daily_1d`。
-- `fact.stock_daily_1d` 已纳入 `BJSE` 正式日线口径。
-- 运行时按 Capability Matrix 勾选的源补源。
+- 该接口直接读取本地 `fact.stock_daily_1d`，返回口径与 `/api/stocks/quotes?freq=1d&start_date=...&end_date=...` 的日线事实表保持一致。
+- 缺少指定交易日数据时快速返回空数组，不在请求线程内触发全市场外源补齐。
+- `pre_close`、`change`、`pct_chg` 会基于前一个已有交易日收盘价派生。

@@ -27,7 +27,7 @@
 
 ## 补充说明
 
-- 当前能力已改为 `Tushare only`，不再混接旧来源。
 - `code` 和 `codes` 一次最多传 `200` 只股票；全市场取数请使用 `trade_date=单日` 且不要传 `code` 或 `codes`。
-- 未传 `code` 和 `codes` 时，仅支持 `trade_date=单日` 的全市场查询；这时走 TS 单日全市场截面，避免拆成全市场代码批量请求。
-- 未传 `code` 和 `codes` 时，不支持多日全市场区间查询。
+- 查询会优先用本地 `fact.stock_daily_1d` 返回已有行情覆盖的 `code/trade_date`，避免成员股链路因为指标 Store 空而直接中断。
+- `turnover_rate`、`volume_ratio`、`pe`、`pb`、`total_share`、`float_share` 只有本地 Store 或外源已有对应字段时才返回具体数值；缺失时保持 `null`。
+- 本地无覆盖时再进入 `stocks.indicators.daily_basic` 能力链路补源。

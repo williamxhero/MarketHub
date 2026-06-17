@@ -784,6 +784,21 @@ def list_source_instances() -> list[dict[str, object]]:
     return [_serialize_instance(item) for item in _runtime().list_source_instances()]
 
 
+def _merge_masked_secret_values(
+    instance_id: str,
+    package_id: str,
+    secret_values: dict[str, str],
+) -> dict[str, str]:
+    current_instance = next((item for item in _runtime().list_source_instances() if item.instance_id == instance_id), None)
+    if current_instance is None or current_instance.package_id != package_id:
+        return secret_values
+    merged = dict(secret_values)
+    for field_name, field_value in merged.items():
+        if field_value == "***":
+            merged[field_name] = current_instance.secret_values.get(field_name, "")
+    return merged
+
+
 def save_source_instance(
     instance_id: str,
     package_id: str,
@@ -795,6 +810,7 @@ def save_source_instance(
     secret_values: dict[str, str],
     tags: tuple[str, ...],
 ) -> dict[str, object]:
+    resolved_secret_values = _merge_masked_secret_values(instance_id, package_id, secret_values)
     instance = SourceInstanceConfig(
         instance_id=instance_id,
         package_id=package_id,
@@ -803,7 +819,7 @@ def save_source_instance(
         priority=priority,
         timeout_seconds=timeout_seconds,
         config_values=config_values,
-        secret_values=secret_values,
+        secret_values=resolved_secret_values,
         tags=tags,
     )
     saved = _runtime().save_source_instance(instance)

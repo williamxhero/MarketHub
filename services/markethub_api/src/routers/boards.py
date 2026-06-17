@@ -11,7 +11,7 @@ from services.common import filter_response_fields
 
 router = APIRouter()
 
-BOARD_QUOTE_FIELDS = {"board_code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount"}
+BOARD_QUOTE_FIELDS = {"board_code", "board_name", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount"}
 BOARD_MONEY_FLOW_FIELDS = {"board_code", "trade_date", "scope", "inflow", "outflow", "net_inflow"}
 
 

@@ -4,17 +4,15 @@
 
 ## 查询参数
 
-- `board_code`（类型：`str`）：单个板块代码；与 `board_codes` 至少传一个。
-- `board_codes`（类型：`str`）：多个板块代码，逗号分隔；与 `board_code` 至少传一个。
-- `freq`（类型：`str`；默认：`1d`）：行情频率，可选 `1m`、`5m`、`15m`、`30m`、`60m`、`1d`、`1w`、`1mo`。
-- `trade_date`（类型：`str`）：交易日期，格式 `YYYY-MM-DD`。
-- `start_date`（类型：`str`）：起始日期，格式 `YYYY-MM-DD`。
-- `end_date`（类型：`str`）：结束日期，格式 `YYYY-MM-DD`。
-- `start_time`（类型：`str`）：起始时间，分钟级行情可传完整时间字符串。
-- `end_time`（类型：`str`）：结束时间，分钟级行情可传完整时间字符串。
-- `count`（类型：`int | None`；允许空值；最小值：`1`）：每个代码返回的最近记录条数。
-- `fields`（类型：`str`）：按逗号指定返回字段，不传返回全部字段。
-- `limit`（类型：`int`；默认：`200`；范围：`1-5000`）：返回记录上限。
+- `board_code`（`str`）：单个板块代码；与 `board_codes` 至少传一个。
+- `board_codes`（`str`）：多个板块代码，逗号分隔；与 `board_code` 至少传一个。
+- `freq`（`str`，默认 `1d`）：行情频率，可选 `1d`、`1w`、`1mo`。
+- `trade_date`（`str`）：交易日期，格式 `YYYY-MM-DD`。
+- `start_date`（`str`）：起始日期，格式 `YYYY-MM-DD`。
+- `end_date`（`str`）：结束日期，格式 `YYYY-MM-DD`。
+- `count`（`int | None`）：每个板块返回的最近记录条数。
+- `fields`（`str`）：按逗号指定返回字段，不传返回全部字段。
+- `limit`（`int`，默认 `200`，范围 `1-5000`）：返回记录上限。
 
 ## 返回类型
 
@@ -23,7 +21,8 @@
 ## 返回字段
 
 - `board_code`（`str`）：板块代码。
-- `trade_time`（`str`）：时间点；日频返回交易日，分钟级返回具体时间。
+- `board_name`（`str`）：板块名称。
+- `trade_time`（`str`）：交易日期。
 - `freq`（`str`）：数据频率。
 - `open`（`float | None`）：开盘价。
 - `high`（`float | None`）：最高价。
@@ -31,12 +30,12 @@
 - `close`（`float | None`）：收盘价。
 - `pre_close`（`float | None`）：前收盘价。
 - `change`（`float | None`）：涨跌额。
-- `pct_chg`（`float | None`）：涨跌幅，单位 %。
+- `pct_chg`（`float | None`）：涨跌幅，单位 `%`。
 - `volume`（`float | None`）：成交量。
 - `amount`（`float | None`）：成交额。
 
 ## 补充说明
 
-- `board_code` 与 `board_codes` 至少需要传一个，`count` 按每个板块分别生效。
-- `trade_date` 适合单日查询，`start_date` 与 `end_date` 用于区间筛选。
-- 传入 `fields` 后，响应中的每条记录只保留所选字段。
+- `freq=1d` 且指定 `trade_date` 的单日查询直接读取本地 `fact.board_daily_1d`，并通过 `ref.board` 补齐 `board_name`。
+- `pre_close`、`change`、`pct_chg` 会基于前一个已有交易日收盘价派生。
+- 没有本地数据时快速返回空数组，不在请求线程内触发外源补齐。
