@@ -18,7 +18,7 @@
 - `limit`（`int | None`）：调用方主动裁剪总返回条数；不传则返回完整结果。
 - `skip_suspended`（`bool`，默认 `true`）：仅对 `1d/1w/1mo` 生效；强制过滤停牌行。
 - `skip_st`（`bool`，默认 `false`）：仅对 `1d/1w/1mo` 生效；如果某只股票在请求窗口内任一行 `is_st=true`，则该股票所有返回行都会被过滤。
-- `fill_missing`（`bool`，默认 `false`）：控制是否返回日线缺口补洞产生的停牌占位行；只有 `fill_missing=true&skip_suspended=false` 时才返回 `is_suspended=true` 行。
+- `fill_missing`（`bool`，默认 `false`）：控制是否返回日线缺口补洞产生的停牌占位行；历史交易日缺口默认会进入 provider 补缺链路，只有 `fill_missing=true&skip_suspended=false` 时才返回 `is_suspended=true` 行。
 
 ## 返回类型
 
@@ -62,7 +62,8 @@
 ## 补充说明
 
 - `fields` 只裁剪 `items`，不裁剪 `meta`。
-- `freq=1d/1w/1mo` 先读本地 `fact.stock_daily_1d` 和 `stocks.quotes.daily` 能力链路，发现历史交易日缺口时进入 provider 补缺链路。
+- `freq=1d/1w/1mo` 先读本地 `fact.stock_daily_1d`；历史交易日缺口默认进入 `stocks.quotes.daily` provider 补缺链路。
+- 当前交易日或未来日期不会同步补缺，只返回本地结果和完整性 `meta`。
 - Runtime Profile 会按 Capability Matrix 勾选的源补齐本地缺口。
 - `fact.stock_daily_1d` 已纳入 `BJSE` 正式日线口径，所以 `1d` 日线查询会正常返回北交所股票。
 - 如果 provider 补缺后仍缺少历史交易日，且该股票能找到前一个交易日，系统会用前一交易日收盘价写入一条 `is_suspended=true` 的停牌占位日线。

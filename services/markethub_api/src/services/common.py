@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from core.config import DEFAULT_LIMIT, MAX_LIMIT
 from quotemux.models import BoardQuoteItem, BoardRankingItem, IndexQuoteItem, StockQuoteItem
+from platform_models import format_api_dump_value
 from quotemux.utils import normalize_index_code, normalize_stock_code, split_csv
 
 
@@ -242,5 +243,5 @@ def filter_response_fields[T: BaseModel](items: Sequence[T], fields: str, allowe
     invalid_fields = [field for field in selected if field not in allowed_fields]
     if invalid_fields:
         raise HTTPException(status_code=400, detail=f"fields 含有不支持的字段: {', '.join(invalid_fields)}")
-    return [{field: getattr(item, field) for field in selected} for item in items]
+    return [{field: format_api_dump_value(field, getattr(item, field)) for field in selected} for item in items]
 

@@ -89,7 +89,7 @@
 | `/api/stocks/{code}/research/surveys` |  |  | `stk_surv` | 否 | 调研记录。 |
 | `/api/stocks/reference/bse-code-mappings` | `stocks.reference.bse_code_mappings` Store |  | `bse_mapping` | 否 | 北交所代码映射，默认按 Capability provider 规则获取并写入 Store。 |
 | `/api/stocks/reference/hk-connect-targets` | `stocks.reference.hk_connect_targets` Store |  | `stock_hsgt` | 否 | 沪深港通标的范围，默认按 Capability provider 规则获取并写入 Store。 |
-| `/api/stocks/{code}/quotes/auctions` | `stocks.quotes.auctions` Store |  | `stk_auction_o` `stk_auction_c` | 否 | 个股竞价，默认按 Capability provider 规则获取并写入 Store。 |
+| `/api/stocks/{code}/quotes/auctions` | `stocks.quotes.auctions` Store |  | `stk_auction_o` `stk_auction_c`；AKShare `stock_zh_a_tick_tx_js` 后备 | 否 | 个股竞价，默认按 Capability provider 规则获取并写入 Store；Tushare 无权限或空结果时，最新交易日开盘竞价可由 AKShare 腾讯历史分笔 09:25 成交记录补充。 |
 
 ## 板块接口
 
@@ -121,7 +121,7 @@
 | `/api/markets/calendar/trading/previous` | 派生视图，继承 `markets.calendar.trading` Store |  | `trade_cal` | `akshare` | 否 | 显式登记后从主交易日历派生，不独立配置 Store、TTL、采集策略或更新频率；运行时截取参考日前最近 `n` 个开市日。 |
 | `/api/markets/calendar/trading/next` | 派生视图，继承 `markets.calendar.trading` Store |  | `trade_cal` | `akshare` | 否 | 显式登记后从主交易日历派生，不独立配置 Store、TTL、采集策略或更新频率；运行时截取参考日后最近 `n` 个开市日。 |
 | `/api/markets/calendar/trading/yearly` | 派生视图，继承 `markets.calendar.trading` Store |  | `trade_cal` | `akshare` | 否 | 显式登记后从主交易日历派生，不独立配置 Store、TTL、采集策略或更新频率；运行时按年份范围读取主日历。 |
-| `/api/markets/events/news` | `news_store` |  |  | 否 | 统一新闻事件流正式主入口。默认通过 `news_store` 读取 `fact.news_event_agent_view`，仅在 `include_sources=true` 时再补查 `fact.news_event_source`。 |
+| `/api/markets/events/news` | `news_store` |  |  | `akshare` | 否 | 统一新闻事件流正式主入口。默认通过 `news_store` 读取 `fact.news_event_agent_view`，仅在 `include_sources=true` 时再补查 `fact.news_event_source`；Store 空结果时用 AKShare 的央视市场新闻和东方财富个股新闻做实时补充。 |
 | `/api/markets/indicators/main-capital-flow` |  |  | `moneyflow_mkt_dc` | 否 | 市场主力资金。 |
 | `/api/markets/connect/capital-flow` |  |  | `moneyflow_hsgt` | 否 | 互联互通资金流。 |
 | `/api/markets/connect/quotas` | `markets.connect.quotas` Store |  | `moneyflow_hsgt` | 否 | 服务层基于互联互通资金流派生额度余额，默认按 Capability provider 规则获取并写入 Store。 |
@@ -130,8 +130,8 @@
 | `/api/markets/participants/dragon-tiger` |  |  | `top_list` | 否 | 龙虎榜。 |
 | `/api/markets/participants/dragon-tiger/institutions` |  |  | `top_inst` | 否 | 龙虎榜机构席位。 |
 | `/api/markets/participants/hot-money` | `markets.participants.hot_money` Store |  | `hm_list` | 否 | 游资名单，默认按 Capability provider 规则获取并写入 Store。 |
-| `/api/markets/participants/hot-money/details` | `markets.participants.hot_money.details` Store |  | `hm_detail` | 否 | 游资明细，默认按 Capability provider 规则获取并写入 Store。 |
-| `/api/markets/trading/open-auctions` | `markets.trading.open_auctions` Store |  | `stk_auction_o` | 否 | 复用个股竞价读取，只取开盘竞价，默认按 Capability provider 规则获取并写入 Store。 |
+| `/api/markets/participants/hot-money/details` | `markets.participants.hot_money.details` Store |  | `hm_detail`；AKShare `stock_lhb_hyyyb_em` + `stock_lhb_yyb_detail_em` 后备 | 否 | 游资明细，默认按 Capability provider 规则获取并写入 Store；Tushare 无权限或空结果时使用 AKShare 营业部明细补充。 |
+| `/api/markets/trading/open-auctions` | `markets.trading.open_auctions` Store |  | `stk_auction_o`；AKShare `stock_zh_a_tick_tx_js` 后备 | 否 | 复用个股竞价读取，只取开盘竞价，默认按 Capability provider 规则获取并写入 Store；Tushare 无权限或空结果时，最新交易日开盘竞价可由 AKShare 腾讯历史分笔 09:25 成交记录补充。 |
 | `/api/markets/trading/sessions` | `markets.trading.sessions` Store |  | `trade_cal` | 否 | 交易时段定义，默认按 Capability provider 规则获取并写入 Store。 |
 
 ## 排行接口
@@ -160,7 +160,7 @@
 
 ## 股票日线停牌补洞策略
 
-- `/api/stocks/quotes` 的 `freq=1d/1w/1mo` 会先读 `fact.stock_daily_1d`，历史交易日缺口才进入 provider 补缺链路。
+- `/api/stocks/quotes` 的 `freq=1d/1w/1mo` 会先读 `fact.stock_daily_1d`；历史交易日缺口默认进入 provider 补缺链路。
 - provider 补缺后仍缺少的历史交易日，如果能找到该股票前一个交易日，系统会写入一条 `is_suspended=true` 的停牌占位日线，避免后续重复触发同一缺口。
 - 停牌占位日线使用前一个交易日 `close` 填充 `open/high/low/close`，`volume=0`，`amount=0`，`is_st` 沿用前一个交易日。
 - `fill_missing=false` 默认不返回停牌占位行；只有 `fill_missing=true&skip_suspended=false` 才返回 `is_suspended=true` 行。
