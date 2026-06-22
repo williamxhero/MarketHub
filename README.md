@@ -171,6 +171,6 @@ $MARKETHUB_RUNTIME_ROOT/scripts/global-data-update.sh
 $MARKETHUB_RUNTIME_ROOT/scripts/limit-order-amount-update.sh
 ```
 
-`global-data-update.sh` 用于普通 capability 到期更新。`limit-order-amount-update.sh` 用于涨跌停封单额专用采集，Task Center 应在北京时间 `15:10` 和 `15:35` 单独调度它，不走普通 `run-due-async`。
+`global-data-update.sh` 用于普通 capability 到期更新。`limit-order-amount-update.sh` 用于涨跌停封单额专用采集，Task Center 应在北京时间每个开盘日 `18:00` 单独调度它，不走普通 `run-due-async`；脚本会先检查当天交易日历，非开盘日直接返回 `skipped`。
 
 `MarketHub/scripts/run_api.py` 会读取 `$MARKETHUB_RUNTIME_ROOT/env/markethub.env`，保证 API、QuoteMux runtime 和运行脚本使用同一个运行目录配置。
