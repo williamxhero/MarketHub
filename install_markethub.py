@@ -102,11 +102,16 @@ def _write_default_environment() -> None:
 
 
 def _install_runtime_scripts() -> None:
-    source_path = MARKETHUB_ROOT / "scripts" / "global-data-update.sh"
-    target_path = RUNTIME_ROOT / "scripts" / "global-data-update.sh"
-    shutil.copyfile(source_path, target_path)
-    if not sys.platform.startswith("win"):
-        target_path.chmod(0o755)
+    script_names = [
+        "global-data-update.sh",
+        "limit-order-amount-update.sh",
+    ]
+    for script_name in script_names:
+        source_path = MARKETHUB_ROOT / "scripts" / script_name
+        target_path = RUNTIME_ROOT / "scripts" / script_name
+        shutil.copyfile(source_path, target_path)
+        if not sys.platform.startswith("win"):
+            target_path.chmod(0o755)
 
 
 def _build_console() -> None:

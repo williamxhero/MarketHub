@@ -145,7 +145,7 @@ python scripts/run_api.py
 - **`MarketHub` (本仓库)：** 交互外壳。提供 HTTP API 接口，文档和网页管理后台。
 - **`QuoteMux_Packages`：** 远程弹药库。里面全是对接具体提供商（如 Tushare、AkShare）的插件代码。
 
-## 运行目录和全局数据更新脚本
+## 运行目录和运行脚本
 
 `install_markethub.py` 是通用安装入口，不绑定某一台机器。所有人只要按上面的工作区结构运行它，都可以完成本机安装。
 
@@ -164,10 +164,13 @@ Linux Bash 示例：
 MARKETHUB_RUNTIME_ROOT=/data/markethub python3 install_markethub.py
 ```
 
-安装脚本会创建运行目录、默认环境文件和全局数据更新脚本。安装后的脚本位置为：
+安装脚本会创建运行目录、默认环境文件和 Task Center 调用脚本。安装后的脚本位置为：
 
 ```
 $MARKETHUB_RUNTIME_ROOT/scripts/global-data-update.sh
+$MARKETHUB_RUNTIME_ROOT/scripts/limit-order-amount-update.sh
 ```
 
-`MarketHub/scripts/run_api.py` 会读取 `$MARKETHUB_RUNTIME_ROOT/env/markethub.env`，保证 API、QuoteMux runtime 和全局数据更新脚本使用同一个运行目录配置。
+`global-data-update.sh` 用于普通 capability 到期更新。`limit-order-amount-update.sh` 用于涨跌停封单额专用采集，Task Center 应在北京时间 `15:10` 和 `15:35` 单独调度它，不走普通 `run-due-async`。
+
+`MarketHub/scripts/run_api.py` 会读取 `$MARKETHUB_RUNTIME_ROOT/env/markethub.env`，保证 API、QuoteMux runtime 和运行脚本使用同一个运行目录配置。

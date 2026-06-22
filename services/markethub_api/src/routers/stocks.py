@@ -185,6 +185,11 @@ async def api_stock_hl_signal(code: str, trade_date: str = Query(""), start_date
     return await run_data_task(_dump_item_list, stocks.get_hl_signal, (code, trade_date, start_date, end_date))
 
 
+@router.get("/api/stocks/signals/limit-order-amount")
+async def api_stock_limit_order_amount(trade_date: str = Query(...)) -> list[dict[str, object]]:
+    return await run_data_task(_dump_item_list, stocks.get_limit_order_amount, (trade_date,))
+
+
 @router.get("/api/stocks/{code}/signals/nine-turn")
 async def api_stock_nine_turn(code: str, freq: str = Query("daily"), trade_date: str = Query(""), start_date: str = Query(""), end_date: str = Query("")) -> list[dict[str, object]]:
     return await run_data_task(_dump_item_list, stocks.get_nine_turn, (code, freq, trade_date, start_date, end_date))

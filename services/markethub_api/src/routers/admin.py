@@ -4,7 +4,7 @@ import anyio.to_thread
 from fastapi import APIRouter, BackgroundTasks, Query
 from pydantic import BaseModel, Field
 
-from services import admin_runtime
+from services import admin_runtime, stocks
 
 
 router = APIRouter()
@@ -299,6 +299,11 @@ async def api_admin_run_due_captures() -> list[dict[str, object]]:
 async def api_admin_run_due_captures_async(background_tasks: BackgroundTasks) -> dict[str, object]:
     background_tasks.add_task(admin_runtime.run_due_captures)
     return {"accepted": True}
+
+
+@router.post("/api/admin/capture/limit-order-amount/run-today")
+async def api_admin_run_limit_order_amount_capture(trade_date: str = Query("")) -> dict[str, object]:
+    return await anyio.to_thread.run_sync(stocks.run_limit_order_amount_capture, trade_date)
 
 
 @router.get('/api/admin/warmups')
