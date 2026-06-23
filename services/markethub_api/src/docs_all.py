@@ -12,7 +12,7 @@ API_TITLE_RE = re.compile(r"^#\s+(?P<api_path>/api/\S+)\s*$", re.MULTILINE)
 INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 METHOD_RE = re.compile(r"^(GET|POST|PUT|PATCH|DELETE)\s+(?P<summary>.+)$")
 PLACEHOLDER_SUMMARY_RE = re.compile(r"^(GET\s+)?returns data for this endpoint\.?$", re.IGNORECASE)
-GROUP_ORDER = ["root", "docs", "stocks", "boards", "indexes", "markets", "rankings", "system"]
+GROUP_ORDER = ["root", "docs", "stocks", "boards", "concepts", "indexes", "markets", "rankings", "system"]
 GROUP_TITLE = {
     "root": "总入口",
     "docs": "文档服务",
@@ -114,7 +114,7 @@ def build_all_doc_payload(with_links: bool) -> dict[str, str]:
         group_items = [item for item in items if item.group == group]
         if group_items == []:
             continue
-        lines.append(f"## {group} / {GROUP_TITLE[group]}")
+        lines.append(f"## {group} / {GROUP_TITLE.get(group, group)}")
         lines.append("")
         for item in group_items:
             label = build_item_label(item)

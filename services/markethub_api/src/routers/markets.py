@@ -21,8 +21,16 @@ async def api_market_trading_calendar(exchange: str = Query("SSE"), start_date: 
 
 
 @router.get("/api/markets/calendar/trading/previous")
-async def api_market_previous_trading_days(exchange: str = Query("SSE"), trade_date: str = Query(""), n: int = Query(1, ge=1, le=5000)) -> list[dict[str, object]]:
-    return await run_data_task(_dump_item_list, markets.get_previous_trading_days, (exchange, trade_date, n))
+async def api_market_previous_trading_days(
+    exchange: str = Query("SSE"),
+    trade_date: str = Query(""),
+    n: int = Query(1, ge=1, le=5000),
+    date: str = Query(""),
+    count: int | None = Query(None, ge=1, le=5000),
+) -> list[dict[str, object]]:
+    actual_trade_date = trade_date if trade_date != "" else date
+    actual_count = n if count is None else count
+    return await run_data_task(_dump_item_list, markets.get_previous_trading_days, (exchange, actual_trade_date, actual_count))
 
 
 @router.get("/api/markets/calendar/trading/next")
