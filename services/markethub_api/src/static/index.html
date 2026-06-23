@@ -3,19 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MarketHub 动态接口文档</title>
+  <title>MarketHub / QuoteMux</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <style>
-    :root {
-      --bg: #f7f8fb;
-      --panel: #ffffff;
-      --line: #d8dee8;
-      --text: #172033;
-      --muted: #607089;
-      --accent: #1f6feb;
-      --accent-strong: #164ea6;
-    }
-
     * {
       box-sizing: border-box;
     }
@@ -23,151 +13,79 @@
     body {
       margin: 0;
       min-height: 100vh;
-      color: var(--text);
-      background: var(--bg);
+      display: grid;
+      place-items: center;
+      color: #18212b;
+      background: #f5f6f8;
       font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
     }
 
     main {
-      width: min(960px, calc(100% - 40px));
-      margin: 0 auto;
-      padding: 64px 0;
-    }
-
-    .header {
       display: grid;
-      gap: 14px;
-      margin-bottom: 28px;
-    }
-
-    .eyebrow {
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 700;
+      gap: 28px;
+      justify-items: center;
+      width: min(100% - 32px, 560px);
+      text-align: center;
     }
 
     h1 {
       margin: 0;
-      font-size: 42px;
-      line-height: 1.16;
+      font-size: 40px;
+      line-height: 1.2;
       font-weight: 760;
     }
 
-    p {
-      margin: 0;
-      max-width: 740px;
-      color: var(--muted);
-      font-size: 16px;
-      line-height: 1.7;
-    }
-
-    .actions {
+    nav {
       display: flex;
       flex-wrap: wrap;
+      justify-content: center;
       gap: 12px;
-      margin: 30px 0;
     }
 
     a {
-      color: var(--accent);
-      text-decoration: none;
-    }
-
-    .button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      min-width: 150px;
       min-height: 44px;
-      padding: 0 16px;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      color: var(--text);
+      padding: 0 18px;
+      border: 1px solid #d8dee8;
+      background: #ffffff;
+      color: #18212b;
+      font-size: 15px;
       font-weight: 700;
+      text-decoration: none;
     }
 
-    .button.primary {
-      border-color: var(--accent);
-      background: var(--accent);
+    a:first-child {
+      border-color: #1f6feb;
+      background: #1f6feb;
       color: #ffffff;
     }
 
-    .button:hover {
-      border-color: var(--accent-strong);
+    a:hover {
+      border-color: #164ea6;
     }
 
-    .panel {
-      display: grid;
-      gap: 14px;
-      padding: 20px;
-      border: 1px solid var(--line);
-      background: var(--panel);
-    }
-
-    .row {
-      display: grid;
-      grid-template-columns: 160px 1fr;
-      gap: 16px;
-      align-items: start;
-      line-height: 1.6;
-    }
-
-    .label {
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 700;
-    }
-
-    code {
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 14px;
-    }
-
-    @media (max-width: 720px) {
-      main {
-        width: min(100% - 28px, 960px);
-        padding: 38px 0;
-      }
-
+    @media (max-width: 520px) {
       h1 {
         font-size: 30px;
       }
 
-      .row {
-        grid-template-columns: 1fr;
-        gap: 4px;
+      nav,
+      a {
+        width: 100%;
       }
     }
   </style>
 </head>
 <body>
   <main>
-    <section class="header">
-      <div class="eyebrow">MARKETHUB API</div>
-      <h1>动态接口文档</h1>
-      <p>MarketHub 已废弃 Markdown 接口文档。接口说明、参数、分组和机器可读契约统一来自 FastAPI OpenAPI。</p>
-    </section>
-
-    <nav class="actions" aria-label="主要入口">
-      <a class="button primary" href="/api/openapi">打开 Swagger UI</a>
-      <a class="button" href="/api/openapi.json">读取 OpenAPI JSON</a>
-      <a class="button" href="/admin">进入管理台</a>
-      <a class="button" href="/api/health">健康检查</a>
+    <h1>MarketHub / QuoteMux</h1>
+    <nav aria-label="主要入口">
+      <a href="/api/openapi">API 文档</a>
+      <a href="/admin">管理后台</a>
     </nav>
-
-    <section class="panel">
-      <div class="row">
-        <div class="label">正式文档</div>
-        <div><a href="/api/openapi"><code>/api/openapi</code></a></div>
-      </div>
-      <div class="row">
-        <div class="label">接口契约</div>
-        <div><a href="/api/openapi.json"><code>/api/openapi.json</code></a></div>
-      </div>
-      <div class="row">
-        <div class="label">旧入口</div>
-        <div><code>/docs/*</code> 与 <code>/doc-view/*</code> 只保留重定向，不再读取 Markdown 文件。</div>
-      </div>
-    </section>
   </main>
 </body>
 </html>

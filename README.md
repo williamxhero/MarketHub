@@ -145,7 +145,7 @@ python scripts/run_api.py
 - **`MarketHub` (本仓库)：** 交互外壳。提供 HTTP API 接口，文档和网页管理后台。
 - **`QuoteMux_Packages`：** 远程弹药库。里面全是对接具体提供商（如 Tushare、AkShare）的插件代码。
 
-## 运行目录和运行脚本
+## 运行目录和预更新缓存脚本
 
 `install_markethub.py` 是通用安装入口，不绑定某一台机器。所有人只要按上面的工作区结构运行它，都可以完成本机安装。
 

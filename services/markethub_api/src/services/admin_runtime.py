@@ -12,6 +12,7 @@ import uuid
 import zipfile
 from pathlib import Path
 from pathlib import PurePosixPath
+from urllib.parse import quote
 
 import pandas as pd
 from psycopg.types.json import Jsonb
@@ -67,12 +68,33 @@ _WARMUP_SCHEMA_READY = False
 _WARMUP_SCHEMA_FAILED = False
 
 
-def _api_doc_payload_by_path() -> dict[str, dict[str, str]]:
+def _swagger_operation_href(api_path: str, openapi_schema: dict[str, object] | None) -> str:
+    if openapi_schema is None:
+        return "/api/openapi"
+    paths = openapi_schema.get("paths", {})
+    if not isinstance(paths, dict):
+        return "/api/openapi"
+    path_item = paths.get(api_path, {})
+    if not isinstance(path_item, dict):
+        return "/api/openapi"
+    for method in ("get", "post", "put", "delete", "patch"):
+        operation = path_item.get(method, {})
+        if not isinstance(operation, dict):
+            continue
+        operation_id = str(operation.get("operationId", ""))
+        tags = operation.get("tags", [])
+        tag = str(tags[0]) if isinstance(tags, list) and tags != [] else "default"
+        if operation_id != "":
+            return f"/api/openapi#/{quote(tag, safe='')}/{quote(operation_id, safe='')}"
+    return "/api/openapi"
+
+
+def _api_doc_payload_by_path(openapi_schema: dict[str, object] | None = None) -> dict[str, dict[str, str]]:
     payloads: dict[str, dict[str, str]] = {}
     for item in list_public_api_bindings():
         if item.api_path == "" or item.api_path == "/api/health":
             continue
-        payloads[item.api_path] = {"path": item.api_path, "href": "/api/openapi"}
+        payloads[item.api_path] = {"path": item.api_path, "href": _swagger_operation_href(item.api_path, openapi_schema)}
     return payloads
 
 
@@ -957,10 +979,10 @@ def save_contract_policy_override(contract_name: str, mode: str, source_order: t
     return _serialize_policy(saved)
 
 
-def get_contract_matrix() -> dict[str, object]:
+def get_contract_matrix(openapi_schema: dict[str, object] | None = None) -> dict[str, object]:
     packages = _visible_manifests()
     policies = _all_policies_by_contract()
-    api_doc_payloads_by_path = _api_doc_payload_by_path()
+    api_doc_payloads_by_path = _api_doc_payload_by_path(openapi_schema)
     rows = [_capability_settings_row(contract_name, policies, packages, api_doc_payloads_by_path) for contract_name in list_contract_names()]
     return {
         "packages": [_serialize_package(item) for item in packages],

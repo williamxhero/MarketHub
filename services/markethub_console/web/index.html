@@ -365,6 +365,15 @@
       word-break: break-word;
     }
 
+    .capability-id a {
+      color: #0f5f89;
+      text-decoration: none;
+    }
+
+    .capability-id a:hover {
+      text-decoration: underline;
+    }
+
     .api-badges {
       display: inline-flex;
       align-items: center;
@@ -442,21 +451,6 @@
       color: #334155;
       border-color: #d6dde3;
       background: #ffffff;
-    }
-
-    .api-paths {
-      color: var(--muted);
-      font-size: 12px;
-      word-break: break-word;
-    }
-
-    .api-paths a {
-      color: #0f5f89;
-      text-decoration: none;
-    }
-
-    .api-paths a:hover {
-      text-decoration: underline;
     }
 
     .empty-state {
@@ -1290,12 +1284,14 @@
       `;
     }
 
-    function renderApiDocLinks(capability) {
-      return (capability.api_docs || []).map((apiDoc) => {
-        const path = escapeHtml(apiDoc.path);
-        const href = escapeHtml(apiDoc.href);
-        return `<a href="${href}">${path}</a>`;
-      }).join(", ");
+    function renderCapabilityId(capability) {
+      const capabilityId = escapeHtml(capability.capability_id);
+      const apiDoc = (capability.api_docs || [])[0] || {};
+      const href = apiDoc.href || "";
+      if (href === "") {
+        return capabilityId;
+      }
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${capabilityId}</a>`;
     }
 
     function renderSourceHeader(sourcePackage) {
@@ -1366,17 +1362,15 @@
             </td>
           `;
         }).join("");
-        const apiPaths = renderApiDocLinks(capability);
         const badges = renderCapabilityBadges(capability, policiesByCapability[capability.capability_id]);
         return `
           <tr>
             <td>
               <div class="capability-cell">
                 <div class="capability-title">
-                  <div class="capability-id">${escapeHtml(capability.capability_id)}</div>
+                  <div class="capability-id">${renderCapabilityId(capability)}</div>
                   ${badges}
                 </div>
-                <div class="api-paths">${apiPaths}</div>
               </div>
             </td>
             <td>

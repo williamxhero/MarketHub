@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import anyio.to_thread
-from fastapi import APIRouter, BackgroundTasks, Query
+from fastapi import APIRouter, BackgroundTasks, Query, Request
 from pydantic import BaseModel, Field
 
 from services import admin_runtime, stocks
@@ -223,8 +223,8 @@ async def api_admin_contract_policy_update(contract_name: str, payload: Contract
 
 
 @router.get("/api/admin/capability-matrix")
-async def api_admin_contract_matrix() -> dict[str, object]:
-    return admin_runtime.get_contract_matrix()
+async def api_admin_contract_matrix(request: Request) -> dict[str, object]:
+    return admin_runtime.get_contract_matrix(request.app.openapi())
 
 
 @router.put("/api/admin/capability-matrix")
