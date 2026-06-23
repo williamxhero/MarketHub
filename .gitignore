@@ -17,6 +17,9 @@ docs/markethub_independent_todo_*.md
 services/markethub_api/src/data/*.db
 services/markethub_console/dist/
 /docs
+!/docs/
+/docs/*
+!/docs/openapi-dynamic-docs-full-migration-plan.md
 /AGENTS.md
 /scripts/test.ps1
 /scripts/build_console.ps1

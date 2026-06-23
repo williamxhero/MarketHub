@@ -1,7 +1,5 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
-markdown==3.8.2
-pygments==2.19.1
 pandas==2.3.3
 pyarrow==21.0.0
 psycopg[binary]==3.3.3

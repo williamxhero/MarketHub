@@ -21,8 +21,6 @@ PORT = _get_port()
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = SERVER_ROOT.parent
-DOCS_ROOT = PROJECT_ROOT / "docs"
-INTEGRATION_DOCS_ROOT = DOCS_ROOT / "integration-api"
 STATIC_INDEX_PATH = SERVER_ROOT / "static" / "index.html"
 STATIC_FAVICON_PATH = SERVER_ROOT / "static" / "favicon.svg"
 

@@ -586,6 +586,61 @@
       white-space: nowrap;
     }
 
+    .timeout-panel {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+
+    .timeout-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .timeout-metric {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .timeout-metric strong {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .timeout-metric span {
+      font-size: 14px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+
+    .timeout-provider-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .timeout-provider-row {
+      display: grid;
+      grid-template-columns: 1.2fr repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      align-items: center;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .timeout-provider-row strong,
+    .timeout-provider-row span {
+      min-width: 0;
+      word-break: break-word;
+    }
+
     .schedule-options {
       display: flex;
       flex-wrap: wrap;
@@ -627,6 +682,8 @@
       .shell,
       .detail-grid,
       .info-grid,
+      .timeout-summary,
+      .timeout-provider-row,
       .page-head,
       .package-row {
         grid-template-columns: 1fr;
@@ -785,6 +842,13 @@
             <span class="field-label">Capture Notes</span>
             <textarea id="capture-notes"></textarea>
           </label>
+          <div class="field full">
+            <span class="field-label">Provider Timeout</span>
+            <div class="timeout-panel">
+              <div class="timeout-summary" id="timeout-summary"></div>
+              <div class="timeout-provider-list" id="timeout-provider-list"></div>
+            </div>
+          </div>
           <label class="field">
             <span class="field-label">Time Field</span>
             <input id="cache-time-field" readonly />
@@ -871,6 +935,8 @@
     const captureBatchSize = document.getElementById("capture-batch-size");
     const captureScopeProfile = document.getElementById("capture-scope-profile");
     const captureNotes = document.getElementById("capture-notes");
+    const timeoutSummary = document.getElementById("timeout-summary");
+    const timeoutProviderList = document.getElementById("timeout-provider-list");
     const cacheTimeField = document.getElementById("cache-time-field");
     const cacheCoverageMode = document.getElementById("cache-coverage-mode");
     const cacheKeyFields = document.getElementById("cache-key-fields");
@@ -1368,6 +1434,76 @@
       cacheCoverageMode.value = cachePolicy.coverage_mode || "";
       cacheKeyFields.value = (cachePolicy.key_fields || []).join(", ");
       cacheRequestScopeFields.value = (cachePolicy.request_scope_fields || []).join(", ");
+      fillTimeoutPolicy(payload.timeout_policy || {});
+    }
+
+    function formatSeconds(value) {
+      const numberValue = Number.parseFloat(value);
+      if (!Number.isFinite(numberValue)) {
+        return "";
+      }
+      return `${numberValue.toFixed(numberValue >= 10 ? 1 : 2)}s`;
+    }
+
+    function formatMs(value) {
+      const numberValue = Number.parseFloat(value);
+      if (!Number.isFinite(numberValue)) {
+        return "";
+      }
+      return `${Math.round(numberValue)}ms`;
+    }
+
+    function timeoutSourceLabel(value) {
+      if (value === "adaptive") {
+        return "自动";
+      }
+      if (value === "source_instance") {
+        return "实例覆盖";
+      }
+      if (value === "default") {
+        return "默认";
+      }
+      return value || "";
+    }
+
+    function latestMetricText(metric) {
+      if (!metric || Object.keys(metric).length === 0) {
+        return "暂无调用";
+      }
+      const status = metric.status || "";
+      const elapsed = formatMs(metric.elapsed_ms);
+      return elapsed === "" ? status : `${status} / ${elapsed}`;
+    }
+
+    function fillTimeoutPolicy(timeoutPolicy) {
+      const capability = timeoutPolicy.capability || {};
+      const providers = timeoutPolicy.providers || [];
+      const recentCapabilityMetrics = timeoutPolicy.recent_capability_metrics || [];
+      const latestCapabilityMetric = recentCapabilityMetrics[0] || {};
+      timeoutSummary.innerHTML = [
+        ["当前总预算", formatSeconds(capability.effective_timeout_seconds)],
+        ["来源", timeoutSourceLabel(capability.effective_source)],
+        ["样本数", String(capability.sample_count ?? 0)],
+        ["最近结果", latestMetricText(latestCapabilityMetric)],
+      ].map(([label, value]) => `
+        <div class="timeout-metric">
+          <strong>${escapeHtml(label)}</strong>
+          <span>${escapeHtml(value || "-")}</span>
+        </div>
+      `).join("");
+      if (providers.length === 0) {
+        timeoutProviderList.innerHTML = '<div class="empty-state">暂无 provider timeout 策略。</div>';
+        return;
+      }
+      timeoutProviderList.innerHTML = providers.map((provider) => `
+        <div class="timeout-provider-row">
+          <strong>${escapeHtml(provider.provider || "")}</strong>
+          <span>当前 ${escapeHtml(formatSeconds(provider.effective_timeout_seconds) || "-")}</span>
+          <span>${escapeHtml(timeoutSourceLabel(provider.effective_source) || "-")}</span>
+          <span>样本 ${escapeHtml(String(provider.sample_count ?? 0))}</span>
+          <span>${escapeHtml(latestMetricText(provider.latest_metric || {}))}</span>
+        </div>
+      `).join("");
     }
 
     function fillCapturePolicyEditor(policy) {
@@ -1497,10 +1633,13 @@
     async function openCapabilityEditor(capabilityId) {
       try {
         setSummary(`正在加载 ${capabilityId} 设置...`);
-        const [payload, capturePolicy] = await Promise.all([
-          request(`/api/admin/capability-settings/${encodeURIComponent(capabilityId)}`),
-          request(`/api/admin/capture-policies/${encodeURIComponent(capabilityId)}`),
-        ]);
+        const payload = await request(`/api/admin/capability-settings/${encodeURIComponent(capabilityId)}`);
+        let capturePolicy = {};
+        try {
+          capturePolicy = await request(`/api/admin/capture-policies/${encodeURIComponent(capabilityId)}`);
+        } catch (error) {
+          capturePolicy = {};
+        }
         fillCapabilityEditor(payload);
         fillCapturePolicyEditor(capturePolicy);
         capabilityEditor.classList.add("open");

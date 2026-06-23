@@ -3,22 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MarketHub 文档搜索</title>
+  <title>MarketHub 动态接口文档</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <style>
     :root {
-      --bg: #f3ebdc;
-      --panel: rgba(255, 250, 241, 0.88);
-      --line: rgba(153, 117, 82, 0.24);
-      --text: #251b14;
-      --muted: #6c5d50;
-      --accent: #9f4726;
-      --accent-strong: #7d3418;
-      --accent-soft: rgba(233, 198, 169, 0.42);
-      --highlight: #fff4e8;
-      --code: #1d252c;
-      --danger: #a32020;
-      --shadow: 0 24px 70px rgba(76, 50, 31, 0.12);
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --line: #d8dee8;
+      --text: #172033;
+      --muted: #607089;
+      --accent: #1f6feb;
+      --accent-strong: #164ea6;
     }
 
     * {
@@ -27,475 +22,152 @@
 
     body {
       margin: 0;
-      font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
-      color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(249, 217, 181, 0.95) 0, transparent 30%),
-        radial-gradient(circle at 85% 15%, rgba(242, 201, 154, 0.42) 0, transparent 22%),
-        linear-gradient(135deg, #f5efe3 0%, #eadac3 100%);
       min-height: 100vh;
-      position: relative;
-      overflow-x: hidden;
+      color: var(--text);
+      background: var(--bg);
+      font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
     }
 
-    body::before,
-    body::after {
-      content: "";
-      position: fixed;
-      width: 340px;
-      height: 340px;
-      border-radius: 50%;
-      pointer-events: none;
-      filter: blur(18px);
-      opacity: 0.38;
-      z-index: 0;
-    }
-
-    body::before {
-      top: -130px;
-      right: -70px;
-      background: radial-gradient(circle, rgba(255, 231, 204, 0.9) 0%, rgba(255, 231, 204, 0) 72%);
-    }
-
-    body::after {
-      bottom: -160px;
-      left: -110px;
-      background: radial-gradient(circle, rgba(225, 183, 140, 0.52) 0%, rgba(225, 183, 140, 0) 72%);
-    }
-
-    .shell {
-      position: relative;
-      z-index: 1;
-      max-width: 1080px;
+    main {
+      width: min(960px, calc(100% - 40px));
       margin: 0 auto;
-      padding: 52px 20px 80px;
+      padding: 64px 0;
     }
 
-    .hero {
+    .header {
+      display: grid;
+      gap: 14px;
       margin-bottom: 28px;
-      padding: 30px 32px 26px;
-      border: 1px solid rgba(255, 255, 255, 0.32);
-      border-radius: 30px;
-      background: linear-gradient(135deg, rgba(255, 248, 239, 0.92) 0%, rgba(255, 241, 226, 0.76) 100%);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(10px);
     }
 
     .eyebrow {
-      display: inline-block;
-      padding: 7px 12px;
-      border-radius: 999px;
-      background: var(--accent-soft);
-      color: var(--accent);
-      font-size: 12px;
+      color: var(--muted);
+      font-size: 13px;
       font-weight: 700;
-      letter-spacing: 0.1em;
     }
 
     h1 {
-      margin: 16px 0 12px;
-      max-width: 820px;
-      font-size: clamp(32px, 5vw, 56px);
-      line-height: 1.02;
-      letter-spacing: -0.04em;
-    }
-
-    .hero p {
       margin: 0;
-      max-width: 780px;
+      font-size: 42px;
+      line-height: 1.16;
+      font-weight: 760;
+    }
+
+    p {
+      margin: 0;
+      max-width: 740px;
       color: var(--muted);
-      font-size: 17px;
-      line-height: 1.75;
-    }
-
-    .quick-links {
-      display: inline-flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 10px;
-      margin-top: 24px;
-      padding: 12px 16px;
-      border: 1px solid rgba(159, 71, 38, 0.12);
-      border-radius: 18px;
-      background: rgba(255, 250, 244, 0.9);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-    }
-
-    .quick-links a {
-      color: var(--accent-strong);
-      font-size: 15px;
-      font-weight: 700;
-      text-decoration: none;
-      transition: color 160ms ease, transform 160ms ease;
-    }
-
-    .quick-links a:hover {
-      color: var(--accent);
-      transform: translateY(-1px);
-    }
-
-    .quick-links .raw-link {
-      display: inline-flex;
-      align-items: center;
-      padding: 4px 10px;
-      border-radius: 999px;
-      border: 1px solid rgba(159, 71, 38, 0.16);
-      background: rgba(255, 244, 232, 0.92);
-      color: var(--accent);
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .quick-links .raw-link:hover {
-      color: white;
-      background: var(--accent);
-      border-color: var(--accent);
-    }
-
-    .quick-links .separator {
-      color: rgba(108, 93, 80, 0.55);
-      user-select: none;
-    }
-
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 28px;
-      padding: 24px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(10px);
-    }
-
-    form {
-      display: grid;
-      grid-template-columns: 1fr 120px;
-      gap: 12px;
-    }
-
-    input,
-    button {
-      height: 52px;
-      border-radius: 16px;
-      border: 1px solid rgba(153, 117, 82, 0.24);
       font-size: 16px;
+      line-height: 1.7;
     }
 
-    input {
-      padding: 0 16px;
-      background: rgba(255, 253, 248, 0.94);
-      color: var(--text);
-      outline: none;
-      transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
-    }
-
-    input:focus {
-      border-color: rgba(159, 71, 38, 0.45);
-      box-shadow: 0 0 0 4px rgba(159, 71, 38, 0.1);
-      background: white;
-    }
-
-    button {
-      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
-      color: white;
-      cursor: pointer;
-      border-color: transparent;
-      font-weight: 700;
-      transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
-    }
-
-    button:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 10px 24px rgba(125, 52, 24, 0.22);
-      filter: saturate(1.05);
-    }
-
-    .meta {
-      margin-top: 14px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    .meta.error {
-      color: var(--danger);
-    }
-
-    .results {
-      margin-top: 22px;
-      display: grid;
-      gap: 16px;
-    }
-
-    .card {
-      padding: 20px;
-      border-radius: 22px;
-      background: rgba(255, 252, 247, 0.92);
-      border: 1px solid rgba(216, 200, 174, 0.82);
-      box-shadow: 0 12px 30px rgba(88, 62, 41, 0.06);
-    }
-
-    .card h2 {
-      margin: 0 0 8px;
-      font-size: 22px;
-    }
-
-    .card h2 a,
-    .path a {
-      color: inherit;
-      text-decoration: none;
-    }
-
-    .card h2 a:hover,
-    .path a:hover {
-      color: var(--accent);
-      text-decoration: underline;
-    }
-
-    .tags {
+    .actions {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-
-    .tag {
-      padding: 5px 10px;
-      border-radius: 999px;
-      background: var(--highlight);
-      color: #7c4127;
-      font-size: 12px;
-      border: 1px solid rgba(159, 71, 38, 0.1);
-    }
-
-    .path,
-    .summary,
-    .snippet,
-    .source {
-      margin: 8px 0;
-      line-height: 1.6;
-    }
-
-    .path,
-    .source {
-      color: var(--muted);
-      font-size: 14px;
-    }
-
-    pre {
-      margin: 12px 0 0;
-      padding: 14px;
-      overflow: auto;
-      border-radius: 14px;
-      background: var(--code);
-      color: #e6edf3;
-      font-size: 13px;
-      line-height: 1.5;
+      gap: 12px;
+      margin: 30px 0;
     }
 
     a {
       color: var(--accent);
+      text-decoration: none;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .button:hover {
+      border-color: var(--accent-strong);
+    }
+
+    .panel {
+      display: grid;
+      gap: 14px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 16px;
+      align-items: start;
+      line-height: 1.6;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 14px;
     }
 
     @media (max-width: 720px) {
-      .shell {
-        padding-top: 28px;
+      main {
+        width: min(100% - 28px, 960px);
+        padding: 38px 0;
       }
 
-      .hero {
-        padding: 24px 20px 22px;
+      h1 {
+        font-size: 30px;
       }
 
-      .quick-links {
-        gap: 8px;
-        padding: 12px 14px;
-      }
-
-      .quick-links .separator {
-        display: none;
-      }
-
-      form {
+      .row {
         grid-template-columns: 1fr;
-      }
-
-      .panel {
-        padding: 18px;
+        gap: 4px;
       }
     }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <section class="hero">
-      <span class="eyebrow">DOCS SEARCH</span>
-      <h1>按关键词搜索 MarketHub 全部文档。</h1>
-      <p>支持按接口路径、文档路径、参数名、字段名、说明文字和示例代码搜索。搜索范围覆盖接口文档、分组 README、系统说明和文档服务说明，结果中的标题和文档路径都可以直接打开。</p>
-      <nav class="quick-links" aria-label="常用入口">
-        <a href="/doc-view/">文档总入口</a>
-        <a class="raw-link" href="/docs">RAW</a>
-        <span class="separator">|</span>
-        <a href="/doc-view/all">全部文档聚合页</a>
-        <a class="raw-link" href="/docs/all">RAW</a>
-        <span class="separator">|</span>
-        <a href="/admin">数据源管理</a>
-      </nav>
+  <main>
+    <section class="header">
+      <div class="eyebrow">MARKETHUB API</div>
+      <h1>动态接口文档</h1>
+      <p>MarketHub 已废弃 Markdown 接口文档。接口说明、参数、分组和机器可读契约统一来自 FastAPI OpenAPI。</p>
     </section>
+
+    <nav class="actions" aria-label="主要入口">
+      <a class="button primary" href="/api/openapi">打开 Swagger UI</a>
+      <a class="button" href="/api/openapi.json">读取 OpenAPI JSON</a>
+      <a class="button" href="/admin">进入管理台</a>
+      <a class="button" href="/api/health">健康检查</a>
+    </nav>
 
     <section class="panel">
-      <form id="search-form">
-        <input id="query-input" name="q" type="text" placeholder="例如：stocks quotes / money-flow / 龙虎榜 / 股东人数">
-        <button type="submit">搜索</button>
-      </form>
-      <div class="meta" id="status">输入关键词后开始搜索。</div>
-      <div class="results" id="results"></div>
+      <div class="row">
+        <div class="label">正式文档</div>
+        <div><a href="/api/openapi"><code>/api/openapi</code></a></div>
+      </div>
+      <div class="row">
+        <div class="label">接口契约</div>
+        <div><a href="/api/openapi.json"><code>/api/openapi.json</code></a></div>
+      </div>
+      <div class="row">
+        <div class="label">旧入口</div>
+        <div><code>/docs/*</code> 与 <code>/doc-view/*</code> 只保留重定向，不再读取 Markdown 文件。</div>
+      </div>
     </section>
   </main>
-
-  <script>
-    const SEARCH_STATE_KEY = "integration_docs_search_state";
-    const form = document.getElementById("search-form");
-    const queryInput = document.getElementById("query-input");
-    const statusNode = document.getElementById("status");
-    const resultsNode = document.getElementById("results");
-
-    function escapeHtml(text) {
-      return String(text)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;");
-    }
-
-    function buildDocUrl(path) {
-      const normalized = String(path || "")
-        .split("/")
-        .filter(Boolean)
-        .map(encodeURIComponent)
-        .join("/");
-      if (normalized === "") {
-        return "/doc-view";
-      }
-      return `/doc-view/${normalized}`;
-    }
-
-    function buildSearchUrl(query) {
-      return `/doc-view/search?q=${encodeURIComponent(query)}`;
-    }
-
-    function setStatus(text, isError = false) {
-      statusNode.textContent = text;
-      statusNode.classList.toggle("error", isError);
-    }
-
-    function saveState() {
-      const state = {
-        query: queryInput.value.trim(),
-        scrollY: window.scrollY,
-      };
-      sessionStorage.setItem(SEARCH_STATE_KEY, JSON.stringify(state));
-    }
-
-    function loadState() {
-      const raw = sessionStorage.getItem(SEARCH_STATE_KEY);
-      if (!raw) {
-        return null;
-      }
-      try {
-        return JSON.parse(raw);
-      } catch (error) {
-        return null;
-      }
-    }
-
-    function renderItems(items, query, restoreScrollY = null) {
-      if (!Array.isArray(items) || items.length === 0) {
-        setStatus(`没有找到与“${query}”相关的结果。`);
-        resultsNode.innerHTML = "";
-        if (restoreScrollY !== null) {
-          window.scrollTo(0, restoreScrollY);
-        }
-        return;
-      }
-
-      setStatus(`找到 ${items.length} 条结果。`);
-      resultsNode.innerHTML = items.map((item) => {
-        const docUrl = buildDocUrl(item.path || "");
-        return `
-        <article class="card">
-          <div class="tags">
-            ${item.docset ? `<span class="tag">${escapeHtml(item.docset)}</span>` : ""}
-            ${item.api_name ? `<span class="tag">${escapeHtml(item.api_name)}</span>` : ""}
-          </div>
-          <h2><a href="${docUrl}" data-doc-link="1">${escapeHtml(item.title || "")}</a></h2>
-          <div class="path"><a href="${docUrl}" data-doc-link="1">${escapeHtml(item.path || "")}</a></div>
-          <div class="summary">${escapeHtml(item.summary || "")}</div>
-          <div class="snippet">${escapeHtml(item.snippet || "")}</div>
-          ${item.source_url ? `<div class="source"><a href="${item.source_url}" target="_blank" rel="noreferrer">来源链接</a></div>` : ""}
-          ${item.example ? `<pre>${escapeHtml(item.example)}</pre>` : ""}
-        </article>
-      `;
-      }).join("");
-
-      if (restoreScrollY !== null) {
-        requestAnimationFrame(() => {
-          window.scrollTo(0, restoreScrollY);
-        });
-      }
-    }
-
-    async function doSearch(query, restoreScrollY = null) {
-      const trimmed = query.trim();
-      if (!trimmed) {
-        setStatus("输入关键词后开始搜索。");
-        resultsNode.innerHTML = "";
-        history.replaceState(null, "", "/doc-view/search");
-        saveState();
-        return;
-      }
-
-      setStatus(`正在搜索“${trimmed}”…`);
-      resultsNode.innerHTML = "";
-      history.replaceState(null, "", buildSearchUrl(trimmed));
-
-      try {
-        const response = await fetch(`/docs/search?q=${encodeURIComponent(trimmed)}`);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const data = await response.json();
-        renderItems(data.items, trimmed, restoreScrollY);
-        saveState();
-      } catch (error) {
-        setStatus(`搜索失败：${error.message}`, true);
-      }
-    }
-
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      doSearch(queryInput.value);
-    });
-
-    resultsNode.addEventListener("click", (event) => {
-      const link = event.target.closest("a[data-doc-link='1']");
-      if (!link) {
-        return;
-      }
-      saveState();
-    });
-
-    window.addEventListener("pagehide", () => {
-      saveState();
-    });
-
-    const urlQuery = new URLSearchParams(window.location.search).get("q") || "";
-    const savedState = loadState();
-    const initialQuery = urlQuery || (savedState ? savedState.query || "" : "");
-    const initialScrollY = savedState && savedState.query === initialQuery ? savedState.scrollY : null;
-
-    if (initialQuery) {
-      queryInput.value = initialQuery;
-      doSearch(initialQuery, initialScrollY);
-    }
-  </script>
 </body>
 </html>

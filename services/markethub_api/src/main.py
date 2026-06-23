@@ -17,6 +17,7 @@ import anyio.to_thread
 
 from core.config import HOST, PORT, STATIC_FAVICON_PATH, STATIC_INDEX_PATH
 from data_threads import get_data_thread_pool_metrics, get_quote_thread_pool_metrics
+from openapi_docs import install_openapi_schema
 from quotemux.config_runtime.validation import ConfigValidationError
 from quotemux.models import ApiError
 from quotemux.infra.db.availability import get_fact_ref_availability
@@ -32,7 +33,6 @@ from routers.markets import router as markets_router
 from routers.news import router as news_router
 from routers.rankings import router as rankings_router
 from routers.stocks import router as stocks_router
-from search_engine import ensure_index
 
 
 SYNC_ROUTE_THREAD_TOKENS = 100
@@ -84,6 +84,7 @@ app.include_router(news_router)
 app.include_router(rankings_router)
 app.include_router(docs_router)
 app.include_router(admin_router)
+install_openapi_schema(app)
 
 if (CONSOLE_DIST_ROOT / "assets").exists():
     app.mount("/admin/assets", StaticFiles(directory=str(CONSOLE_DIST_ROOT / "assets")), name="admin-assets")
@@ -118,7 +119,6 @@ async def on_startup() -> None:
     # MarketHub 绝大多数接口仍是同步路由，需要给共享线程池留出余量，避免探活和文档入口被一起饿死。
     limiter = anyio.to_thread.current_default_thread_limiter()
     limiter.total_tokens = SYNC_ROUTE_THREAD_TOKENS
-    ensure_index()
 
 
 @app.on_event("shutdown")
@@ -205,7 +205,22 @@ async def console_config() -> dict[str, str]:
     }
 
 
-@app.get("/api/health")
+@app.get(
+    "/api/health",
+    summary="返回服务健康状态",
+    description="""`GET` 返回服务健康状态。
+
+## 返回类型
+
+顶层返回 `HealthPayload`。
+
+## 返回字段
+
+- `service`（`str`）：服务标识。
+- `status`（`str`）：健康状态；正常情况下为 `ok`。
+- `version`（`str`）：当前服务版本。
+- `updated_at`（`str`）：健康检查文案中的更新时间。""",
+)
 async def health() -> dict[str, str]:
     # 健康检查只做轻量存活探针，避免把索引构建耗时耦合进监控。
     return {

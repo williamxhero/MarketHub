@@ -13,7 +13,6 @@ import zipfile
 from pathlib import Path
 from pathlib import PurePosixPath
 
-from docs_all import collect_all_doc_items
 import pandas as pd
 from psycopg.types.json import Jsonb
 from quotemux.capabilities import get_capability_config_root, get_capability_definition, list_public_api_bindings, normalize_capability_id
@@ -22,6 +21,7 @@ from quotemux.contracts.policies import get_contract_policy, list_contract_polic
 from quotemux.contracts.registry import get_contract_allowed_merge_strategies, get_contract_result_shape, list_contract_names
 from quotemux.contracts.strategies import list_merge_strategies
 from quotemux.infra.db.availability import get_fact_ref_availability
+from quotemux.provider_timeout.policy import default_capability_timeout_policy, default_provider_timeout_policy
 from quotemux.store.cache_db import execute_many, execute_sql, query_dataframe
 from quotemux.runtime_core.audit import read_fallback_summary, record_provider_event
 from quotemux.runtime_core.health import get_provider_metrics
@@ -29,6 +29,7 @@ from quotemux.source_packages.registry import clear_loaded_source_package_module
 from quotemux.store.admin import CachePolicyUpdate, CapturePolicyPayload, QuoteMuxCacheAdmin, QuoteMuxCaptureAdmin
 from quotemux.store.default_update_policy import cache_enabled_from_ttl_days as default_cache_enabled_from_ttl_days, get_capability_update_policy_default, ttl_seconds_from_days as default_ttl_seconds_from_days
 from quotemux.store.postgres import CACHE_NEVER_EXPIRE_TTL_SECONDS, _coverage_mode_for_capability, _key_fields_for_capability, _request_scope_fields_for_capability, _time_field_for_capability
+from quotemux.store.timeout_admin import QuoteMuxTimeoutAdmin
 from services.runtime_memory import run_with_memory_log
 
 
@@ -37,6 +38,7 @@ SECONDS_PER_DAY = 86400
 DEFAULT_TTL_DAYS = 365
 DEFAULT_TTL_SECONDS = DEFAULT_TTL_DAYS * SECONDS_PER_DAY
 _CACHE_ADMIN = QuoteMuxCacheAdmin()
+_TIMEOUT_ADMIN = QuoteMuxTimeoutAdmin()
 _CAPTURE_ADMIN: QuoteMuxCaptureAdmin | None = None
 _WARMUP_RUNNER_LOCK = threading.Lock()
 
@@ -67,11 +69,10 @@ _WARMUP_SCHEMA_FAILED = False
 
 def _api_doc_payload_by_path() -> dict[str, dict[str, str]]:
     payloads: dict[str, dict[str, str]] = {}
-    for item in collect_all_doc_items():
+    for item in list_public_api_bindings():
         if item.api_path == "" or item.api_path == "/api/health":
             continue
-        href = "/doc-view" if item.doc_path == "" else f"/doc-view/{item.doc_path}"
-        payloads[item.api_path] = {"path": item.api_path, "href": href}
+        payloads[item.api_path] = {"path": item.api_path, "href": "/api/openapi"}
     return payloads
 
 
@@ -506,6 +507,70 @@ def _cache_policy_payload(capability_id: str) -> dict[str, object]:
         return _default_cache_policy_payload(root_capability_id)
 
 
+def _timeout_policy_payload(capability_id: str, available_package_ids: list[str]) -> dict[str, object]:
+    root_capability_id = get_capability_config_root(capability_id)
+    capability = _default_capability_timeout_payload(root_capability_id)
+    try:
+        capability_rows = _TIMEOUT_ADMIN.list_effective_capability_timeouts()
+        provider_rows = _TIMEOUT_ADMIN.list_effective_provider_timeouts()
+        recent_provider_metrics = _TIMEOUT_ADMIN.list_provider_metrics(root_capability_id, "", 100)
+        recent_capability_metrics = _TIMEOUT_ADMIN.list_capability_metrics(root_capability_id, 20)
+    except Exception:
+        provider_rows = ()
+        recent_provider_metrics = ()
+        recent_capability_metrics = ()
+    else:
+        capability = next((row for row in capability_rows if row.get("capability_id") == root_capability_id), capability)
+    provider_metrics_by_provider: dict[str, dict[str, object]] = {}
+    for metric in recent_provider_metrics:
+        provider = str(metric.get("provider", ""))
+        if provider != "" and provider not in provider_metrics_by_provider:
+            provider_metrics_by_provider[provider] = metric
+    providers: list[dict[str, object]] = []
+    for package_id in available_package_ids:
+        policy = next((row for row in provider_rows if row.get("capability_id") == root_capability_id and row.get("provider") == package_id), None)
+        if policy is None:
+            policy = _default_provider_timeout_payload(root_capability_id, package_id)
+        providers.append({**policy, "latest_metric": provider_metrics_by_provider.get(package_id, {})})
+    return {
+        "capability": capability,
+        "providers": providers,
+        "recent_provider_metrics": recent_provider_metrics,
+        "recent_capability_metrics": recent_capability_metrics,
+    }
+
+
+def _default_capability_timeout_payload(capability_id: str) -> dict[str, object]:
+    policy = default_capability_timeout_policy(capability_id)
+    return {
+        "capability_id": policy.capability_id,
+        "default_timeout_seconds": policy.default_timeout_seconds,
+        "min_timeout_seconds": policy.min_timeout_seconds,
+        "max_timeout_seconds": policy.max_timeout_seconds,
+        "sample_window_size": policy.sample_window_size,
+        "min_sample_count": policy.min_sample_count,
+        "effective_timeout_seconds": policy.default_timeout_seconds,
+        "effective_source": "default",
+        "sample_count": 0,
+    }
+
+
+def _default_provider_timeout_payload(capability_id: str, provider: str) -> dict[str, object]:
+    policy = default_provider_timeout_policy(capability_id, provider)
+    return {
+        "capability_id": policy.capability_id,
+        "provider": policy.provider,
+        "default_timeout_seconds": policy.default_timeout_seconds,
+        "min_timeout_seconds": policy.min_timeout_seconds,
+        "max_timeout_seconds": policy.max_timeout_seconds,
+        "sample_window_size": policy.sample_window_size,
+        "min_sample_count": policy.min_sample_count,
+        "effective_timeout_seconds": policy.default_timeout_seconds,
+        "effective_source": "default",
+        "sample_count": 0,
+    }
+
+
 def ttl_days_from_cache_policy(cache_policy: dict[str, object]) -> int:
     ttl_seconds = int(cache_policy.get("ttl_seconds", 0))
     if ttl_seconds == CACHE_NEVER_EXPIRE_TTL_SECONDS:
@@ -606,6 +671,7 @@ def _capability_settings_row(
         "ttl_days": ttl_days,
         "cache_effective": cache_effective,
         "cache_policy": visible_cache_policy,
+        "timeout_policy": _timeout_policy_payload(normalized_capability_id, available_package_ids),
         "packages": package_rows,
     }
 
