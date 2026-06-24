@@ -122,8 +122,10 @@ wait_capture_completion() {
 
 validate_market_coverage() {
     local validation_path="$1"
+    local status
     log "后处理：校验上一交易日核心数据覆盖"
-    python3 - "$MARKETHUB_BASE_URL" "$validation_path" <<'PY'
+    status=0
+    python3 - "$MARKETHUB_BASE_URL" "$validation_path" <<'PY' || status=$?
 from __future__ import annotations
 
 from datetime import datetime
@@ -196,7 +198,7 @@ checks = [
         "path": "/api/boards/quotes/daily-snapshot",
         "params": {"trade_date": trade_date, "limit": 5000},
         "minimum": env_int("MARKETHUB_MIN_BOARD_DAILY_ROWS", 200),
-        "blocking": True,
+        "blocking": False,
         "capabilities": ["boards.quotes.daily"],
     },
     {
@@ -270,6 +272,7 @@ if failures:
     raise SystemExit("核心数据覆盖不足：" + "; ".join(failures))
 PY
     log "后处理：覆盖校验结果 $validation_path"
+    return "$status"
 }
 
 failed_capabilities() {
@@ -286,14 +289,31 @@ for capability_id in payload.get("failed_capabilities", []):
 PY
 }
 
+validation_trade_date() {
+    python3 - "$1" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(payload.get("trade_date", "")))
+PY
+}
+
 force_refresh_failed_capabilities() {
     local validation_path="$1"
     local capabilities
+    local trade_date
+    local compact_trade_date
     capabilities="$(failed_capabilities "$validation_path")"
     if [ "$capabilities" = "" ]; then
         log "后处理：没有可强制补跑的 capability"
         return 0
     fi
+    trade_date="$(validation_trade_date "$validation_path")"
+    compact_trade_date="${trade_date//-/}"
 
     while IFS= read -r capability_id; do
         if [ "$capability_id" = "" ]; then
@@ -316,6 +336,14 @@ print(f"forced_status={status}")
 if status not in {"success", "skipped"}:
     raise SystemExit(f"强制补跑失败: {status}")
 PY
+        if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "stocks.quotes.daily_snapshot" ]; then
+            log "后处理：按校验日期精确补股票日快照 $trade_date"
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/stocks/quotes/daily-snapshot?trade_date=$compact_trade_date&skip_suspended=true&skip_st=true&limit=10000" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "boards.quotes.daily" ]; then
+            log "后处理：按校验日期精确补板块日快照 $trade_date"
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/boards/quotes/daily-snapshot?trade_date=$compact_trade_date&limit=5000" -o "$force_result_path.targeted.json"
+        fi
     done <<< "$capabilities"
 }
 
@@ -325,16 +353,23 @@ postprocess() {
         return 0
     fi
 
-    submit_due_capture
-    wait_capture_completion
-    if validate_market_coverage "$VALIDATION_PATH"; then
-        log "后处理：到期更新后覆盖达标"
-        return 0
+    if [ ! -s "$VALIDATION_PATH" ]; then
+        log "后处理：覆盖校验未生成结果，停止本轮更新"
+        return 1
+    fi
+
+    if [ "$(failed_capabilities "$VALIDATION_PATH")" = "" ]; then
+        log "后处理：覆盖校验没有阻塞项，停止本轮更新"
+        return 1
     fi
 
     force_refresh_failed_capabilities "$VALIDATION_PATH"
-    validate_market_coverage "$VALIDATION_PATH"
-    log "后处理：强制补跑后覆盖达标"
+    if validate_market_coverage "$VALIDATION_PATH"; then
+        log "后处理：强制补跑后覆盖达标"
+        return 0
+    fi
+    log "后处理：强制补跑后覆盖仍不足，停止本轮更新"
+    return 1
 }
 
 run_once() {

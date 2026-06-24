@@ -26,6 +26,10 @@ class SourceInstanceEnabledPayload(BaseModel):
     enabled: bool
 
 
+class SourcePackageOrderPayload(BaseModel):
+    package_ids: list[str]
+
+
 class ImportSourcePackagePayload(BaseModel):
     path: str
 
@@ -104,6 +108,11 @@ async def api_admin_source_packages_refresh() -> list[dict[str, object]]:
 @router.post("/api/admin/source-packages/install-all")
 async def api_admin_source_packages_install_all() -> list[dict[str, object]]:
     return admin_runtime.install_all_source_packages()
+
+
+@router.put("/api/admin/source-packages/order")
+async def api_admin_source_packages_order(payload: SourcePackageOrderPayload, request: Request) -> dict[str, object]:
+    return admin_runtime.save_source_package_order(tuple(payload.package_ids), request.app.openapi())
 
 
 @router.post("/api/admin/source-packages/import")

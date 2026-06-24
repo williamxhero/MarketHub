@@ -10,6 +10,7 @@ import shutil
 import threading
 import uuid
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -167,6 +168,11 @@ def _save_unregistered_package_ids(package_ids: tuple[str, ...]) -> None:
 def _visible_manifests():
     unregistered = set(_unregistered_package_ids())
     return tuple(item for item in _runtime().list_source_packages() if item.package_id not in unregistered)
+
+
+def _sort_manifests_by_priority(manifests) -> tuple[object, ...]:
+    package_priority = {item.package_id: item.priority for item in _runtime().list_source_instances()}
+    return tuple(sorted(manifests, key=lambda item: (package_priority.get(item.package_id, 100), item.package_id)))
 
 
 def _ensure_managed_import_root() -> tuple[str, ...]:
@@ -442,6 +448,35 @@ def _resolve_package_order_to_instances(package_ids: tuple[str, ...]) -> tuple[s
         except KeyError:
             continue
     return tuple(source_order)
+
+
+def _visible_package_ids() -> tuple[str, ...]:
+    return tuple(item.package_id for item in _visible_manifests())
+
+
+def _validate_source_package_order(package_ids: tuple[str, ...]) -> tuple[str, ...]:
+    visible_package_ids = _visible_package_ids()
+    visible_set = set(visible_package_ids)
+    package_set = set(package_ids)
+    if len(package_ids) != len(package_set):
+        raise ValueError("source package 排序包含重复 package")
+    unknown_package_ids = tuple(package_id for package_id in package_ids if package_id not in visible_set)
+    if unknown_package_ids != ():
+        raise KeyError(f"未知 source package: {', '.join(unknown_package_ids)}")
+    missing_package_ids = tuple(package_id for package_id in visible_package_ids if package_id not in package_set)
+    if missing_package_ids != ():
+        raise ValueError(f"source package 排序缺少 package: {', '.join(missing_package_ids)}")
+    return package_ids
+
+
+def _instances_by_package() -> dict[str, tuple[SourceInstanceConfig, ...]]:
+    instances = sorted(_runtime().list_source_instances(), key=lambda item: (item.priority, item.instance_id))
+    grouped: dict[str, list[SourceInstanceConfig]] = {}
+    for instance in instances:
+        if instance.package_id not in grouped:
+            grouped[instance.package_id] = []
+        grouped[instance.package_id].append(instance)
+    return {package_id: tuple(items) for package_id, items in grouped.items()}
 
 
 def _contract_enabled_package_ids(policy: ContractPolicyOverride) -> tuple[str, ...]:
@@ -749,7 +784,7 @@ def _record_admin_change(action: str, target: str, payload: dict[str, object]) -
 
 
 def list_source_packages() -> list[dict[str, object]]:
-    return [_serialize_package(item) for item in _visible_manifests()]
+    return [_serialize_package(item) for item in _sort_manifests_by_priority(_visible_manifests())]
 
 
 def refresh_source_packages() -> list[dict[str, object]]:
@@ -872,6 +907,44 @@ def list_source_instances() -> list[dict[str, object]]:
     return [_serialize_instance(item) for item in _runtime().list_source_instances()]
 
 
+def save_source_package_order(package_ids: tuple[str, ...], openapi_schema: dict[str, object] | None = None) -> dict[str, object]:
+    ordered_package_ids = _validate_source_package_order(package_ids)
+    packages = {item.package_id: item for item in _visible_manifests()}
+    package_priority = {package_id: index + 1 for index, package_id in enumerate(ordered_package_ids)}
+    grouped_instances = _instances_by_package()
+    for package_id, instances in grouped_instances.items():
+        priority_base = package_priority.get(package_id)
+        if priority_base is None:
+            continue
+        for index, instance in enumerate(instances):
+            _runtime().save_source_instance(replace(instance, priority=priority_base * 100 + index))
+    package_to_instance = _instance_package_index()
+    policies = _all_policies_by_contract()
+    changed_contracts: list[str] = []
+    for capability_id, policy in policies.items():
+        supported_package_ids: list[str] = []
+        for package_id in ordered_package_ids:
+            manifest = packages.get(package_id)
+            if manifest is not None and _package_supports_contract(manifest, capability_id):
+                supported_package_ids.append(package_id)
+        source_order = tuple(package_to_instance[package_id] for package_id in supported_package_ids if package_id in package_to_instance)
+        save_contract_policy_override(capability_id, policy.mode, source_order, policy.merge_strategy)
+        changed_contracts.append(capability_id)
+    profile = publish_runtime_profile("Console Source Package Order", "按 Source Packages 顺序重建 provider 优先级")
+    _record_admin_change(
+        "save_source_package_order",
+        "source_packages",
+        {"package_ids": list(ordered_package_ids), "contracts": changed_contracts, "profile_id": str(profile["profile_id"])},
+    )
+    return {
+        "package_ids": list(ordered_package_ids),
+        "packages": list_source_packages(),
+        "source_instances": list_source_instances(),
+        "matrix": get_contract_matrix(openapi_schema),
+        "profile": profile,
+    }
+
+
 def get_source_instance_secret_value(instance_id: str, secret_field: str) -> dict[str, str]:
     instance = next((item for item in _runtime().list_source_instances() if item.instance_id == instance_id), None)
     if instance is None:
@@ -980,7 +1053,7 @@ def save_contract_policy_override(contract_name: str, mode: str, source_order: t
 
 
 def get_contract_matrix(openapi_schema: dict[str, object] | None = None) -> dict[str, object]:
-    packages = _visible_manifests()
+    packages = _sort_manifests_by_priority(_visible_manifests())
     policies = _all_policies_by_contract()
     api_doc_payloads_by_path = _api_doc_payload_by_path(openapi_schema)
     rows = [_capability_settings_row(contract_name, policies, packages, api_doc_payloads_by_path) for contract_name in list_contract_names()]

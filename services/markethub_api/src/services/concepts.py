@@ -9,12 +9,16 @@ from quotemux.models import ConceptAliasGroupItem, ConceptAliasResolveItem
 _QUOTEMUX = QuoteMux()
 
 
-def resolve_alias(provider: str, board_code: str, trade_date: str) -> ConceptAliasResolveItem:
+def list_alias_groups(trade_date: str) -> list[ConceptAliasGroupItem]:
+    return _QUOTEMUX.concepts.list_alias_groups(trade_date)
+
+
+def resolve_alias(provider: str, board_type: str, board_code: str, trade_date: str) -> ConceptAliasResolveItem:
     if provider == "":
         raise HTTPException(status_code=400, detail="provider 不能为空")
     if board_code == "":
         raise HTTPException(status_code=400, detail="board_code 不能为空")
-    return _QUOTEMUX.concepts.resolve_alias(provider, board_code, trade_date)
+    return _QUOTEMUX.concepts.resolve_alias(provider, board_type, board_code, trade_date)
 
 
 def get_alias_group(concept_id: str, trade_date: str) -> ConceptAliasGroupItem:

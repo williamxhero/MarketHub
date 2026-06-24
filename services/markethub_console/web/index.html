@@ -346,6 +346,39 @@
       opacity: 0.28;
     }
 
+    .simple-table {
+      width: 100%;
+      min-width: 860px;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .simple-table th,
+    .simple-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 1.55;
+      word-break: break-word;
+    }
+
+    .simple-table th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #ffffff;
+      font-weight: 700;
+    }
+
+    .alias-member-list {
+      display: grid;
+      gap: 6px;
+      font-family: "IBM Plex Mono", "Cascadia Mono", monospace;
+      font-size: 13px;
+    }
+
     .capability-cell {
       display: grid;
       gap: 6px;
@@ -702,6 +735,7 @@
       <nav class="rail-nav">
         <a href="#packages">Source Packages</a>
         <a href="#warmups">Warmups</a>
+        <a href="#concept-alias">Concept Alias</a>
         <a href="#policies">Capability Matrix</a>
       </nav>
       <div class="hero-status" id="summary">等待加载...</div>
@@ -720,9 +754,10 @@
           <div class="section-head">
             <div>
               <h3>Source Packages</h3>
-              <p>查看当前已注册 package 的状态，支持导入目录和取消注册。</p>
+              <p>查看当前已注册 package 的状态，列表顺序控制所有 capability 的 provider 优先级。</p>
             </div>
             <div class="toolbar">
+              <button class="button-accent" id="save-package-order">保存优先级</button>
               <button class="button-accent" id="install-all-packages">安装或更新全部 Packages</button>
               <button id="import-directory">导入目录</button>
               <input class="hidden-file-input" id="directory-input" type="file" webkitdirectory directory multiple />
@@ -752,11 +787,24 @@
           <div class="matrix-wrap" id="warmup-history-wrap"></div>
         </section>
 
+        <section id="concept-alias">
+          <div class="section-head">
+            <div>
+              <h3>Concept Alias</h3>
+              <p>查看当前题材概念板块自动关联出的内部 ID、规范名称和 provider 板块对应关系。</p>
+            </div>
+            <div class="toolbar">
+              <button class="button-accent" id="refresh-concept-alias">刷新关联表</button>
+            </div>
+          </div>
+          <div class="matrix-wrap" id="concept-alias-wrap"></div>
+        </section>
+
         <section id="policies">
           <div class="section-head">
             <div>
               <h3>Capability Matrix</h3>
-              <p>表格中保留 provider 勾选。Merge Strategy、缓存和定时更新在编辑弹窗中按 capability 单独保存。</p>
+              <p>Provider 列从左到右按 Source Packages 优先级展示。Merge Strategy、缓存和定时更新在编辑弹窗中按 capability 单独保存。</p>
             </div>
             <div class="toolbar">
               <button class="button-accent" id="save-matrix">保存 Provider 选择</button>
@@ -939,6 +987,7 @@
     const warmupSummaryGrid = document.getElementById("warmup-summary-grid");
     const warmupItemsWrap = document.getElementById("warmup-items-wrap");
     const warmupHistoryWrap = document.getElementById("warmup-history-wrap");
+    const conceptAliasWrap = document.getElementById("concept-alias-wrap");
     const apiKeyEditor = document.getElementById("api-key-editor");
     const apiKeyEditorSubtitle = document.getElementById("api-key-editor-subtitle");
     const apiKeyPackageId = document.getElementById("api-key-package-id");
@@ -948,6 +997,8 @@
     let matrixPayload = { packages: [], capabilities: [] };
     let sourceInstances = [];
     let sourceInstancesByPackageId = {};
+    let orderedPackageIds = [];
+    let activeCapturePolicies = [];
     let activeCapabilityId = "";
     let activeCapturePolicy = {};
     let activeApiKeyPackageId = "";
@@ -1074,6 +1125,48 @@
       `;
     }
 
+    function renderConceptAliasGroups(groups) {
+      if (!groups || groups.length === 0) {
+        conceptAliasWrap.innerHTML = '<div class="empty-state">当前没有已确认的概念关联组。</div>';
+        return;
+      }
+      const aliasRangeText = (startDate, endDate) => {
+        if (!startDate && !endDate) {
+          return "";
+        }
+        return `${startDate || ""} ~ ${endDate || "至今"}`;
+      };
+      const rows = groups.map((group) => {
+        const members = (group.members || []).map((member) => `
+          <div>${escapeHtml(member.provider || "")} / ${escapeHtml(member.board_type || "")} / ${escapeHtml(member.board_code || "")} / ${escapeHtml(member.board_name || "")} / ${escapeHtml(aliasRangeText(member.start_date || "", member.end_date || ""))}</div>
+        `).join("");
+        return `
+          <tr>
+            <td>${escapeHtml(group.concept_id || "")}</td>
+            <td>${escapeHtml(group.canonical_name || "")}</td>
+            <td>${escapeHtml(aliasRangeText(group.start_date || "", group.end_date || ""))}</td>
+            <td><div class="alias-member-list">${members}</div></td>
+          </tr>
+        `;
+      }).join("");
+      conceptAliasWrap.innerHTML = `
+        <table class="simple-table">
+          <thead><tr><th style="width: 120px">Concept ID</th><th style="width: 180px">Name</th><th style="width: 180px">Range</th><th>Provider / Type / Board / Range</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    async function loadConceptAliasGroups() {
+      try {
+        conceptAliasWrap.innerHTML = '<div class="empty-state">正在加载概念关联表...</div>';
+        const groups = await request("/api/concepts/alias/groups");
+        renderConceptAliasGroups(groups);
+      } catch (error) {
+        conceptAliasWrap.innerHTML = `<div class="empty-state">概念关联表加载失败：${escapeHtml(error.message)}</div>`;
+      }
+    }
+
     function stopWarmupPolling() {
       if (warmupPollTimer !== 0) {
         window.clearTimeout(warmupPollTimer);
@@ -1137,29 +1230,85 @@
       return instances[0] || null;
     }
 
+    function sourceInstancePriority(packageId) {
+      const sourceInstance = selectSourceInstance(packageId);
+      return sourceInstance ? Number.parseInt(sourceInstance.priority || 100, 10) : 100;
+    }
+
+    function sortPackagesByPriority(packages) {
+      return [...packages].sort((left, right) => {
+        const leftPackageId = left.package_id || "";
+        const rightPackageId = right.package_id || "";
+        return (sourceInstancePriority(leftPackageId) - sourceInstancePriority(rightPackageId)) || String(leftPackageId).localeCompare(String(rightPackageId));
+      });
+    }
+
+    function packageOrderIndex() {
+      return Object.fromEntries((orderedPackageIds || []).map((packageId, index) => [packageId, index]));
+    }
+
+    function sortPackagesByCurrentOrder(packages) {
+      const orderIndex = packageOrderIndex();
+      return [...packages].sort((left, right) => {
+        const leftPackageId = left.package_id || "";
+        const rightPackageId = right.package_id || "";
+        const leftIndex = orderIndex[leftPackageId] ?? 10000;
+        const rightIndex = orderIndex[rightPackageId] ?? 10000;
+        return (leftIndex - rightIndex) || (sourceInstancePriority(leftPackageId) - sourceInstancePriority(rightPackageId)) || String(leftPackageId).localeCompare(String(rightPackageId));
+      });
+    }
+
+    function syncOrderedPackageIds(packages) {
+      orderedPackageIds = sortPackagesByPriority(packages).map((item) => item.package_id || "").filter((packageId) => packageId !== "");
+    }
+
+    function movePackageOrder(packageId, direction) {
+      const index = orderedPackageIds.indexOf(packageId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= orderedPackageIds.length) {
+        return;
+      }
+      const nextOrder = [...orderedPackageIds];
+      const current = nextOrder[index];
+      nextOrder[index] = nextOrder[nextIndex];
+      nextOrder[nextIndex] = current;
+      orderedPackageIds = nextOrder;
+      renderPackages(matrixPayload.packages || []);
+      renderMatrix(matrixPayload, activeCapturePolicies);
+      setSummary("Source Packages 优先级有未保存的变更。");
+    }
+
     function renderPackages(packages) {
       packageList.innerHTML = "";
       if (packages.length === 0) {
         packageList.innerHTML = '<div class="empty-state">当前没有已注册 package。</div>';
         return;
       }
-      packages.forEach((item) => {
+      const orderedPackages = sortPackagesByCurrentOrder(packages);
+      orderedPackages.forEach((item, index) => {
         const row = document.createElement("div");
         const healthStatus = item.health?.status || "unknown";
         const isHealthy = healthStatus === "ok";
         const sourceInstance = selectSourceInstance(item.package_id);
         const apiKeyDisabled = sourceInstance === null;
+        const moveUpDisabled = index === 0 ? "disabled" : "";
+        const moveDownDisabled = index === orderedPackages.length - 1 ? "disabled" : "";
         row.className = "package-row";
         row.innerHTML = `
           <div class="package-name"><span class="status-dot ${isHealthy ? "ok" : ""}"></span>${escapeHtml(item.display_name || item.package_id)}</div>
           <div class="package-desc">${escapeHtml(item.description || "")}</div>
           <div class="health"></div>
           <div class="package-actions">
+            <button class="button-ghost button-small" data-package-move="${escapeHtml(item.package_id)}" data-package-direction="-1" ${moveUpDisabled}>上移</button>
+            <button class="button-ghost button-small" data-package-move="${escapeHtml(item.package_id)}" data-package-direction="1" ${moveDownDisabled}>下移</button>
             <button class="button-ghost button-small" data-package-api-key="${escapeHtml(item.package_id)}" ${apiKeyDisabled ? "disabled" : ""}>api key</button>
             <button class="button-danger button-small" data-package-delete="${escapeHtml(item.package_id)}">删除</button>
           </div>
         `;
         packageList.appendChild(row);
+      });
+      packageList.querySelectorAll("[data-package-move]").forEach((button) => {
+        button.addEventListener("click", () => movePackageOrder(button.dataset.packageMove, Number.parseInt(button.dataset.packageDirection || "0", 10)));
       });
       packageList.querySelectorAll("[data-package-api-key]").forEach((button) => {
         button.addEventListener("click", () => openApiKeyEditor(button.dataset.packageApiKey));
@@ -1284,14 +1433,15 @@
       `;
     }
 
-    function renderCapabilityId(capability) {
-      const capabilityId = escapeHtml(capability.capability_id);
-      const apiDoc = (capability.api_docs || [])[0] || {};
-      const href = apiDoc.href || "";
-      if (href === "") {
-        return capabilityId;
-      }
-      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${capabilityId}</a>`;
+    function renderApiDocLinks(capability) {
+      return (capability.api_docs || []).map((apiDoc) => {
+        const path = escapeHtml(apiDoc.path || "");
+        const href = escapeHtml(apiDoc.href || "");
+        if (path === "" || href === "") {
+          return "";
+        }
+        return `<a href="${href}">${path}</a>`;
+      }).filter((item) => item !== "").join(" ");
     }
 
     function renderSourceHeader(sourcePackage) {
@@ -1334,7 +1484,8 @@
 
     function renderMatrix(payload, capturePolicies = []) {
       matrixPayload = payload;
-      const packages = payload.packages || [];
+      activeCapturePolicies = capturePolicies || [];
+      const packages = sortPackagesByCurrentOrder(payload.packages || []);
       const capabilities = payload.capabilities || [];
       const policiesByCapability = capturePolicyMap(capturePolicies);
       if (capabilities.length === 0) {
@@ -1362,15 +1513,17 @@
             </td>
           `;
         }).join("");
+        const apiPaths = renderApiDocLinks(capability);
         const badges = renderCapabilityBadges(capability, policiesByCapability[capability.capability_id]);
         return `
           <tr>
             <td>
               <div class="capability-cell">
                 <div class="capability-title">
-                  <div class="capability-id">${renderCapabilityId(capability)}</div>
+                  <div class="capability-id">${escapeHtml(capability.capability_id)}</div>
                   ${badges}
                 </div>
+                <div class="capability-id">${apiPaths}</div>
               </div>
             </td>
             <td>
@@ -1709,10 +1862,13 @@
         Object.values(sourceInstancesByPackageId).forEach((items) => {
           items.sort((left, right) => (left.priority - right.priority) || String(left.instance_id || "").localeCompare(String(right.instance_id || "")));
         });
-        renderPackages(packages);
+        syncOrderedPackageIds(packages);
+        matrixPayload = matrix;
+        renderPackages(matrix.packages || packages);
         renderMatrix(matrix, capturePolicies);
         renderWarmupCapabilityOptions(matrix.capabilities || []);
         renderWarmupHistory(warmups);
+        await loadConceptAliasGroups();
         if (warmups.length > 0) {
           activeWarmupTaskId = warmups[0].task_id || "";
           const activeTask = await request(`/api/admin/warmups/${encodeURIComponent(activeWarmupTaskId)}`);
@@ -1746,6 +1902,24 @@
         await loadAll();
       } catch (error) {
         setSummary(`取消注册失败: ${error.message}`);
+      }
+    }
+
+    async function savePackageOrder() {
+      try {
+        if (orderedPackageIds.length === 0) {
+          setSummary("当前没有可保存的 Source Packages 优先级。");
+          return;
+        }
+        setSummary("正在保存 Source Packages 优先级...");
+        await request("/api/admin/source-packages/order", {
+          method: "PUT",
+          body: JSON.stringify({ package_ids: orderedPackageIds }),
+        });
+        await loadAll();
+        setSummary("Source Packages 优先级已保存并发布。");
+      } catch (error) {
+        setSummary(`保存 Source Packages 优先级失败: ${error.message}`);
       }
     }
 
@@ -1917,9 +2091,11 @@
       }
     }
 
+    document.getElementById("save-package-order").addEventListener("click", savePackageOrder);
     document.getElementById("install-all-packages").addEventListener("click", installAllPackages);
     document.getElementById("import-directory").addEventListener("click", importPackageDirectory);
     document.getElementById("start-warmup").addEventListener("click", startWarmup);
+    document.getElementById("refresh-concept-alias").addEventListener("click", loadConceptAliasGroups);
     document.getElementById("save-matrix").addEventListener("click", saveMatrix);
     document.getElementById("close-capability-editor-top").addEventListener("click", closeCapabilityEditor);
     document.getElementById("save-capability-settings").addEventListener("click", saveCapabilitySettings);

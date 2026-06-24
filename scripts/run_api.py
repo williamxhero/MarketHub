@@ -37,11 +37,20 @@ def _assert_layout(python_executable: Path) -> None:
 def _run_api(python_executable: Path) -> None:
     env = os.environ.copy()
     _load_env_file(env, RUNTIME_ROOT / 'env' / 'markethub.env')
+    _prepend_python_path(env, (WORKSPACE_ROOT / 'QuoteMux' / 'src', WORKSPACE_ROOT / 'QuoteMux_Packages' / 'packages', SERVICE_ROOT / 'src'))
     env.setdefault('MARKETHUB_PROJECT_ROOT', str(MARKETHUB_ROOT))
     env.setdefault('MARKETHUB_RUNTIME_ROOT', str(RUNTIME_ROOT))
     env.setdefault('QUOTEMUX_RUNTIME_ROOT', str(RUNTIME_ROOT / 'runtime'))
     env.setdefault('DATALAKE_ROOT', str(WORKSPACE_ROOT / 'datalake'))
     subprocess.run([str(python_executable), str(APP_PATH)], cwd=str(SERVICE_ROOT), env=env, check=True)
+
+
+def _prepend_python_path(env: dict[str, str], paths: tuple[Path, ...]) -> None:
+    existing = env.get('PYTHONPATH', '')
+    values = [str(path) for path in paths]
+    if existing != '':
+        values.append(existing)
+    env['PYTHONPATH'] = os.pathsep.join(values)
 
 
 def _load_env_file(env: dict[str, str], path: Path) -> None:
