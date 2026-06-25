@@ -10,18 +10,18 @@ _QUOTEMUX = QuoteMux()
 
 
 def list_alias_groups(trade_date: str) -> list[ConceptAliasGroupItem]:
-    return _QUOTEMUX.concepts.list_alias_groups(trade_date)
+    return _QUOTEMUX.concept_aliases.list_alias_groups(trade_date)
 
 
-def resolve_alias(provider: str, board_type: str, board_code: str, trade_date: str) -> ConceptAliasResolveItem:
+def resolve_alias(provider: str, provider_concept_type: str, provider_concept_code: str, trade_date: str) -> ConceptAliasResolveItem:
     if provider == "":
-        raise HTTPException(status_code=400, detail="provider 不能为空")
-    if board_code == "":
-        raise HTTPException(status_code=400, detail="board_code 不能为空")
-    return _QUOTEMUX.concepts.resolve_alias(provider, board_type, board_code, trade_date)
+        raise HTTPException(status_code=400, detail="provider 必填")
+    if provider_concept_code == "":
+        raise HTTPException(status_code=400, detail="provider_concept_code 必填")
+    return _QUOTEMUX.concept_aliases.resolve_alias(provider, provider_concept_type, provider_concept_code, trade_date)
 
 
 def get_alias_group(concept_id: str, trade_date: str) -> ConceptAliasGroupItem:
     if concept_id == "":
-        raise HTTPException(status_code=400, detail="concept_id 不能为空")
-    return _QUOTEMUX.concepts.get_alias_group(concept_id, trade_date)
+        raise HTTPException(status_code=400, detail="concept_id 必填")
+    return _QUOTEMUX.concept_aliases.get_alias_group(concept_id, trade_date)

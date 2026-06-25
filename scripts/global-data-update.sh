@@ -194,20 +194,20 @@ checks = [
         "capabilities": ["stocks.quotes.daily_snapshot"],
     },
     {
-        "name": "board_daily_snapshot",
-        "path": "/api/boards/quotes/daily-snapshot",
+        "name": "concept_daily_snapshot",
+        "path": "/api/concepts/quotes/daily-snapshot",
         "params": {"trade_date": trade_date, "limit": 5000},
-        "minimum": env_int("MARKETHUB_MIN_BOARD_DAILY_ROWS", 200),
+        "minimum": env_int("MARKETHUB_MIN_CONCEPT_DAILY_ROWS", 200),
         "blocking": False,
-        "capabilities": ["boards.quotes.daily"],
+        "capabilities": ["concepts.quotes.daily"],
     },
     {
-        "name": "bk0422_members",
-        "path": "/api/boards/BK0422/members",
+        "name": "c231_members",
+        "path": "/api/concepts/C231/members",
         "params": {"trade_date": trade_date},
-        "minimum": env_int("MARKETHUB_MIN_BK0422_MEMBER_ROWS", 1),
+        "minimum": env_int("MARKETHUB_MIN_C231_MEMBER_ROWS", 1),
         "blocking": True,
-        "capabilities": ["boards.members"],
+        "capabilities": ["concepts.members"],
     },
     {
         "name": "hot_money_details",
@@ -340,9 +340,9 @@ PY
             log "后处理：按校验日期精确补股票日快照 $trade_date"
             curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/stocks/quotes/daily-snapshot?trade_date=$compact_trade_date&skip_suspended=true&skip_st=true&limit=10000" -o "$force_result_path.targeted.json"
         fi
-        if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "boards.quotes.daily" ]; then
-            log "后处理：按校验日期精确补板块日快照 $trade_date"
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/boards/quotes/daily-snapshot?trade_date=$compact_trade_date&limit=5000" -o "$force_result_path.targeted.json"
+        if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "concepts.quotes.daily" ]; then
+            log "后处理：按校验日期精确补题材概念日快照 $trade_date"
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/concepts/quotes/daily-snapshot?trade_date=$compact_trade_date&limit=5000" -o "$force_result_path.targeted.json"
         fi
     done <<< "$capabilities"
 }

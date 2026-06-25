@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from core.config import DEFAULT_LIMIT, MAX_LIMIT
-from quotemux.models import BoardQuoteItem, BoardRankingItem, IndexQuoteItem, StockQuoteItem
+from quotemux.models import ConceptQuoteItem, IndexQuoteItem, StockQuoteItem
 from platform_models import format_api_dump_value
 from quotemux.utils import normalize_index_code, normalize_stock_code, split_csv
 
@@ -28,26 +28,13 @@ def require_codes(code: str, codes: str) -> list[str]:
     return list(dict.fromkeys(items))
 
 
-def optional_board_codes(board_code: str, board_codes: str) -> list[str]:
-    """可选的板块代码参数，允许为空"""
-    from quotemux.utils import split_csv
+def optional_concept_ids(concept_id: str, concept_ids: str) -> list[str]:
     items = []
-    if board_code:
-        items.append(board_code.strip())
-    items.extend(item.strip() for item in split_csv(board_codes))
+    if concept_id:
+        items.append(concept_id.strip())
+    items.extend(item.strip() for item in split_csv(concept_ids))
     items = [item for item in items if item]
     return list(dict.fromkeys(items))
-
-def require_board_codes(board_code: str, board_codes: str) -> list[str]:
-    items = []
-    if board_code:
-        items.append(board_code.strip())
-    items.extend(item.strip() for item in split_csv(board_codes))
-    items = [item for item in items if item]
-    if not items:
-        raise HTTPException(status_code=400, detail="board_code 和 board_codes 至少需要传一个")
-    return list(dict.fromkeys(items))
-
 
 def require_index_codes(index_code: str, index_codes: str) -> list[str]:
     items = []
@@ -74,7 +61,7 @@ def require_quote_freq(freq: str) -> str:
     return actual
 
 
-def require_board_quote_freq(freq: str) -> str:
+def require_concept_quote_freq(freq: str) -> str:
     actual = freq or "1d"
     if actual not in {"1m", "5m", "15m", "30m", "60m", "1d", "1w", "1mo"}:
         raise HTTPException(status_code=400, detail="freq 不合法")
@@ -109,24 +96,24 @@ def require_board_rank_type(rank_type: str) -> str:
     return actual
 
 
-def require_board_money_flow_scope(scope: str) -> str:
-    actual = scope or "board"
-    if actual not in {"board", "industry"}:
-        raise HTTPException(status_code=400, detail="scope 涓嶅悎娉?")
+def require_concept_money_flow_scope(scope: str) -> str:
+    actual = scope or "concept"
+    if actual not in {"concept"}:
+        raise HTTPException(status_code=400, detail="scope 不合法")
     return actual
 
 
 def require_limit_type(limit_type: str) -> str:
     actual = limit_type or "limit_up"
     if actual not in {"limit_up", "limit_down", "opened_limit"}:
-        raise HTTPException(status_code=400, detail="limit_type 涓嶅悎娉?")
+        raise HTTPException(status_code=400, detail="limit_type 不合法")
     return actual
 
 
 def require_exchange(exchange: str) -> str:
     actual = exchange or "SSE"
     if actual not in {"SSE", "SZSE", "BSE", "HKEX"}:
-        raise HTTPException(status_code=400, detail="exchange 涓嶅悎娉?")
+        raise HTTPException(status_code=400, detail="exchange 不合法")
     return actual
 
 
@@ -158,16 +145,12 @@ def sort_stock_quotes(items: list[StockQuoteItem]) -> list[StockQuoteItem]:
     return sorted(items, key=lambda item: (item.code, item.trade_time))
 
 
-def sort_board_quotes(items: list[BoardQuoteItem]) -> list[BoardQuoteItem]:
-    return sorted(items, key=lambda item: (item.board_code, item.trade_time))
+def sort_concept_quotes(items: list[ConceptQuoteItem]) -> list[ConceptQuoteItem]:
+    return sorted(items, key=lambda item: (item.concept_id, item.trade_time))
 
 
 def sort_index_quotes(items: list[IndexQuoteItem]) -> list[IndexQuoteItem]:
     return sorted(items, key=lambda item: (item.index_code, item.trade_time))
-
-
-def sort_board_rankings(items: list[BoardRankingItem]) -> list[BoardRankingItem]:
-    return sorted(items, key=lambda item: (item.rank or 10**9, item.board_code))
 
 
 def trim_stock_quote_count(items: list[StockQuoteItem], count: int | None) -> list[StockQuoteItem]:
@@ -178,18 +161,6 @@ def trim_stock_quote_count(items: list[StockQuoteItem], count: int | None) -> li
         grouped.setdefault(item.code, []).append(item)
     trimmed: list[StockQuoteItem] = []
     for code, group_items in grouped.items():
-        trimmed.extend(sorted(group_items, key=lambda item: item.trade_time)[-count:])
-    return trimmed
-
-
-def trim_board_quote_count(items: list[BoardQuoteItem], count: int | None) -> list[BoardQuoteItem]:
-    if not count:
-        return items
-    grouped: dict[str, list[BoardQuoteItem]] = {}
-    for item in items:
-        grouped.setdefault(item.board_code, []).append(item)
-    trimmed: list[BoardQuoteItem] = []
-    for board_code, group_items in grouped.items():
         trimmed.extend(sorted(group_items, key=lambda item: item.trade_time)[-count:])
     return trimmed
 

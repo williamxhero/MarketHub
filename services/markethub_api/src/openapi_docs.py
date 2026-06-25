@@ -8,8 +8,7 @@ from fastapi.openapi.utils import get_openapi
 
 TAG_BY_PREFIX = {
     "/api/stocks": "股票",
-    "/api/boards": "板块",
-    "/api/concepts": "概念",
+    "/api/concepts": "题材概念",
     "/api/indexes": "指数",
     "/api/markets": "市场",
     "/api/rankings": "排行",

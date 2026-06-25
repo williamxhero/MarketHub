@@ -25,8 +25,8 @@ from quotemux.infra.db.client import close_pool, get_pool_metrics
 from quotemux.runtime_core.audit import read_fallback_summary
 from quotemux.runtime_core.health import get_provider_metrics
 from routers.admin import router as admin_router
-from routers.boards import router as boards_router
 from routers.concepts import router as concepts_router
+from routers.concepts_runtime import router as concepts_runtime_router
 from routers.docs_search import router as docs_router
 from routers.indexes import router as indexes_router
 from routers.markets import router as markets_router
@@ -76,7 +76,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(stocks_router)
-app.include_router(boards_router)
+app.include_router(concepts_runtime_router)
 app.include_router(concepts_router)
 app.include_router(indexes_router)
 app.include_router(markets_router)
