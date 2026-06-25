@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -1138,7 +1138,7 @@
       };
       const rows = groups.map((group) => {
         const members = (group.members || []).map((member) => `
-          <div>${escapeHtml(member.provider || "")} / ${escapeHtml(member.board_type || "")} / ${escapeHtml(member.board_code || "")} / ${escapeHtml(member.board_name || "")} / ${escapeHtml(aliasRangeText(member.start_date || "", member.end_date || ""))}</div>
+          <div>${escapeHtml(member.provider || "")} / ${escapeHtml(member.provider_concept_type || "")} / ${escapeHtml(member.provider_concept_code || "")} / ${escapeHtml(member.provider_concept_name || "")} / ${escapeHtml(aliasRangeText(member.start_date || "", member.end_date || ""))}</div>
         `).join("");
         return `
           <tr>
