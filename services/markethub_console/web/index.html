@@ -184,29 +184,17 @@
 
     .shell {
 
-      display: grid;
-
-      grid-template-columns: 280px 1fr;
-
       min-height: 100vh;
 
     }
 
-
-
-    .rail {
-
-      padding: 32px 24px;
-
-      border-right: 1px solid var(--line);
-
-      background: #ffffff;
-
+    .console-head {
+      margin-bottom: 18px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
     }
 
-
-
-    .brand small {
+    .console-head small {
 
       display: block;
 
@@ -224,7 +212,7 @@
 
 
 
-    .brand h1 {
+    .console-head h1 {
 
       margin: 0;
 
@@ -236,7 +224,7 @@
 
 
 
-    .brand p {
+    .console-head p {
 
       margin: 12px 0 0;
 
@@ -245,54 +233,7 @@
       line-height: 1.7;
 
       font-size: 14px;
-
-    }
-
-
-
-    .rail-nav {
-
-      margin-top: 28px;
-
-      padding-top: 20px;
-
-      border-top: 1px solid var(--line);
-
-    }
-
-
-
-    .rail-nav a {
-
-      display: block;
-
-      margin-bottom: 10px;
-
-      color: var(--text);
-
-      text-decoration: none;
-
-      font-size: 14px;
-
-    }
-
-
-
-    .hero-status {
-
-      margin-top: 28px;
-
-      padding-top: 18px;
-
-      border-top: 1px solid var(--line);
-
-      color: var(--muted);
-
-      font-size: 13px;
-
-      line-height: 1.7;
-
-      white-space: pre-wrap;
+      max-width: 54rem;
 
     }
 
@@ -308,56 +249,54 @@
 
 
 
-    .page-head {
-
-      display: flex;
-
-      align-items: end;
-
-      justify-content: space-between;
-
-      gap: 24px;
-
-      margin-bottom: 28px;
-
-      padding-bottom: 18px;
-
-      border-bottom: 1px solid var(--line);
-
-    }
-
-
-
-    .page-head h2 {
-
-      margin: 0;
-
-      font-size: 34px;
-
-    }
-
-
-
-    .page-head p {
-
-      margin: 8px 0 0;
-
-      color: var(--muted);
-
-      line-height: 1.7;
-
-      max-width: 54rem;
-
-    }
-
-
-
     .workspace {
 
       display: grid;
 
       gap: 30px;
 
+      padding-top: 22px;
+
+    }
+
+    .tab-strip {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      margin-top: 0;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+
+    .tab-strip button {
+      position: relative;
+      min-height: 42px;
+      padding: 0 18px;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      background: #eef1f4;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .tab-strip button.active {
+      top: 1px;
+      min-height: 46px;
+      background: #ffffff;
+      color: var(--text);
+      box-shadow: 0 -1px 0 #ffffff inset;
+    }
+
+    .tab-panel {
+      display: none;
+      min-width: 0;
+    }
+
+    .tab-panel.active {
+      display: grid;
+      gap: 30px;
     }
 
 
@@ -433,6 +372,34 @@
       background: var(--panel);
     }
 
+    .source-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .source-summary span {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+
+    .console-status {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+
     .package-row {
       display: grid;
       grid-template-columns: minmax(160px, 220px) minmax(280px, 1fr) 110px auto;
@@ -452,8 +419,36 @@
 
     .package-name {
 
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
       font-weight: 700;
 
+    }
+
+    .package-drag-handle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: #ffffff;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .package-drag-handle:active {
+      cursor: grabbing;
+    }
+
+    .package-row.dragging {
+      opacity: 0.58;
+    }
+
+    .package-row.drag-over {
+      border-top: 2px solid var(--accent);
     }
 
 
@@ -1132,26 +1127,13 @@
 
     @media (max-width: 1080px) {
 
-      .shell,
-
       .detail-grid,
       .info-grid,
       .timeout-summary,
       .timeout-provider-row,
-      .page-head,
       .package-row {
         grid-template-columns: 1fr;
         display: grid;
-      }
-
-
-
-      .rail {
-
-        border-right: 0;
-
-        border-bottom: 1px solid var(--line);
-
       }
 
     }
@@ -1164,46 +1146,26 @@
 
   <div class="shell">
 
-    <aside class="rail">
-
-      <div class="brand">
-
-        <small>MarketHub</small>
-
-        <h1>Console</h1>
-
-        <p>管理 source package、provider 选择和 capability 属性。Capability Matrix 中的编辑弹窗可配置 Merge Strategy、缓存策略和定时更新。</p>
-      </div>
-
-      <nav class="rail-nav">
-        <a href="#packages">Source Packages</a>
-        <a href="#warmups">Warmups</a>
-        <a href="#concept-alias">Concept Alias</a>
-        <a href="#policies">Capability Matrix</a>
-      </nav>
-      <div class="hero-status" id="summary">等待加载...</div>
-
-    </aside>
-
-
-
     <main>
 
-      <div class="page-head">
+      <div class="console-head">
+        <small>MarketHub</small>
+        <h1>Console</h1>
+        <p>管理 source package、provider 选择和 capability 属性。Capability Matrix 中的编辑弹窗可配置 Merge Strategy、缓存策略和定时更新。</p>
+        <div class="console-status" id="summary">等待加载...</div>
+      </div>
 
-        <div>
-
-          <h2>Runtime Sources</h2>
-
-          <p>导入、取消注册 source package，并通过矩阵明确每个 QuoteMux capability 调用哪些 provider。Merge Strategy、缓存策略和定时更新改为每行单独编辑。</p>
-        </div>
-
+      <div class="tab-strip" role="tablist" aria-label="管理后台页签">
+        <button class="active" type="button" role="tab" aria-selected="true" data-tab-target="source">Source Packages + Capability Matrix</button>
+        <button type="button" role="tab" aria-selected="false" data-tab-target="warmups">Warmups</button>
+        <button type="button" role="tab" aria-selected="false" data-tab-target="concept-alias">Concept Alias</button>
       </div>
 
 
 
       <div class="workspace">
 
+        <div class="tab-panel active" id="source-tab-panel" data-tab-panel="source">
         <section id="packages">
           <div class="section-head">
 
@@ -1220,41 +1182,8 @@
               <input class="hidden-file-input" id="directory-input" type="file" webkitdirectory directory multiple />
             </div>
           </div>
+          <div class="source-summary" id="source-summary"></div>
           <div class="package-list" id="package-list"></div>
-        </section>
-
-        <section id="warmups">
-          <div class="section-head">
-            <div>
-              <h3>Warmups</h3>
-              <p>手动选择 capability，创建后台预热任务，并查看进度和结果。</p>
-            </div>
-            <div class="toolbar">
-              <button class="button-accent" id="start-warmup">开始预热</button>
-            </div>
-          </div>
-          <div class="detail-grid">
-            <label class="field full">
-              <span class="field-label">Capabilities</span>
-              <select id="warmup-capabilities" multiple size="8"></select>
-            </label>
-          </div>
-          <div class="info-grid" id="warmup-summary-grid"></div>
-          <div class="matrix-wrap" id="warmup-items-wrap"></div>
-          <div class="matrix-wrap" id="warmup-history-wrap"></div>
-        </section>
-
-        <section id="concept-alias">
-          <div class="section-head">
-            <div>
-              <h3>Concept Alias</h3>
-              <p>查看当前题材概念板块自动关联出的内部 ID、规范名称和 provider 板块对应关系。</p>
-            </div>
-            <div class="toolbar">
-              <button class="button-accent" id="refresh-concept-alias">刷新关联表</button>
-            </div>
-          </div>
-          <div class="matrix-wrap" id="concept-alias-wrap"></div>
         </section>
 
         <section id="policies">
@@ -1276,6 +1205,45 @@
           <div class="matrix-wrap" id="matrix-wrap"></div>
 
         </section>
+        </div>
+
+        <div class="tab-panel" id="warmups-tab-panel" data-tab-panel="warmups">
+        <section id="warmups">
+          <div class="section-head">
+            <div>
+              <h3>Warmups</h3>
+              <p>手动选择 capability，创建后台预热任务，并查看进度和结果。</p>
+            </div>
+            <div class="toolbar">
+              <button class="button-accent" id="start-warmup">开始预热</button>
+            </div>
+          </div>
+          <div class="detail-grid">
+            <label class="field full">
+              <span class="field-label">Capabilities</span>
+              <select id="warmup-capabilities" multiple size="8"></select>
+            </label>
+          </div>
+          <div class="info-grid" id="warmup-summary-grid"></div>
+          <div class="matrix-wrap" id="warmup-items-wrap"></div>
+          <div class="matrix-wrap" id="warmup-history-wrap"></div>
+        </section>
+        </div>
+
+        <div class="tab-panel" id="concept-alias-tab-panel" data-tab-panel="concept-alias">
+        <section id="concept-alias">
+          <div class="section-head">
+            <div>
+              <h3>Concept Alias</h3>
+              <p>查看当前题材概念板块自动关联出的内部 ID、规范名称和 provider 板块对应关系。</p>
+            </div>
+            <div class="toolbar">
+              <button class="button-accent" id="refresh-concept-alias">刷新关联表</button>
+            </div>
+          </div>
+          <div class="matrix-wrap" id="concept-alias-wrap"></div>
+        </section>
+        </div>
 
       </div>
 
@@ -1433,41 +1401,38 @@
     </div>
   </div>
 
-  <div class="modal-root" id="api-key-editor" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="api-key-editor-title">
+  <div class="modal-root" id="source-config-editor" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="source-config-editor-title">
       <div class="modal-head">
         <div>
-          <h3 id="api-key-editor-title">API Key</h3>
-          <p id="api-key-editor-subtitle">写入 QuoteMux source instance 的 secret_values.api_key。</p>
+          <h3 id="source-config-editor-title">属性配置</h3>
+          <p id="source-config-editor-subtitle">写入 QuoteMux source instance 的 config_values 和 secret_values。</p>
         </div>
-        <button class="button-ghost button-small" id="close-api-key-editor-top">关闭</button>
+        <button class="button-ghost button-small" id="close-source-config-editor-top">关闭</button>
       </div>
       <div class="modal-body">
         <div class="info-grid">
           <div class="info-card">
             <strong>Package</strong>
-            <span id="api-key-package-id"></span>
+            <span id="source-config-package-id"></span>
           </div>
           <div class="info-card">
             <strong>Instance</strong>
-            <span id="api-key-instance-id"></span>
+            <span id="source-config-instance-id"></span>
           </div>
           <div class="info-card">
-            <strong>Secret Field</strong>
-            <span>api_key</span>
+            <strong>Config Fields</strong>
+            <span id="source-config-field-count"></span>
           </div>
           <div class="info-card">
             <strong>Scope</strong>
             <span>QuoteMux</span>
           </div>
         </div>
-        <label class="field full" style="margin-top: 16px;">
-          <span class="field-label">API Key</span>
-          <input id="api-key-input" type="text" autocomplete="off" />
-        </label>
+        <div class="detail-grid" id="source-config-fields" style="margin-top: 16px;"></div>
       </div>
       <div class="modal-foot">
-        <button class="button-accent" id="save-api-key">保存</button>
+        <button class="button-accent" id="save-source-config">保存</button>
       </div>
     </div>
   </div>
@@ -1505,16 +1470,20 @@
     const cacheCoverageMode = document.getElementById("cache-coverage-mode");
     const cacheKeyFields = document.getElementById("cache-key-fields");
     const cacheRequestScopeFields = document.getElementById("cache-request-scope-fields");
+    const sourceSummary = document.getElementById("source-summary");
     const warmupCapabilities = document.getElementById("warmup-capabilities");
     const warmupSummaryGrid = document.getElementById("warmup-summary-grid");
     const warmupItemsWrap = document.getElementById("warmup-items-wrap");
     const warmupHistoryWrap = document.getElementById("warmup-history-wrap");
     const conceptAliasWrap = document.getElementById("concept-alias-wrap");
-    const apiKeyEditor = document.getElementById("api-key-editor");
-    const apiKeyEditorSubtitle = document.getElementById("api-key-editor-subtitle");
-    const apiKeyPackageId = document.getElementById("api-key-package-id");
-    const apiKeyInstanceId = document.getElementById("api-key-instance-id");
-    const apiKeyInput = document.getElementById("api-key-input");
+    const sourceConfigEditor = document.getElementById("source-config-editor");
+    const sourceConfigEditorSubtitle = document.getElementById("source-config-editor-subtitle");
+    const sourceConfigPackageId = document.getElementById("source-config-package-id");
+    const sourceConfigInstanceId = document.getElementById("source-config-instance-id");
+    const sourceConfigFieldCount = document.getElementById("source-config-field-count");
+    const sourceConfigFields = document.getElementById("source-config-fields");
+    const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
+    const tabPanels = Array.from(document.querySelectorAll("[data-tab-panel]"));
     let adminApiBaseUrl = "";
     let matrixPayload = { packages: [], capabilities: [] };
     let sourceInstances = [];
@@ -1523,8 +1492,9 @@
     let activeCapturePolicies = [];
     let activeCapabilityId = "";
     let activeCapturePolicy = {};
-    let activeApiKeyPackageId = "";
-    let activeApiKeyInstanceId = "";
+    let activeSourceConfigPackageId = "";
+    let activeSourceConfigInstanceId = "";
+    let activeSourceConfigSecretFields = [];
     let rememberedTtlDays = String(DEFAULT_TTL_DAYS);
     let activeTtlDays = DEFAULT_TTL_DAYS;
     let activeWarmupTaskId = "";
@@ -1617,9 +1587,28 @@
       summary.textContent = text;
     }
 
+    function activateTab(tabName) {
+      tabButtons.forEach((button) => {
+        const active = button.dataset.tabTarget === tabName;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      tabPanels.forEach((panel) => {
+        panel.classList.toggle("active", panel.dataset.tabPanel === tabName);
+      });
+    }
+
+    function renderSourceSummary(packages, matrix) {
+      sourceSummary.innerHTML = [
+        ["packages", packages.length],
+        ["capabilities", (matrix.capabilities || []).length],
+        ["columns", (matrix.packages || []).length],
+      ].map(([label, value]) => `<span>${escapeHtml(label)} = ${escapeHtml(value)}</span>`).join("");
+    }
+
     function renderWarmupCapabilityOptions(capabilities) {
       warmupCapabilities.innerHTML = (capabilities || []).map((capability) => {
-        const capabilityId = capability.capability_id || "";
+        const capabilityId = typeof capability === "string" ? capability : capability.capability_id || "";
         return `<option value="${escapeHtml(capabilityId)}">${escapeHtml(capabilityId)}</option>`;
       }).join("");
     }
@@ -1766,6 +1755,35 @@
       }
     }
 
+    async function loadWarmupWorkspace() {
+      try {
+        warmupCapabilities.innerHTML = "";
+        warmupHistoryWrap.innerHTML = '<div class="empty-state">正在加载 warmup...</div>';
+        const [capabilities, warmups] = await Promise.all([
+          request("/api/admin/warmup-capabilities"),
+          request("/api/admin/warmups"),
+        ]);
+        renderWarmupCapabilityOptions(capabilities);
+        renderWarmupHistory(warmups);
+        if (warmups.length > 0) {
+          activeWarmupTaskId = warmups[0].task_id || "";
+          const activeTask = await request(`/api/admin/warmups/${encodeURIComponent(activeWarmupTaskId)}`);
+          renderWarmupSummary(activeTask);
+          renderWarmupItems(activeTask);
+          if (activeTask.status === "queued" || activeTask.status === "running") {
+            stopWarmupPolling();
+            warmupPollTimer = window.setTimeout(pollWarmupTask, 2000);
+          }
+        } else {
+          renderWarmupSummary(null);
+          renderWarmupItems({ items: [] });
+        }
+      } catch (error) {
+        warmupHistoryWrap.innerHTML = `<div class="empty-state">Warmups 加载失败：${escapeHtml(error.message)}</div>`;
+        setSummary(`Warmups 加载失败: ${error.message}`);
+      }
+    }
+
     async function startWarmup() {
       const capabilityIds = Array.from(warmupCapabilities.selectedOptions || []).map((option) => option.value).filter((value) => value !== "");
       if (capabilityIds.length === 0) {
@@ -1827,20 +1845,24 @@
       orderedPackageIds = sortPackagesByPriority(packages).map((item) => item.package_id || "").filter((packageId) => packageId !== "");
     }
 
-    function movePackageOrder(packageId, direction) {
-      const index = orderedPackageIds.indexOf(packageId);
-      const nextIndex = index + direction;
-      if (index < 0 || nextIndex < 0 || nextIndex >= orderedPackageIds.length) {
-        return;
-      }
-      const nextOrder = [...orderedPackageIds];
-      const current = nextOrder[index];
-      nextOrder[index] = nextOrder[nextIndex];
-      nextOrder[nextIndex] = current;
+    function setPackageOrder(nextOrder) {
       orderedPackageIds = nextOrder;
       renderPackages(matrixPayload.packages || []);
       renderMatrix(matrixPayload, activeCapturePolicies);
       setSummary("Source Packages 优先级有未保存的变更。");
+    }
+
+    function reorderPackage(packageId, targetPackageId) {
+      if (!packageId || !targetPackageId || packageId === targetPackageId) {
+        return;
+      }
+      const currentOrder = orderedPackageIds.filter((item) => item !== packageId);
+      const targetIndex = currentOrder.indexOf(targetPackageId);
+      if (targetIndex < 0) {
+        return;
+      }
+      currentOrder.splice(targetIndex, 0, packageId);
+      setPackageOrder(currentOrder);
     }
 
     function renderPackages(packages) {
@@ -1855,65 +1877,117 @@
         const healthStatus = item.health?.status || "unknown";
         const isHealthy = healthStatus === "ok";
         const sourceInstance = selectSourceInstance(item.package_id);
-        const apiKeyDisabled = sourceInstance === null;
-        const moveUpDisabled = index === 0 ? "disabled" : "";
-        const moveDownDisabled = index === orderedPackages.length - 1 ? "disabled" : "";
+        const configDisabled = sourceInstance === null;
         row.className = "package-row";
+        row.dataset.packageId = item.package_id || "";
         row.innerHTML = `
-          <div class="package-name"><span class="status-dot ${isHealthy ? "ok" : ""}"></span>${escapeHtml(item.display_name || item.package_id)}</div>
+          <div class="package-name"><span class="package-drag-handle" draggable="true" data-package-drag="${escapeHtml(item.package_id)}" title="拖动排序">☰</span><span class="status-dot ${isHealthy ? "ok" : ""}"></span> ${escapeHtml(item.display_name || item.package_id)}</div>
           <div class="package-desc">${escapeHtml(item.description || "")}</div>
           <div class="health"></div>
           <div class="package-actions">
-            <button class="button-ghost button-small" data-package-move="${escapeHtml(item.package_id)}" data-package-direction="-1" ${moveUpDisabled}>上移</button>
-            <button class="button-ghost button-small" data-package-move="${escapeHtml(item.package_id)}" data-package-direction="1" ${moveDownDisabled}>下移</button>
-            <button class="button-ghost button-small" data-package-api-key="${escapeHtml(item.package_id)}" ${apiKeyDisabled ? "disabled" : ""}>api key</button>
+            <button class="button-ghost button-small" data-package-config="${escapeHtml(item.package_id)}" ${configDisabled ? "disabled" : ""}>属性配置</button>
             <button class="button-danger button-small" data-package-delete="${escapeHtml(item.package_id)}">删除</button>
           </div>
         `;
         packageList.appendChild(row);
       });
-      packageList.querySelectorAll("[data-package-move]").forEach((button) => {
-        button.addEventListener("click", () => movePackageOrder(button.dataset.packageMove, Number.parseInt(button.dataset.packageDirection || "0", 10)));
+      packageList.querySelectorAll("[data-package-drag]").forEach((handle) => {
+        handle.addEventListener("dragstart", (event) => {
+          event.dataTransfer.setData("text/plain", handle.dataset.packageDrag || "");
+          event.dataTransfer.effectAllowed = "move";
+          handle.closest(".package-row")?.classList.add("dragging");
+        });
+        handle.addEventListener("dragend", () => {
+          packageList.querySelectorAll(".package-row").forEach((row) => row.classList.remove("dragging", "drag-over"));
+        });
       });
-      packageList.querySelectorAll("[data-package-api-key]").forEach((button) => {
-        button.addEventListener("click", () => openApiKeyEditor(button.dataset.packageApiKey));
+      packageList.querySelectorAll(".package-row").forEach((row) => {
+        row.addEventListener("dragover", (event) => {
+          if (!Array.from(event.dataTransfer.types || []).includes("text/plain")) {
+            return;
+          }
+          event.preventDefault();
+          row.classList.add("drag-over");
+        });
+        row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+        row.addEventListener("drop", (event) => {
+          event.preventDefault();
+          row.classList.remove("drag-over");
+          reorderPackage(event.dataTransfer.getData("text/plain"), row.dataset.packageId || "");
+        });
+      });
+      packageList.querySelectorAll("[data-package-config]").forEach((button) => {
+        button.addEventListener("click", () => openSourceConfigEditor(button.dataset.packageConfig));
       });
       packageList.querySelectorAll("[data-package-delete]").forEach((button) => {
         button.addEventListener("click", () => unregisterPackage(button.dataset.packageDelete));
       });
     }
 
-    async function openApiKeyEditor(packageId) {
+    async function openSourceConfigEditor(packageId) {
       const sourcePackage = (matrixPayload.packages || []).find((item) => item.package_id === packageId);
       const sourceInstance = selectSourceInstance(packageId);
       if (!sourcePackage || !sourceInstance) {
         setSummary(`找不到 ${packageId} 对应的 source instance。`);
         return;
       }
-      activeApiKeyPackageId = packageId;
-      activeApiKeyInstanceId = sourceInstance.instance_id || "";
-      apiKeyPackageId.textContent = sourcePackage.package_id || "";
-      apiKeyInstanceId.textContent = sourceInstance.instance_id || "";
-      apiKeyEditorSubtitle.textContent = `写入 ${sourcePackage.display_name || sourcePackage.package_id} 的 QuoteMux 配置。`;
-      apiKeyEditor.classList.add("open");
-      apiKeyEditor.setAttribute("aria-hidden", "false");
-      apiKeyInput.value = "";
+      activeSourceConfigPackageId = packageId;
+      activeSourceConfigInstanceId = sourceInstance.instance_id || "";
+      activeSourceConfigSecretFields = sourcePackage.secret_fields || [];
+      sourceConfigPackageId.textContent = sourcePackage.package_id || "";
+      sourceConfigInstanceId.textContent = sourceInstance.instance_id || "";
+      sourceConfigEditorSubtitle.textContent = `写入 ${sourcePackage.display_name || sourcePackage.package_id} 的 QuoteMux 配置。`;
+      sourceConfigFieldCount.textContent = `${(sourcePackage.config_schema || []).length} 个属性`;
+      sourceConfigFields.innerHTML = "";
+      sourceConfigEditor.classList.add("open");
+      sourceConfigEditor.setAttribute("aria-hidden", "false");
       try {
-        const payload = await request(`/api/admin/source-instances/${encodeURIComponent(activeApiKeyInstanceId)}/secrets/api_key`);
-        apiKeyInput.value = payload.secret_value || "";
+        const secretValues = {};
+        for (const fieldName of activeSourceConfigSecretFields) {
+          const payload = await request(`/api/admin/source-instances/${encodeURIComponent(activeSourceConfigInstanceId)}/secrets/${encodeURIComponent(fieldName)}`);
+          secretValues[fieldName] = payload.secret_value || "";
+        }
+        renderSourceConfigFields(sourcePackage, sourceInstance, secretValues);
       } catch (error) {
-        closeApiKeyEditor();
-        setSummary(`加载 API Key 失败: ${error.message}`);
+        closeSourceConfigEditor();
+        setSummary(`加载属性配置失败: ${error.message}`);
         return;
       }
-      apiKeyInput.focus();
+      const firstInput = sourceConfigFields.querySelector("input");
+      if (firstInput) {
+        firstInput.focus();
+      }
     }
 
-    function closeApiKeyEditor() {
-      activeApiKeyPackageId = "";
-      activeApiKeyInstanceId = "";
-      apiKeyEditor.classList.remove("open");
-      apiKeyEditor.setAttribute("aria-hidden", "true");
+    function renderSourceConfigFields(sourcePackage, sourceInstance, secretValues) {
+      const configSchema = sourcePackage.config_schema || [];
+      if (configSchema.length === 0) {
+        sourceConfigFields.innerHTML = '<div class="empty-state">当前 package 没有可配置属性。</div>';
+        return;
+      }
+      sourceConfigFields.innerHTML = configSchema.map((field) => {
+        const fieldName = field.name || "";
+        const isSecret = activeSourceConfigSecretFields.includes(fieldName);
+        const value = isSecret ? secretValues[fieldName] || "" : sourceInstance.config_values?.[fieldName] ?? field.default_value ?? "";
+        const title = field.title || fieldName;
+        const description = field.description || "";
+        return `
+          <label class="field full">
+            <span class="field-label">${escapeHtml(title)}</span>
+            <input data-source-config-field="${escapeHtml(fieldName)}" data-source-config-secret="${isSecret ? "1" : "0"}" type="${isSecret ? "password" : "text"}" value="${escapeHtml(value)}" autocomplete="off" />
+            ${description ? `<span class="muted-note">${escapeHtml(description)}</span>` : ""}
+          </label>
+        `;
+      }).join("");
+    }
+
+    function closeSourceConfigEditor() {
+      activeSourceConfigPackageId = "";
+      activeSourceConfigInstanceId = "";
+      activeSourceConfigSecretFields = [];
+      sourceConfigFields.innerHTML = "";
+      sourceConfigEditor.classList.remove("open");
+      sourceConfigEditor.setAttribute("aria-hidden", "true");
     }
 
 
@@ -2449,7 +2523,7 @@
         });
         closeCapabilityEditor();
 
-        await loadAll();
+        await loadSourceWorkspace();
 
         setSummary(`已保存 ${activeCapabilityId} 设置。`);
 
@@ -2463,63 +2537,58 @@
 
 
 
-    async function loadAll() {
+    function syncSourceInstances(instances) {
+      sourceInstances = instances;
+      sourceInstancesByPackageId = instances.reduce((map, instance) => {
+        const packageId = instance.package_id || "";
+        if (packageId === "") {
+          return map;
+        }
+        if (!map[packageId]) {
+          map[packageId] = [];
+        }
+        map[packageId].push(instance);
+        return map;
+      }, {});
+      Object.values(sourceInstancesByPackageId).forEach((items) => {
+        items.sort((left, right) => (left.priority - right.priority) || String(left.instance_id || "").localeCompare(String(right.instance_id || "")));
+      });
+    }
+
+    async function loadSourceWorkspace() {
       try {
-        const [packages, matrix, capturePolicies, warmups, instances] = await Promise.all([
+        packageList.innerHTML = '<div class="empty-state">正在加载 Source Packages...</div>';
+        matrixWrap.innerHTML = '<div class="empty-state">正在加载 Capability Matrix...</div>';
+        sourceSummary.innerHTML = '<span>正在加载 Source Packages...</span>';
+        const [packages, matrix, capturePolicies, instances] = await Promise.all([
           request("/api/admin/source-packages"),
           request("/api/admin/capability-matrix"),
           request("/api/admin/capture-policies"),
-          request("/api/admin/warmups"),
           request("/api/admin/source-instances"),
         ]);
-        sourceInstances = instances;
-        sourceInstancesByPackageId = instances.reduce((map, instance) => {
-          const packageId = instance.package_id || "";
-          if (packageId === "") {
-            return map;
-          }
-          if (!map[packageId]) {
-            map[packageId] = [];
-          }
-          map[packageId].push(instance);
-          return map;
-        }, {});
-        Object.values(sourceInstancesByPackageId).forEach((items) => {
-          items.sort((left, right) => (left.priority - right.priority) || String(left.instance_id || "").localeCompare(String(right.instance_id || "")));
-        });
+        syncSourceInstances(instances);
         syncOrderedPackageIds(packages);
         matrixPayload = matrix;
         renderPackages(matrix.packages || packages);
         renderMatrix(matrix, capturePolicies);
-        renderWarmupCapabilityOptions(matrix.capabilities || []);
-        renderWarmupHistory(warmups);
-        await loadConceptAliasGroups();
-        if (warmups.length > 0) {
-          activeWarmupTaskId = warmups[0].task_id || "";
-          const activeTask = await request(`/api/admin/warmups/${encodeURIComponent(activeWarmupTaskId)}`);
-          renderWarmupSummary(activeTask);
-          renderWarmupItems(activeTask);
-          if (activeTask.status === "queued" || activeTask.status === "running") {
-            stopWarmupPolling();
-            warmupPollTimer = window.setTimeout(pollWarmupTask, 2000);
-          }
-        } else {
-          renderWarmupSummary(null);
-          renderWarmupItems({ items: [] });
-        }
-        setSummary([
-          `packages = ${packages.length}`,
-          `capabilities = ${(matrix.capabilities || []).length}`,
-          `columns = ${(matrix.packages || []).length}`,
-
-        ].join("\n"));
+        renderSourceSummary(packages, matrix);
+        setSummary("Source Packages 已加载。");
 
       } catch (error) {
 
-        setSummary(`加载失败: ${error.message}`);
+        packageList.innerHTML = `<div class="empty-state">Source Packages 加载失败：${escapeHtml(error.message)}</div>`;
+        matrixWrap.innerHTML = `<div class="empty-state">Capability Matrix 加载失败：${escapeHtml(error.message)}</div>`;
+        sourceSummary.innerHTML = '<span>Source Packages 加载失败</span>';
+        setSummary(`Source Packages / Capability Matrix 加载失败: ${error.message}`);
 
       }
 
+    }
+
+    function loadConsoleWorkspaces() {
+      loadSourceWorkspace();
+      loadWarmupWorkspace();
+      loadConceptAliasGroups();
     }
 
 
@@ -2533,7 +2602,7 @@
 
         await request(`/api/admin/source-packages/${packageId}`, { method: "DELETE" });
 
-        await loadAll();
+        await loadSourceWorkspace();
 
       } catch (error) {
 
@@ -2552,52 +2621,58 @@
           method: "PUT",
           body: JSON.stringify({ package_ids: orderedPackageIds }),
         });
-        await loadAll();
+        await loadSourceWorkspace();
         setSummary("Source Packages 优先级已保存并发布。");
       } catch (error) {
         setSummary(`保存 Source Packages 优先级失败: ${error.message}`);
       }
     }
 
-    async function saveApiKey() {
-      if (activeApiKeyInstanceId === "" || activeApiKeyPackageId === "") {
+    async function saveSourceConfig() {
+      if (activeSourceConfigInstanceId === "" || activeSourceConfigPackageId === "") {
         return;
       }
-      const packageId = activeApiKeyPackageId;
-      const apiKey = apiKeyInput.value;
-      if (apiKey === "") {
-        setSummary("请输入 API Key。");
-        return;
-      }
-      const sourceInstance = (sourceInstances || []).find((item) => item.instance_id === activeApiKeyInstanceId);
+      const packageId = activeSourceConfigPackageId;
+      const sourceInstance = (sourceInstances || []).find((item) => item.instance_id === activeSourceConfigInstanceId);
       if (!sourceInstance) {
-        setSummary(`找不到 ${activeApiKeyInstanceId} 对应的 source instance。`);
+        setSummary(`找不到 ${activeSourceConfigInstanceId} 对应的 source instance。`);
         return;
       }
+      const configValues = { ...(sourceInstance.config_values || {}) };
+      const secretValues = { ...(sourceInstance.secret_values || {}) };
+      sourceConfigFields.querySelectorAll("[data-source-config-field]").forEach((input) => {
+        const fieldName = input.dataset.sourceConfigField || "";
+        if (fieldName === "") {
+          return;
+        }
+        if (input.dataset.sourceConfigSecret === "1") {
+          secretValues[fieldName] = input.value;
+          return;
+        }
+        configValues[fieldName] = input.value;
+      });
       try {
-        setSummary(`正在保存 ${packageId} API Key...`);
-        await request(`/api/admin/source-instances/${encodeURIComponent(activeApiKeyInstanceId)}`, {
+        setSummary(`正在保存 ${packageId} 属性配置...`);
+        await request(`/api/admin/source-instances/${encodeURIComponent(activeSourceConfigInstanceId)}`, {
           method: "PUT",
           body: JSON.stringify({
             ...sourceInstance,
-            secret_values: {
-              ...(sourceInstance.secret_values || {}),
-              api_key: apiKey,
-            },
+            config_values: configValues,
+            secret_values: secretValues,
           }),
         });
         await request("/api/admin/runtime-profiles/publish", {
           method: "POST",
           body: JSON.stringify({
-            display_name: `配置 ${packageId} api_key`,
-            note: `写入 ${packageId} source instance api_key`,
+            display_name: `配置 ${packageId} 属性`,
+            note: `写入 ${packageId} source instance 属性配置`,
           }),
         });
-        closeApiKeyEditor();
-        await loadAll();
-        setSummary(`已保存 ${packageId} API Key。`);
+        closeSourceConfigEditor();
+        await loadSourceWorkspace();
+        setSummary(`已保存 ${packageId} 属性配置。`);
       } catch (error) {
-        setSummary(`保存 API Key 失败: ${error.message}`);
+        setSummary(`保存属性配置失败: ${error.message}`);
       }
     }
 
@@ -2673,7 +2748,7 @@
           method: "POST",
           body: JSON.stringify({ files: payloadFiles }),
         });
-        await loadAll();
+        await loadSourceWorkspace();
       } catch (error) {
         setSummary(`导入目录失败: ${error.message}`);
       } finally {
@@ -2699,7 +2774,7 @@
         await request("/api/admin/source-packages/install-all", {
           method: "POST",
         });
-        await loadAll();
+        await loadSourceWorkspace();
         setSummary("全部 Packages 已安装或更新。\n矩阵和状态已刷新。");
       } catch (error) {
         setSummary(`安装全部 Packages 失败: ${error.message}`);
@@ -2736,7 +2811,7 @@
 
         });
 
-        await loadAll();
+        await loadSourceWorkspace();
 
       } catch (error) {
 
@@ -2754,8 +2829,11 @@
     document.getElementById("save-matrix").addEventListener("click", saveMatrix);
     document.getElementById("close-capability-editor-top").addEventListener("click", closeCapabilityEditor);
     document.getElementById("save-capability-settings").addEventListener("click", saveCapabilitySettings);
-    document.getElementById("close-api-key-editor-top").addEventListener("click", closeApiKeyEditor);
-    document.getElementById("save-api-key").addEventListener("click", saveApiKey);
+    document.getElementById("close-source-config-editor-top").addEventListener("click", closeSourceConfigEditor);
+    document.getElementById("save-source-config").addEventListener("click", saveSourceConfig);
+    tabButtons.forEach((button) => {
+      button.addEventListener("click", () => activateTab(button.dataset.tabTarget || "source"));
+    });
     cacheTtlDays.addEventListener("input", rememberTtlDays);
     cachePermanent.addEventListener("change", () => {
       saveManualPermanent();
@@ -2770,11 +2848,11 @@
         closeCapabilityEditor();
         return;
       }
-      if (event.key === "Escape" && apiKeyEditor.classList.contains("open")) {
-        closeApiKeyEditor();
+      if (event.key === "Escape" && sourceConfigEditor.classList.contains("open")) {
+        closeSourceConfigEditor();
       }
     });
-    document.addEventListener("DOMContentLoaded", loadAll);
+    document.addEventListener("DOMContentLoaded", loadConsoleWorkspaces);
 
   </script>
 

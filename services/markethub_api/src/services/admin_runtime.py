@@ -907,6 +907,10 @@ def list_source_instances() -> list[dict[str, object]]:
     return [_serialize_instance(item) for item in _runtime().list_source_instances()]
 
 
+def list_warmup_capabilities() -> list[str]:
+    return list(list_contract_names())
+
+
 def save_source_package_order(package_ids: tuple[str, ...], openapi_schema: dict[str, object] | None = None) -> dict[str, object]:
     ordered_package_ids = _validate_source_package_order(package_ids)
     packages = {item.package_id: item for item in _visible_manifests()}
