@@ -1,217 +1,432 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
+
 <html lang="zh-CN">
+
 <head>
+
   <meta charset="UTF-8" />
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
   <title>MarketHub Console</title>
+
   <style>
+
     :root {
+
       --bg: #f5f6f8;
+
       --panel: #ffffff;
+
       --panel-soft: #fafbfc;
+
       --line: #dde2e7;
+
       --text: #18212b;
+
       --muted: #64707d;
+
       --accent: #0b6f61;
+
       --accent-soft: rgba(11, 111, 97, 0.12);
+
       --danger: #b42318;
+
       --shadow: 0 18px 50px rgba(24, 33, 43, 0.08);
+
     }
+
+
 
     * {
+
       box-sizing: border-box;
+
     }
+
+
 
     body {
+
       margin: 0;
+
       min-height: 100vh;
+
       color: var(--text);
+
       font-family: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
+
       background: var(--bg);
+
     }
 
+
+
     input,
+
     textarea,
+
     select,
+
     button {
+
       font: inherit;
+
     }
 
+
+
     input,
+
     textarea,
+
     select {
+
       width: 100%;
+
       padding: 10px 12px;
+
       border: 1px solid var(--line);
+
       background: #ffffff;
+
       color: var(--text);
+
       outline: none;
+
     }
+
+
 
     textarea {
+
       min-height: 82px;
+
       resize: vertical;
+
     }
+
+
 
     input[readonly],
+
     textarea[readonly] {
+
       background: #f7f8fa;
+
       color: var(--muted);
+
     }
+
+
 
     button {
+
       border: 0;
+
       padding: 10px 14px;
+
       cursor: pointer;
+
       background: var(--text);
+
       color: #ffffff;
+
     }
+
+
 
     button:hover {
+
       opacity: 0.96;
+
     }
+
+
 
     .button-accent {
+
       background: var(--accent);
+
     }
+
+
 
     .button-ghost {
+
       background: transparent;
+
       color: var(--text);
+
       border: 1px solid var(--line);
+
     }
+
+
 
     .button-danger {
+
       background: var(--danger);
+
     }
+
+
 
     .button-small {
+
       padding: 8px 12px;
+
       font-size: 13px;
+
     }
+
+
 
     .shell {
+
       display: grid;
+
       grid-template-columns: 280px 1fr;
+
       min-height: 100vh;
+
     }
+
+
 
     .rail {
+
       padding: 32px 24px;
+
       border-right: 1px solid var(--line);
+
       background: #ffffff;
+
     }
+
+
 
     .brand small {
+
       display: block;
+
       margin-bottom: 8px;
+
       color: var(--muted);
+
       font-size: 12px;
+
       letter-spacing: 0.08em;
+
       text-transform: uppercase;
+
     }
+
+
 
     .brand h1 {
+
       margin: 0;
+
       font-size: 34px;
+
       line-height: 1;
+
     }
+
+
 
     .brand p {
+
       margin: 12px 0 0;
+
       color: var(--muted);
+
       line-height: 1.7;
+
       font-size: 14px;
+
     }
+
+
 
     .rail-nav {
+
       margin-top: 28px;
+
       padding-top: 20px;
+
       border-top: 1px solid var(--line);
+
     }
+
+
 
     .rail-nav a {
+
       display: block;
+
       margin-bottom: 10px;
+
       color: var(--text);
+
       text-decoration: none;
+
       font-size: 14px;
+
     }
+
+
 
     .hero-status {
+
       margin-top: 28px;
+
       padding-top: 18px;
+
       border-top: 1px solid var(--line);
+
       color: var(--muted);
+
       font-size: 13px;
+
       line-height: 1.7;
+
       white-space: pre-wrap;
+
     }
+
+
 
     main {
+
       padding: 30px 36px 48px;
+
       min-width: 0;
+
     }
+
+
 
     .page-head {
+
       display: flex;
+
       align-items: end;
+
       justify-content: space-between;
+
       gap: 24px;
+
       margin-bottom: 28px;
+
       padding-bottom: 18px;
+
       border-bottom: 1px solid var(--line);
+
     }
+
+
 
     .page-head h2 {
+
       margin: 0;
+
       font-size: 34px;
+
     }
+
+
 
     .page-head p {
+
       margin: 8px 0 0;
+
       color: var(--muted);
+
       line-height: 1.7;
+
       max-width: 54rem;
+
     }
+
+
 
     .workspace {
+
       display: grid;
+
       gap: 30px;
+
     }
+
+
 
     section {
+
       min-width: 0;
+
     }
+
+
 
     .section-head {
+
       display: flex;
+
       align-items: end;
+
       justify-content: space-between;
+
       gap: 18px;
+
       padding-bottom: 12px;
+
       border-bottom: 1px solid var(--line);
+
       margin-bottom: 16px;
+
     }
+
+
 
     .section-head h3 {
+
       margin: 0;
+
       font-size: 22px;
+
     }
+
+
 
     .section-head p {
+
       margin: 6px 0 0;
+
       color: var(--muted);
+
       font-size: 14px;
+
       line-height: 1.7;
+
     }
 
+
+
     .toolbar {
+
       display: flex;
+
       align-items: center;
+
       gap: 10px;
+
       flex-wrap: wrap;
+
     }
+
+
 
     .package-list {
       border-top: 1px solid var(--line);
@@ -234,85 +449,166 @@
       flex-wrap: wrap;
     }
 
+
     .package-name {
+
       font-weight: 700;
+
     }
+
+
 
     .package-desc {
+
       color: var(--muted);
+
       line-height: 1.6;
+
       font-size: 14px;
+
     }
+
+
 
     .health {
+
       display: inline-flex;
+
       align-items: center;
+
       gap: 8px;
+
       font-size: 13px;
+
       color: var(--muted);
+
     }
+
+
 
     .status-dot {
+
       width: 10px;
+
       height: 10px;
+
       border-radius: 999px;
+
       background: var(--danger);
+
       display: inline-block;
+
     }
+
+
 
     .status-dot.ok {
+
       background: #16803c;
+
     }
+
+
 
     .matrix-wrap {
+
       overflow: auto;
+
       border: 1px solid var(--line);
+
       background: var(--panel);
+
       max-height: calc(100vh - 260px);
+
     }
+
+
 
     .matrix {
+
       width: 100%;
+
       min-width: 100%;
+
       border-collapse: collapse;
+
       table-layout: fixed;
+
     }
+
+
 
     .matrix th,
+
     .matrix td {
+
       border-bottom: 1px solid var(--line);
+
       padding: 12px 14px;
+
       text-align: center;
+
       vertical-align: middle;
+
       font-size: 14px;
+
     }
+
+
 
     .matrix th {
+
       position: sticky;
+
       top: 0;
+
       z-index: 2;
+
       background: #ffffff;
+
       font-weight: 700;
+
     }
+
+
 
     .matrix th:first-child,
+
     .matrix td:first-child {
+
       position: sticky;
+
       left: 0;
+
       z-index: 1;
+
       background: #ffffff;
+
       text-align: left;
+
       width: 340px;
+
     }
+
+
 
     .matrix th:first-child {
+
       z-index: 3;
+
     }
 
+
+
     .matrix th:nth-child(2),
+
     .matrix td:nth-child(2) {
+
       width: 100px;
+
     }
+
+
 
     .matrix-provider {
       width: 116px;
@@ -340,6 +636,8 @@
       height: 20px;
       accent-color: var(--accent);
     }
+
+
 
     .matrix input[type="checkbox"]:disabled {
       cursor: not-allowed;
@@ -487,102 +785,200 @@
     }
 
     .empty-state {
+
       padding: 16px 0;
+
       color: var(--muted);
+
     }
+
+
 
     .hidden-file-input {
+
       display: none;
+
     }
+
+
 
     .modal-root {
+
       position: fixed;
+
       inset: 0;
+
       display: none;
+
       align-items: center;
+
       justify-content: center;
+
       padding: 24px;
+
       background: rgba(9, 14, 21, 0.46);
+
       z-index: 50;
+
     }
+
+
 
     .modal-root.open {
+
       display: flex;
+
     }
+
+
 
     .modal-card {
+
       width: min(920px, 100%);
+
       max-height: calc(100vh - 48px);
+
       overflow: auto;
+
       background: #ffffff;
+
       border: 1px solid var(--line);
+
       box-shadow: var(--shadow);
+
     }
+
+
 
     .modal-head,
-    .modal-foot {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
-      padding: 18px 22px;
-      border-bottom: 1px solid var(--line);
-    }
 
     .modal-foot {
-      border-top: 1px solid var(--line);
-      border-bottom: 0;
-      justify-content: flex-end;
+
+      display: flex;
+
+      align-items: center;
+
+      justify-content: space-between;
+
+      gap: 14px;
+
+      padding: 18px 22px;
+
+      border-bottom: 1px solid var(--line);
+
     }
+
+
+
+    .modal-foot {
+
+      border-top: 1px solid var(--line);
+
+      border-bottom: 0;
+
+      justify-content: flex-end;
+
+    }
+
+
 
     .modal-head h3 {
+
       margin: 0;
+
       font-size: 22px;
+
     }
+
+
 
     .modal-head p {
+
       margin: 6px 0 0;
+
       color: var(--muted);
+
       font-size: 14px;
+
       line-height: 1.6;
+
     }
+
+
 
     .modal-body {
+
       padding: 22px;
+
       display: grid;
+
       gap: 22px;
+
     }
+
+
 
     .detail-grid {
+
       display: grid;
+
       grid-template-columns: repeat(2, minmax(0, 1fr));
+
       gap: 14px 16px;
+
     }
+
+
 
     .field {
+
       display: grid;
+
       gap: 8px;
+
     }
+
+
 
     .field.full {
+
       grid-column: 1 / -1;
+
     }
+
+
 
     .field-label {
+
       color: var(--muted);
+
       font-size: 12px;
+
       letter-spacing: 0.05em;
+
       text-transform: uppercase;
+
     }
 
+
+
     .inline-check {
+
       display: inline-flex;
+
       align-items: center;
+
       gap: 10px;
+
       width: auto;
+
       font-size: 14px;
+
       color: var(--text);
+
     }
+
+
 
     .inline-check input {
       width: 18px;
@@ -677,36 +1073,67 @@
       background: var(--panel-soft);
     }
 
+
     .info-grid {
+
       display: grid;
+
       grid-template-columns: repeat(4, minmax(0, 1fr));
+
       gap: 12px;
+
     }
+
+
 
     .info-card {
+
       padding: 14px;
+
       border: 1px solid var(--line);
+
       background: var(--panel-soft);
+
     }
+
+
 
     .info-card strong {
+
       display: block;
+
       font-size: 12px;
+
       color: var(--muted);
+
       text-transform: uppercase;
+
       letter-spacing: 0.05em;
+
       margin-bottom: 8px;
+
     }
+
+
 
     .info-card span {
+
       display: block;
+
       line-height: 1.6;
+
       word-break: break-word;
+
       font-size: 14px;
+
     }
 
+
+
     @media (max-width: 1080px) {
+
       .shell,
+
       .detail-grid,
       .info-grid,
       .timeout-summary,
@@ -717,21 +1144,37 @@
         display: grid;
       }
 
+
+
       .rail {
+
         border-right: 0;
+
         border-bottom: 1px solid var(--line);
+
       }
+
     }
+
   </style>
+
 </head>
+
 <body>
+
   <div class="shell">
+
     <aside class="rail">
+
       <div class="brand">
+
         <small>MarketHub</small>
+
         <h1>Console</h1>
+
         <p>管理 source package、provider 选择和 capability 属性。Capability Matrix 中的编辑弹窗可配置 Merge Strategy、缓存策略和定时更新。</p>
       </div>
+
       <nav class="rail-nav">
         <a href="#packages">Source Packages</a>
         <a href="#warmups">Warmups</a>
@@ -739,21 +1182,35 @@
         <a href="#policies">Capability Matrix</a>
       </nav>
       <div class="hero-status" id="summary">等待加载...</div>
+
     </aside>
 
+
+
     <main>
+
       <div class="page-head">
+
         <div>
+
           <h2>Runtime Sources</h2>
+
           <p>导入、取消注册 source package，并通过矩阵明确每个 QuoteMux capability 调用哪些 provider。Merge Strategy、缓存策略和定时更新改为每行单独编辑。</p>
         </div>
+
       </div>
 
+
+
       <div class="workspace">
+
         <section id="packages">
           <div class="section-head">
+
             <div>
+
               <h3>Source Packages</h3>
+
               <p>查看当前已注册 package 的状态，列表顺序控制所有 capability 的 provider 优先级。</p>
             </div>
             <div class="toolbar">
@@ -804,55 +1261,102 @@
           <div class="section-head">
             <div>
               <h3>Capability Matrix</h3>
+
               <p>Provider 列从左到右按 Source Packages 优先级展示。Merge Strategy、缓存和定时更新在编辑弹窗中按 capability 单独保存。</p>
             </div>
+
             <div class="toolbar">
+
               <button class="button-accent" id="save-matrix">保存 Provider 选择</button>
+
             </div>
+
           </div>
+
           <div class="matrix-wrap" id="matrix-wrap"></div>
+
         </section>
+
       </div>
+
     </main>
+
   </div>
+
+
 
   <div class="modal-root" id="capability-editor" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="capability-editor-title">
+
       <div class="modal-head">
+
         <div>
+
           <h3 id="capability-editor-title">Capability Settings</h3>
+
           <p id="capability-editor-subtitle">配置 Merge Strategy、缓存策略和定时更新。</p>
         </div>
+
         <button class="button-ghost button-small" id="close-capability-editor-top">关闭</button>
+
       </div>
+
       <div class="modal-body">
+
         <div class="info-grid">
+
           <div class="info-card">
+
             <strong>Capability</strong>
+
             <span id="capability-meta-id"></span>
+
           </div>
+
           <div class="info-card">
+
             <strong>Result Shape</strong>
+
             <span id="capability-meta-shape"></span>
+
           </div>
+
           <div class="info-card">
+
             <strong>Stage Namespace</strong>
+
             <span id="capability-meta-stage"></span>
+
           </div>
+
           <div class="info-card">
+
             <strong>Coverage Mode</strong>
+
             <span id="capability-meta-coverage"></span>
+
           </div>
+
         </div>
 
+
+
         <div class="detail-grid">
+
           <label class="field full">
+
             <span class="field-label">API Paths</span>
+
             <textarea id="capability-api-paths" readonly></textarea>
+
           </label>
+
           <label class="field full">
+
             <span class="field-label">Merge Strategy</span>
+
             <select id="capability-merge-strategy"></select>
+
           </label>
           <div class="field">
             <span class="field-label">TTL 缓存（天）</span>
@@ -895,19 +1399,33 @@
             <span class="field-label">Time Field</span>
             <input id="cache-time-field" readonly />
           </label>
+
           <label class="field">
+
             <span class="field-label">Coverage Mode</span>
+
             <input id="cache-coverage-mode" readonly />
+
           </label>
+
           <label class="field full">
+
             <span class="field-label">Key Fields</span>
+
             <input id="cache-key-fields" readonly />
+
           </label>
+
           <label class="field full">
+
             <span class="field-label">Request Scope Fields</span>
+
             <input id="cache-request-scope-fields" readonly />
+
           </label>
+
         </div>
+
       </div>
       <div class="modal-foot">
         <button class="button-accent" id="save-capability-settings">保存</button>
@@ -964,9 +1482,13 @@
     const directoryInput = document.getElementById("directory-input");
     const capabilityEditor = document.getElementById("capability-editor");
     const capabilityEditorSubtitle = document.getElementById("capability-editor-subtitle");
+
     const capabilityMetaId = document.getElementById("capability-meta-id");
+
     const capabilityMetaShape = document.getElementById("capability-meta-shape");
+
     const capabilityMetaStage = document.getElementById("capability-meta-stage");
+
     const capabilityMetaCoverage = document.getElementById("capability-meta-coverage");
     const capabilityApiPaths = document.getElementById("capability-api-paths");
     const capabilityMergeStrategy = document.getElementById("capability-merge-strategy");
@@ -1008,46 +1530,88 @@
     let activeWarmupTaskId = "";
     let warmupPollTimer = 0;
 
+
     async function loadConsoleConfig() {
+
       const response = await fetch("/api/console/config");
+
       if (!response.ok) {
+
         throw new Error("Console 配置加载失败");
+
       }
+
       const payload = await response.json();
+
       adminApiBaseUrl = payload.admin_api_base_url || "";
+
     }
+
+
 
     function authHeaders() {
+
       return {
+
         "Content-Type": "application/json",
+
       };
+
     }
+
+
 
     async function request(path, options = {}) {
+
       if (adminApiBaseUrl === "") {
+
         await loadConsoleConfig();
+
       }
+
       const response = await fetch(`${adminApiBaseUrl}${path}`, {
+
         ...options,
+
         headers: {
+
           ...authHeaders(),
+
           ...(options.headers || {}),
+
         },
+
       });
+
       if (!response.ok) {
+
         const payload = await response.json().catch(() => ({}));
+
         throw new Error(payload.message || payload.detail || response.statusText);
+
       }
+
       return response.json();
+
     }
 
+
+
     function escapeHtml(value) {
+
       return String(value)
+
         .replace(/&/g, "&amp;")
+
         .replace(/</g, "&lt;")
+
         .replace(/>/g, "&gt;")
+
         .replace(/"/g, "&quot;");
+
     }
+
+
 
     function setSummary(text) {
       summary.textContent = text;
@@ -1134,7 +1698,7 @@
         if (!startDate && !endDate) {
           return "";
         }
-        return `${startDate || ""} ~ ${endDate || "至今"}`;
+        return `${startDate || "--"} ~ ${endDate || "至今"}`;
       };
       const rows = groups.map((group) => {
         const members = (group.members || []).map((member) => `
@@ -1224,6 +1788,7 @@
         setSummary(`创建 warmup 任务失败: ${error.message}`);
       }
     }
+
 
     function selectSourceInstance(packageId) {
       const instances = sourceInstancesByPackageId[packageId] || [];
@@ -1350,6 +1915,7 @@
       apiKeyEditor.classList.remove("open");
       apiKeyEditor.setAttribute("aria-hidden", "true");
     }
+
 
     function capturePolicyMap(capturePolicies) {
       const policyMap = {};
@@ -1495,24 +2061,43 @@
       const tableMinWidth = 468 + packages.length * 116;
       const headerCells = packages.map((item) => renderSourceHeader(item)).join("");
       const rows = capabilities.map((capability) => {
+
         const packageState = Object.fromEntries((capability.packages || []).map((item) => [item.package_id, item]));
+
         const cells = packages.map((sourcePackage) => {
+
           const state = packageState[sourcePackage.package_id] || { supported: false, enabled: false };
+
           const checked = state.enabled ? "checked" : "";
+
           const disabled = state.supported && capability.policy_managed ? "" : "disabled";
+
           return `
+
             <td class="matrix-provider">
+
               <input
+
                 type="checkbox"
+
                 data-capability-id="${escapeHtml(capability.capability_id)}"
+
                 data-package-id="${escapeHtml(sourcePackage.package_id)}"
+
                 data-policy-managed="${capability.policy_managed ? "true" : "false"}"
+
                 ${checked}
+
                 ${disabled}
+
               />
+
             </td>
+
           `;
+
         }).join("");
+
         const apiPaths = renderApiDocLinks(capability);
         const badges = renderCapabilityBadges(capability, policiesByCapability[capability.capability_id]);
         return `
@@ -1527,12 +2112,19 @@
               </div>
             </td>
             <td>
+
               <button class="button-ghost button-small" data-capability-edit="${escapeHtml(capability.capability_id)}">编辑</button>
+
             </td>
+
             ${cells}
+
           </tr>
+
         `;
+
       }).join("");
+
       matrixWrap.innerHTML = `
         <table class="matrix" style="min-width: ${tableMinWidth}px">
           <thead><tr><th>Capability / API</th><th>Edit</th>${headerCells}</tr></thead>
@@ -1550,9 +2142,14 @@
         toggle.addEventListener("change", () => setMatrixSourceSelection(toggle.dataset.sourceToggle, toggle.checked));
       });
       matrixWrap.querySelectorAll("[data-capability-edit]").forEach((button) => {
+
         button.addEventListener("click", () => openCapabilityEditor(button.dataset.capabilityEdit));
+
       });
+
     }
+
+
 
     function fillCapabilityEditor(payload) {
       activeCapabilityId = payload.capability_id || "";
@@ -1561,10 +2158,15 @@
       activeTtlDays = ttlDays;
       capabilityMetaId.textContent = payload.capability_id || "";
       capabilityMetaShape.textContent = payload.result_shape || "";
+
       capabilityMetaStage.textContent = (payload.stage_namespace || []).join(" / ");
+
       capabilityMetaCoverage.textContent = cachePolicy.coverage_mode || "";
+
       capabilityEditorSubtitle.textContent = `编辑 ${payload.capability_id || ""} 的能力属性`;
+
       capabilityApiPaths.value = (payload.api_paths || []).join("\n");
+
       capabilityMergeStrategy.innerHTML = (payload.allowed_merge_strategies || []).map((strategy) => {
         const selected = strategy === payload.merge_strategy ? "selected" : "";
         return `<option value="${escapeHtml(strategy)}" ${selected}>${escapeHtml(strategy)}</option>`;
@@ -1777,6 +2379,7 @@
       return { enabled: false, cadence: activeCapturePolicy.cadence || "daily", weekday: null, month: null, month_day: null };
     }
 
+
     async function openCapabilityEditor(capabilityId) {
       try {
         setSummary(`正在加载 ${capabilityId} 设置...`);
@@ -1791,23 +2394,37 @@
         fillCapturePolicyEditor(capturePolicy);
         capabilityEditor.classList.add("open");
         capabilityEditor.setAttribute("aria-hidden", "false");
+
         setSummary(`已打开 ${capabilityId} 设置。`);
+
       } catch (error) {
+
         setSummary(`加载 capability 设置失败: ${error.message}`);
+
       }
+
     }
 
+
+
     function closeCapabilityEditor() {
+
       capabilityEditor.classList.remove("open");
       capabilityEditor.setAttribute("aria-hidden", "true");
       activeCapabilityId = "";
       activeCapturePolicy = {};
     }
 
+
+
     async function saveCapabilitySettings() {
+
       if (activeCapabilityId === "") {
+
         return;
+
       }
+
       try {
         setSummary(`正在保存 ${activeCapabilityId} 设置...`);
         saveManualPermanent();
@@ -1831,12 +2448,20 @@
           }),
         });
         closeCapabilityEditor();
+
         await loadAll();
+
         setSummary(`已保存 ${activeCapabilityId} 设置。`);
+
       } catch (error) {
+
         setSummary(`保存 capability 设置失败: ${error.message}`);
+
       }
+
     }
+
+
 
     async function loadAll() {
       try {
@@ -1886,11 +2511,18 @@
           `packages = ${packages.length}`,
           `capabilities = ${(matrix.capabilities || []).length}`,
           `columns = ${(matrix.packages || []).length}`,
+
         ].join("\n"));
+
       } catch (error) {
+
         setSummary(`加载失败: ${error.message}`);
+
       }
+
     }
+
+
 
     async function unregisterPackage(packageId) {
       if (!confirm(`确认取消注册 ${packageId}？`)) {
@@ -1898,9 +2530,13 @@
       }
       try {
         setSummary(`正在取消注册 ${packageId}...`);
+
         await request(`/api/admin/source-packages/${packageId}`, { method: "DELETE" });
+
         await loadAll();
+
       } catch (error) {
+
         setSummary(`取消注册失败: ${error.message}`);
       }
     }
@@ -1964,6 +2600,7 @@
         setSummary(`保存 API Key 失败: ${error.message}`);
       }
     }
+
 
     function shouldIgnorePackagePath(pathText) {
       const parts = pathText.replaceAll("\\", "/").split("/");
@@ -2069,26 +2706,44 @@
       }
     }
 
+
     async function saveMatrix() {
       try {
         const checkedInputs = Array.from(matrixWrap.querySelectorAll("input[data-capability-id][data-package-id]:checked"));
         const capabilities = (matrixPayload.capabilities || []).filter((capability) => capability.policy_managed).map((capability) => {
+
           const enabledPackageIds = checkedInputs
+
             .filter((checkbox) => checkbox.dataset.capabilityId === capability.capability_id)
+
             .map((checkbox) => checkbox.dataset.packageId);
+
           return {
+
             capability_id: capability.capability_id,
+
             enabled_package_ids: enabledPackageIds,
+
           };
+
         });
+
         await request("/api/admin/capability-matrix", {
+
           method: "PUT",
+
           body: JSON.stringify({ contracts: capabilities }),
+
         });
+
         await loadAll();
+
       } catch (error) {
+
         setSummary(`保存 provider 选择失败: ${error.message}`);
+
       }
+
     }
 
     document.getElementById("save-package-order").addEventListener("click", savePackageOrder);
@@ -2120,6 +2775,10 @@
       }
     });
     document.addEventListener("DOMContentLoaded", loadAll);
+
   </script>
+
 </body>
+
 </html>
+

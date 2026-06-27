@@ -198,8 +198,56 @@ checks = [
         "path": "/api/concepts/quotes/daily-snapshot",
         "params": {"trade_date": trade_date, "limit": 5000},
         "minimum": env_int("MARKETHUB_MIN_CONCEPT_DAILY_ROWS", 200),
-        "blocking": False,
+        "blocking": True,
         "capabilities": ["concepts.quotes.daily"],
+    },
+    {
+        "name": "index_quotes",
+        "path": "/api/indexes/quotes",
+        "params": {"index_codes": "000001,399001,399006,000300,000905,000852,899050", "trade_date": trade_date, "limit": 1000},
+        "minimum": env_int("MARKETHUB_MIN_INDEX_QUOTE_ROWS", 1),
+        "blocking": True,
+        "capabilities": ["indexes.quotes.daily"],
+    },
+    {
+        "name": "main_capital_flow",
+        "path": "/api/markets/indicators/main-capital-flow",
+        "params": {"trade_date": trade_date},
+        "minimum": env_int("MARKETHUB_MIN_MAIN_CAPITAL_FLOW_ROWS", 1),
+        "blocking": True,
+        "capabilities": ["markets.indicators.main_capital_flow"],
+    },
+    {
+        "name": "connect_capital_flow",
+        "path": "/api/markets/connect/capital-flow",
+        "params": {"trade_date": trade_date},
+        "minimum": env_int("MARKETHUB_MIN_CONNECT_CAPITAL_FLOW_ROWS", 1),
+        "blocking": False,
+        "capabilities": ["markets.connect.capital_flow"],
+    },
+    {
+        "name": "connect_active_top10",
+        "path": "/api/markets/connect/active-top10",
+        "params": {"trade_date": trade_date, "limit": 1000},
+        "minimum": env_int("MARKETHUB_MIN_CONNECT_ACTIVE_TOP10_ROWS", 1),
+        "blocking": False,
+        "capabilities": ["markets.connect.active_top10"],
+    },
+    {
+        "name": "dragon_tiger",
+        "path": "/api/markets/participants/dragon-tiger",
+        "params": {"trade_date": trade_date, "limit": 1000},
+        "minimum": env_int("MARKETHUB_MIN_DRAGON_TIGER_ROWS", 1),
+        "blocking": False,
+        "capabilities": ["markets.participants.dragon_tiger"],
+    },
+    {
+        "name": "dragon_tiger_institutions",
+        "path": "/api/markets/participants/dragon-tiger/institutions",
+        "params": {"trade_date": trade_date, "limit": 1000},
+        "minimum": env_int("MARKETHUB_MIN_DRAGON_TIGER_INSTITUTION_ROWS", 1),
+        "blocking": False,
+        "capabilities": ["markets.participants.dragon_tiger.institutions"],
     },
     {
         "name": "c231_members",
@@ -221,9 +269,17 @@ checks = [
         "name": "open_auctions",
         "path": "/api/markets/trading/open-auctions",
         "params": {"trade_date": trade_date, "limit": 1000},
-        "minimum": env_int("MARKETHUB_MIN_OPEN_AUCTION_ROWS", 0),
+        "minimum": env_int("MARKETHUB_MIN_OPEN_AUCTION_ROWS", 1),
         "blocking": False,
         "capabilities": ["markets.trading.open_auctions"],
+    },
+    {
+        "name": "limit_order_amount",
+        "path": "/api/stocks/signals/limit-order-amount",
+        "params": {"trade_date": trade_date},
+        "minimum": env_int("MARKETHUB_MIN_LIMIT_ORDER_AMOUNT_ROWS", 1),
+        "blocking": False,
+        "capabilities": ["stocks.signals.limit_order_amount"],
     },
     {
         "name": "news_events",
@@ -239,6 +295,7 @@ results: list[dict[str, object]] = []
 failures: list[str] = []
 failed_capabilities: list[str] = []
 warnings: list[str] = []
+warning_capabilities: list[str] = []
 for check in checks:
     payload = fetch_json(base_url, str(check["path"]), dict(check["params"]))
     count = item_count(payload)
@@ -252,8 +309,11 @@ for check in checks:
         failed_capabilities.extend(str(item) for item in check["capabilities"])
     elif not ok:
         warnings.append(f"{check['name']} count={count} minimum={minimum}")
+        warning_capabilities.extend(str(item) for item in check["capabilities"])
 
 deduped_capabilities = list(dict.fromkeys(failed_capabilities))
+deduped_warning_capabilities = list(dict.fromkeys(warning_capabilities))
+refresh_capabilities = list(dict.fromkeys([*failed_capabilities, *warning_capabilities]))
 with open(validation_path, "w", encoding="utf-8") as file:
     json.dump(
         {
@@ -261,6 +321,8 @@ with open(validation_path, "w", encoding="utf-8") as file:
             "results": results,
             "failures": failures,
             "failed_capabilities": deduped_capabilities,
+            "warning_capabilities": deduped_warning_capabilities,
+            "refresh_capabilities": refresh_capabilities,
             "warnings": warnings,
         },
         file,
@@ -284,7 +346,7 @@ import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-for capability_id in payload.get("failed_capabilities", []):
+for capability_id in payload.get("refresh_capabilities", payload.get("failed_capabilities", [])):
     print(str(capability_id))
 PY
 }
@@ -343,6 +405,33 @@ PY
         if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "concepts.quotes.daily" ]; then
             log "后处理：按校验日期精确补题材概念日快照 $trade_date"
             curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/concepts/quotes/daily-snapshot?trade_date=$compact_trade_date&limit=5000" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "indexes.quotes.daily" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/indexes/quotes?index_codes=000001,399001,399006,000300,000905,000852,899050&trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.indicators.main_capital_flow" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/indicators/main-capital-flow?trade_date=$trade_date" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.connect.capital_flow" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/connect/capital-flow?trade_date=$trade_date" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.connect.active_top10" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/connect/active-top10?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.dragon_tiger" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/dragon-tiger?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.dragon_tiger.institutions" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/dragon-tiger/institutions?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.hot_money.details" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/hot-money/details?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.trading.open_auctions" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/trading/open-auctions?trade_date=$trade_date" -o "$force_result_path.targeted.json"
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "stocks.signals.limit_order_amount" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" -X POST "$MARKETHUB_BASE_URL/api/admin/capture/limit-order-amount/run-today?trade_date=$trade_date" -o "$force_result_path.targeted.json"
         fi
     done <<< "$capabilities"
 }
