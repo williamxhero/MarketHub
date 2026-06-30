@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# 全局数据更新入口：Task Center 可以多次调用；脚本按覆盖结果决定是否需要补跑。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_ROOT="${MARKETHUB_RUNTIME_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 ENV_PATH="${MARKETHUB_ENV_PATH:-$RUNTIME_ROOT/env/markethub.env}"
@@ -17,13 +16,19 @@ fi
 MARKETHUB_HOST="${MARKETHUB_HOST:-127.0.0.1}"
 MARKETHUB_PORT="${MARKETHUB_PORT:-8803}"
 MARKETHUB_BASE_URL="${MARKETHUB_BASE_URL:-http://$MARKETHUB_HOST:$MARKETHUB_PORT}"
+WORKSPACE_ROOT="${MARKETHUB_PROJECT_ROOT:-$(cd "$RUNTIME_ROOT/.." && pwd)}"
+if [ ! -d "$WORKSPACE_ROOT/QuoteMux" ] && [ -d "/data/MarketHub2/current/QuoteMux" ]; then
+    WORKSPACE_ROOT="/data/MarketHub2/current"
+fi
+MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$WORKSPACE_ROOT/.venv/bin/python}"
+if [ ! -x "$MARKETHUB_PYTHON" ] && [ -x "/data/MarketHub2/current/.venv/bin/python" ]; then
+    MARKETHUB_PYTHON="/data/MarketHub2/current/.venv/bin/python"
+fi
 RUN_ROOT="${MARKETHUB_DATA_UPDATE_ROOT:-$RUNTIME_ROOT/data-update}"
 LOG_ROOT="${MARKETHUB_LOG_ROOT:-$RUNTIME_ROOT/logs}"
 LOCK_PATH="$RUN_ROOT/global-data-update.lock"
 RUN_ID="$(date '+%Y%m%d_%H%M%S')"
-RUN_STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S')"
 RESULT_DIR="$RUN_ROOT/results"
-RESULT_PATH="$RESULT_DIR/$RUN_ID.json"
 VALIDATION_PATH="$RESULT_DIR/$RUN_ID.validation.json"
 LOG_PATH="$LOG_ROOT/global-data-update.log"
 DB_HOST="${MARKETHUB_DB_HOST:-127.0.0.1}"
@@ -32,8 +37,11 @@ DB_NAME="${MARKETHUB_DB_NAME:-markethub_dev}"
 DB_USER="${MARKETHUB_DB_USER:-markethub}"
 DB_PASSWORD="${MARKETHUB_DB_PASSWORD:-markethub_dev_password}"
 CAPTURE_WAIT_SECONDS="${MARKETHUB_CAPTURE_WAIT_SECONDS:-21600}"
-CAPTURE_POLL_SECONDS="${MARKETHUB_CAPTURE_POLL_SECONDS:-60}"
-CAPTURE_START_GRACE_SECONDS="${MARKETHUB_CAPTURE_START_GRACE_SECONDS:-120}"
+CONCEPT_BACKFILL_WINDOW_COUNT="${MARKETHUB_CONCEPT_BACKFILL_WINDOW_COUNT:-7}"
+CONCEPT_BACKFILL_SCRIPT="${MARKETHUB_CONCEPT_BACKFILL_SCRIPT:-$WORKSPACE_ROOT/MarketHub/scripts/backfill_concept_runtime_refs.py}"
+if [ ! -f "$CONCEPT_BACKFILL_SCRIPT" ] && [ -f "/data/MarketHub2/current/MarketHub/scripts/backfill_concept_runtime_refs.py" ]; then
+    CONCEPT_BACKFILL_SCRIPT="/data/MarketHub2/current/MarketHub/scripts/backfill_concept_runtime_refs.py"
+fi
 
 log() {
     printf '[%s] %s\n' "$(date '+%F %T')" "$1"
@@ -43,11 +51,117 @@ psql_scalar() {
     PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -A -c "$1"
 }
 
+concept_fact_ref_missing() {
+    "$MARKETHUB_PYTHON" - "$MARKETHUB_BASE_URL" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from urllib.request import urlopen
+
+base_url = sys.argv[1]
+with urlopen(f"{base_url}/api/admin/runtime-health", timeout=60) as response:
+    payload = json.loads(response.read().decode("utf-8"))
+objects = payload.get("fact_ref_availability", {}).get("objects", [])
+required = {"ref.concept", "ref.concept_stock_membership", "fact.concept_daily_1d"}
+missing = {
+    str(item.get("name", ""))
+    for item in objects
+    if str(item.get("name", "")) in required and item.get("exists") is not True
+}
+print("\n".join(sorted(missing)))
+PY
+}
+
+repair_concept_fact_ref_if_needed() {
+    local missing_objects
+    missing_objects="$(concept_fact_ref_missing)"
+    if [ "$missing_objects" = "" ]; then
+        return 0
+    fi
+    log "预处理：检测到概念本地表缺失，先执行自愈回填"
+    printf '%s\n' "$missing_objects" | while IFS= read -r line; do
+        [ "$line" != "" ] && log "缺失对象：$line"
+    done
+    "$MARKETHUB_PYTHON" "$CONCEPT_BACKFILL_SCRIPT" --window-count "$CONCEPT_BACKFILL_WINDOW_COUNT"
+}
+
+previous_trading_day() {
+    "$MARKETHUB_PYTHON" - "$MARKETHUB_BASE_URL" <<'PY'
+from __future__ import annotations
+
+from datetime import datetime
+import json
+import sys
+from urllib.request import urlopen
+from zoneinfo import ZoneInfo
+
+base_url = sys.argv[1]
+today_text = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+with urlopen(f"{base_url}/api/markets/calendar/trading/previous?date={today_text}&count=1", timeout=60) as response:
+    payload = json.loads(response.read().decode("utf-8"))
+if not isinstance(payload, list) or payload == []:
+    print("")
+else:
+    print(str(payload[0].get("trade_date", "")))
+PY
+}
+
+local_c231_membership_count() {
+    local trade_date="$1"
+    psql_scalar "
+        with target_rows as (
+            select m.concept_id, m.stock_market, m.stock_code, m.valid_from, m.valid_to
+            from ref.concept_stock_membership m
+            where m.concept_id = 'C231'
+              and m.valid_from <= date '$trade_date'
+              and (m.valid_to is null or m.valid_to >= date '$trade_date')
+        ),
+        fallback_date as (
+            select max(m.valid_from) as valid_from
+            from ref.concept_stock_membership m
+            where m.concept_id = 'C231'
+              and m.valid_from <= date '$trade_date'
+        ),
+        fallback_rows as (
+            select m.concept_id, m.stock_market, m.stock_code, m.valid_from, m.valid_to
+            from ref.concept_stock_membership m
+            join fallback_date latest on latest.valid_from = m.valid_from
+            where m.concept_id = 'C231'
+              and not exists (select 1 from target_rows)
+        )
+        select count(*)
+        from (
+            select * from target_rows
+            union all
+            select * from fallback_rows
+        ) rows
+    "
+}
+
+repair_c231_membership_if_needed() {
+    local trade_date
+    local row_count
+    trade_date="$(previous_trading_day)"
+    if [ "$trade_date" = "" ]; then
+        log "预处理：无法确定上一交易日，跳过 C231 本地成分检查"
+        return 0
+    fi
+    row_count="$(local_c231_membership_count "$trade_date" | tr -d '[:space:]')"
+    if [ "$row_count" != "0" ]; then
+        return 0
+    fi
+    log "预处理：C231 本地成分缺失，执行定点回填 trade_date=$trade_date"
+    "$MARKETHUB_PYTHON" "$CONCEPT_BACKFILL_SCRIPT" --window-count "$CONCEPT_BACKFILL_WINDOW_COUNT" --concept-id C231
+}
+
 preprocess() {
     log "预处理：准备目录并检查 MarketHub"
     mkdir -p "$RESULT_DIR" "$LOG_ROOT"
     curl --fail --silent --show-error --connect-timeout 10 --max-time 30 "$MARKETHUB_BASE_URL/api/health" >/dev/null
     curl --fail --silent --show-error --connect-timeout 10 --max-time 60 "$MARKETHUB_BASE_URL/api/admin/capture-policies" >/dev/null
+    repair_concept_fact_ref_if_needed
+    repair_c231_membership_if_needed
 
     active_runs="$(psql_scalar "select count(*) from capability_capture_runs where status = 'running'")"
     if [ "$active_runs" != "0" ]; then
@@ -56,76 +170,12 @@ preprocess() {
     fi
 }
 
-submit_due_capture() {
-    log "核心执行：提交到期 capability 数据更新"
-    curl --fail --silent --show-error --connect-timeout 10 --max-time 60 -X POST "$MARKETHUB_BASE_URL/api/admin/capture/run-due-async" -o "$RESULT_PATH"
-    python3 - "$RESULT_PATH" <<'PY'
-from __future__ import annotations
-
-import json
-import sys
-from pathlib import Path
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if not isinstance(payload, dict):
-    raise SystemExit("capture 后台提交返回值不是对象")
-accepted = payload.get("accepted", False)
-print(f"accepted={accepted}")
-if accepted is not True:
-    raise SystemExit("capture 后台提交未被接受")
-PY
-}
-
-capture_summary() {
-    psql_scalar "
-        select
-            count(*)::text || '|' ||
-            count(*) filter (where status = 'running')::text || '|' ||
-            count(*) filter (where status = 'failed')::text || '|' ||
-            count(*) filter (where status = 'success')::text || '|' ||
-            count(*) filter (where status = 'skipped')::text
-        from capability_capture_runs
-        where started_at >= timestamp '$RUN_STARTED_AT'
-    "
-}
-
-wait_capture_completion() {
-    log "后处理：等待本轮 capture 完成"
-    local start_epoch
-    start_epoch="$(date +%s)"
-    while true; do
-        local summary total running failed success skipped now_epoch elapsed
-        summary="$(capture_summary)"
-        IFS='|' read -r total running failed success skipped <<< "$summary"
-        now_epoch="$(date +%s)"
-        elapsed=$((now_epoch - start_epoch))
-        log "capture 状态：total=$total running=$running success=$success failed=$failed skipped=$skipped elapsed=${elapsed}s"
-
-        if [ "$total" != "0" ] && [ "$running" = "0" ]; then
-            if [ "$failed" != "0" ]; then
-                log "本轮 capture 出现失败任务：$failed"
-                return 1
-            fi
-            return 0
-        fi
-        if [ "$total" = "0" ] && [ "$elapsed" -ge "$CAPTURE_START_GRACE_SECONDS" ]; then
-            log "本轮没有新的到期 capture 任务"
-            return 0
-        fi
-        if [ "$elapsed" -ge "$CAPTURE_WAIT_SECONDS" ]; then
-            log "等待 capture 完成超时"
-            return 1
-        fi
-        sleep "$CAPTURE_POLL_SECONDS"
-    done
-}
-
 validate_market_coverage() {
     local validation_path="$1"
     local status
     log "后处理：校验上一交易日核心数据覆盖"
     status=0
-    python3 - "$MARKETHUB_BASE_URL" "$validation_path" <<'PY' || status=$?
+    "$MARKETHUB_PYTHON" - "$MARKETHUB_BASE_URL" "$validation_path" "$DB_HOST" "$DB_PORT" "$DB_NAME" "$DB_USER" "$DB_PASSWORD" <<'PY' || status=$?
 from __future__ import annotations
 
 from datetime import datetime
@@ -135,6 +185,8 @@ import sys
 from urllib.parse import urlencode
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
+
+import psycopg
 
 
 def fetch_json(base_url: str, path: str, params: dict[str, object]) -> object:
@@ -158,8 +210,22 @@ def env_int(name: str, default: int) -> int:
     return int(value)
 
 
+def sql_count(connection: psycopg.Connection, query: str, params: tuple[object, ...]) -> int:
+    with connection.cursor() as cursor:
+        cursor.execute(query, params)
+        row = cursor.fetchone()
+    if row is None or row[0] is None:
+        return 0
+    return int(row[0])
+
+
 base_url = sys.argv[1]
 validation_path = sys.argv[2]
+db_host = sys.argv[3]
+db_port = sys.argv[4]
+db_name = sys.argv[5]
+db_user = sys.argv[6]
+db_password = sys.argv[7]
 today_text = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
 previous_payload = fetch_json(base_url, "/api/markets/calendar/trading/previous", {"date": today_text, "count": 1})
 if not isinstance(previous_payload, list) or previous_payload == []:
@@ -168,126 +234,190 @@ trade_date = str(previous_payload[0].get("trade_date", ""))
 if trade_date == "":
     raise SystemExit("上一交易日接口缺少 trade_date")
 
+connection = psycopg.connect(
+    host=db_host,
+    port=int(db_port),
+    dbname=db_name,
+    user=db_user,
+    password=db_password,
+)
+
+try:
+    stock_local_window_count = sql_count(
+        connection,
+        """
+        select count(*)
+        from fact.stock_daily_1d day_rows
+        where day_rows.trade_date = %s::date
+          and coalesce(day_rows.is_suspended, false) = false
+          and coalesce(day_rows.is_st, false) = false
+        """,
+        (trade_date,),
+    )
+    concept_daily_snapshot_count = sql_count(
+        connection,
+        """
+        select count(*)
+        from fact.concept_daily_1d day_rows
+        where day_rows.trade_date = %s::date
+        """,
+        (trade_date,),
+    )
+    c231_members_count = sql_count(
+        connection,
+        """
+        with target_rows as (
+            select m.concept_id, m.stock_market, m.stock_code, m.valid_from, m.valid_to
+            from ref.concept_stock_membership m
+            where m.concept_id = 'C231'
+              and m.valid_from <= %s::date
+              and (m.valid_to is null or m.valid_to >= %s::date)
+        ),
+        fallback_date as (
+            select max(m.valid_from) as valid_from
+            from ref.concept_stock_membership m
+            where m.concept_id = 'C231'
+              and m.valid_from <= %s::date
+        ),
+        fallback_rows as (
+            select m.concept_id, m.stock_market, m.stock_code, m.valid_from, m.valid_to
+            from ref.concept_stock_membership m
+            join fallback_date latest on latest.valid_from = m.valid_from
+            where m.concept_id = 'C231'
+              and not exists (select 1 from target_rows)
+        )
+        select count(*)
+        from (
+            select * from target_rows
+            union all
+            select * from fallback_rows
+        ) rows
+        """,
+        (trade_date, trade_date, trade_date),
+    )
+finally:
+    connection.close()
+
 checks = [
     {
         "name": "previous_trading_day",
-        "path": "/api/markets/calendar/trading/previous",
-        "params": {"date": today_text, "count": 1},
+        "count": item_count(previous_payload),
         "minimum": 1,
         "blocking": True,
         "capabilities": ["markets.calendar.trading"],
+        "source": "api",
     },
     {
         "name": "stock_daily_snapshot",
-        "path": "/api/stocks/quotes/daily-snapshot",
-        "params": {"trade_date": trade_date, "skip_suspended": "true", "skip_st": "true", "limit": 10000},
+        "count": item_count(fetch_json(base_url, "/api/stocks/quotes/daily-snapshot", {"trade_date": trade_date, "skip_suspended": "true", "skip_st": "true", "limit": 10000})),
         "minimum": env_int("MARKETHUB_MIN_STOCK_DAILY_ROWS", 3000),
         "blocking": True,
         "capabilities": ["stocks.quotes.daily_snapshot"],
+        "source": "api",
     },
     {
         "name": "stock_daily_local_window",
-        "path": "/api/stocks/quotes/daily-local-window",
-        "params": {"start_date": trade_date, "end_date": trade_date, "skip_suspended": "true", "skip_st": "true", "limit": 50000, "fields": "code,trade_time,close,pct_chg,amount"},
+        "count": stock_local_window_count,
         "minimum": env_int("MARKETHUB_MIN_STOCK_DAILY_ROWS", 3000),
         "blocking": True,
         "capabilities": ["stocks.quotes.daily_snapshot"],
+        "source": "db",
     },
     {
         "name": "concept_daily_snapshot",
-        "path": "/api/concepts/quotes/daily-snapshot",
-        "params": {"trade_date": trade_date, "limit": 5000},
+        "count": concept_daily_snapshot_count,
         "minimum": env_int("MARKETHUB_MIN_CONCEPT_DAILY_ROWS", 200),
         "blocking": True,
         "capabilities": ["concepts.quotes.daily"],
+        "source": "db",
     },
     {
         "name": "index_quotes",
-        "path": "/api/indexes/quotes",
-        "params": {"index_codes": "000001,399001,399006,000300,000905,000852,899050", "trade_date": trade_date, "limit": 1000},
+        "count": item_count(fetch_json(base_url, "/api/indexes/quotes", {"index_codes": "000001,399001,399006,000300,000905,000852,899050", "trade_date": trade_date, "limit": 1000})),
         "minimum": env_int("MARKETHUB_MIN_INDEX_QUOTE_ROWS", 1),
         "blocking": True,
         "capabilities": ["indexes.quotes.daily"],
+        "source": "api",
     },
     {
         "name": "main_capital_flow",
-        "path": "/api/markets/indicators/main-capital-flow",
-        "params": {"trade_date": trade_date},
+        "count": item_count(fetch_json(base_url, "/api/markets/indicators/main-capital-flow", {"trade_date": trade_date})),
         "minimum": env_int("MARKETHUB_MIN_MAIN_CAPITAL_FLOW_ROWS", 1),
         "blocking": True,
         "capabilities": ["markets.indicators.main_capital_flow"],
+        "source": "api",
     },
     {
         "name": "connect_capital_flow",
-        "path": "/api/markets/connect/capital-flow",
-        "params": {"trade_date": trade_date},
+        "count": item_count(fetch_json(base_url, "/api/markets/connect/capital-flow", {"trade_date": trade_date})),
         "minimum": env_int("MARKETHUB_MIN_CONNECT_CAPITAL_FLOW_ROWS", 1),
         "blocking": False,
         "capabilities": ["markets.connect.capital_flow"],
+        "source": "api",
     },
     {
         "name": "connect_active_top10",
-        "path": "/api/markets/connect/active-top10",
-        "params": {"trade_date": trade_date, "limit": 1000},
+        "count": item_count(fetch_json(base_url, "/api/markets/connect/active-top10", {"trade_date": trade_date, "limit": 1000})),
         "minimum": env_int("MARKETHUB_MIN_CONNECT_ACTIVE_TOP10_ROWS", 1),
         "blocking": False,
         "capabilities": ["markets.connect.active_top10"],
+        "source": "api",
     },
     {
         "name": "dragon_tiger",
-        "path": "/api/markets/participants/dragon-tiger",
-        "params": {"trade_date": trade_date, "limit": 1000},
+        "count": item_count(fetch_json(base_url, "/api/markets/participants/dragon-tiger", {"trade_date": trade_date, "limit": 1000})),
         "minimum": env_int("MARKETHUB_MIN_DRAGON_TIGER_ROWS", 1),
         "blocking": False,
         "capabilities": ["markets.participants.dragon_tiger"],
+        "source": "api",
     },
     {
         "name": "dragon_tiger_institutions",
-        "path": "/api/markets/participants/dragon-tiger/institutions",
-        "params": {"trade_date": trade_date, "limit": 1000},
+        "count": item_count(fetch_json(base_url, "/api/markets/participants/dragon-tiger/institutions", {"trade_date": trade_date, "limit": 1000})),
         "minimum": env_int("MARKETHUB_MIN_DRAGON_TIGER_INSTITUTION_ROWS", 1),
         "blocking": False,
         "capabilities": ["markets.participants.dragon_tiger.institutions"],
+        "source": "api",
     },
     {
         "name": "c231_members",
-        "path": "/api/concepts/C231/members",
-        "params": {"trade_date": trade_date},
+        "count": c231_members_count,
         "minimum": env_int("MARKETHUB_MIN_C231_MEMBER_ROWS", 1),
         "blocking": True,
         "capabilities": ["concepts.members"],
+        "source": "db",
     },
     {
         "name": "hot_money_details",
-        "path": "/api/markets/participants/hot-money/details",
-        "params": {"trade_date": trade_date, "limit": 300},
+        "count": item_count(fetch_json(base_url, "/api/markets/participants/hot-money/details", {"trade_date": trade_date, "limit": 300})),
         "minimum": env_int("MARKETHUB_MIN_HOT_MONEY_DETAIL_ROWS", 0),
         "blocking": False,
         "capabilities": ["markets.participants.hot_money.details"],
+        "source": "api",
     },
     {
         "name": "open_auctions",
-        "path": "/api/markets/trading/open-auctions",
-        "params": {"trade_date": trade_date, "limit": 1000},
+        "count": item_count(fetch_json(base_url, "/api/markets/trading/open-auctions", {"trade_date": trade_date, "limit": 1000})),
         "minimum": env_int("MARKETHUB_MIN_OPEN_AUCTION_ROWS", 1),
         "blocking": False,
         "capabilities": ["markets.trading.open_auctions"],
+        "source": "api",
     },
     {
         "name": "limit_order_amount",
-        "path": "/api/stocks/signals/limit-order-amount",
-        "params": {"trade_date": trade_date},
+        "count": item_count(fetch_json(base_url, "/api/stocks/signals/limit-order-amount", {"trade_date": trade_date})),
         "minimum": env_int("MARKETHUB_MIN_LIMIT_ORDER_AMOUNT_ROWS", 1),
         "blocking": False,
         "capabilities": ["stocks.signals.limit_order_amount"],
+        "source": "api",
     },
     {
         "name": "news_events",
-        "path": "/api/markets/events/news",
-        "params": {"trade_date": trade_date, "limit": 200},
+        "count": item_count(fetch_json(base_url, "/api/markets/events/news", {"trade_date": trade_date, "limit": 200})),
         "minimum": env_int("MARKETHUB_MIN_NEWS_EVENT_ROWS", 0),
         "blocking": False,
         "capabilities": ["markets.events.news"],
+        "source": "api",
     },
 ]
 
@@ -297,13 +427,12 @@ failed_capabilities: list[str] = []
 warnings: list[str] = []
 warning_capabilities: list[str] = []
 for check in checks:
-    payload = fetch_json(base_url, str(check["path"]), dict(check["params"]))
-    count = item_count(payload)
     minimum = int(check["minimum"])
+    count = int(check["count"])
     ok = count >= minimum
-    result = {**check, "count": count, "ok": ok}
+    result = {**check, "trade_date": trade_date, "ok": ok}
     results.append(result)
-    print(f"{check['name']} count={count} minimum={minimum} blocking={check['blocking']}")
+    print(f"{check['name']} count={count} minimum={minimum} blocking={check['blocking']} source={check['source']}")
     if not ok and bool(check["blocking"]):
         failures.append(f"{check['name']} count={count} minimum={minimum}")
         failed_capabilities.extend(str(item) for item in check["capabilities"])
@@ -338,7 +467,7 @@ PY
 }
 
 failed_capabilities() {
-    python3 - "$1" <<'PY'
+    "$MARKETHUB_PYTHON" - "$1" <<'PY'
 from __future__ import annotations
 
 import json
@@ -352,7 +481,7 @@ PY
 }
 
 validation_trade_date() {
-    python3 - "$1" <<'PY'
+    "$MARKETHUB_PYTHON" - "$1" <<'PY'
 from __future__ import annotations
 
 import json
@@ -384,8 +513,58 @@ force_refresh_failed_capabilities() {
         local force_result_path
         force_result_path="$RESULT_DIR/$RUN_ID.force-${capability_id//./_}.json"
         log "后处理：强制补跑 capability $capability_id"
+
+        if [ "$capability_id" = "concepts.members" ]; then
+            "$MARKETHUB_PYTHON" "$CONCEPT_BACKFILL_SCRIPT" --window-count "$CONCEPT_BACKFILL_WINDOW_COUNT" --concept-id C231
+            continue
+        fi
+        if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "stocks.quotes.daily_snapshot" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/stocks/quotes/daily-snapshot?trade_date=$compact_trade_date&skip_suspended=true&skip_st=true&limit=10000" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "concepts.quotes.daily" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/concepts/quotes/daily-snapshot?trade_date=$compact_trade_date&limit=5000" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "indexes.quotes.daily" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/indexes/quotes?index_codes=000001,399001,399006,000300,000905,000852,899050&trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.indicators.main_capital_flow" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/indicators/main-capital-flow?trade_date=$trade_date" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.connect.capital_flow" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/connect/capital-flow?trade_date=$trade_date" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.connect.active_top10" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/connect/active-top10?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.dragon_tiger" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/dragon-tiger?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.dragon_tiger.institutions" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/dragon-tiger/institutions?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.hot_money.details" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/hot-money/details?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.trading.open_auctions" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/trading/open-auctions?trade_date=$trade_date" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "stocks.signals.limit_order_amount" ]; then
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" -X POST "$MARKETHUB_BASE_URL/api/admin/capture/limit-order-amount/run-today?trade_date=$trade_date" -o "$force_result_path.targeted.json"
+            continue
+        fi
+
         curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" -X POST "$MARKETHUB_BASE_URL/api/admin/capture-runs/$capability_id" -o "$force_result_path"
-        python3 - "$force_result_path" <<'PY'
+        "$MARKETHUB_PYTHON" - "$force_result_path" <<'PY'
 from __future__ import annotations
 
 import json
@@ -398,41 +577,6 @@ print(f"forced_status={status}")
 if status not in {"success", "skipped"}:
     raise SystemExit(f"强制补跑失败: {status}")
 PY
-        if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "stocks.quotes.daily_snapshot" ]; then
-            log "后处理：按校验日期精确补股票日快照 $trade_date"
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/stocks/quotes/daily-snapshot?trade_date=$compact_trade_date&skip_suspended=true&skip_st=true&limit=10000" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "concepts.quotes.daily" ]; then
-            log "后处理：按校验日期精确补题材概念日快照 $trade_date"
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/concepts/quotes/daily-snapshot?trade_date=$compact_trade_date&limit=5000" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "indexes.quotes.daily" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/indexes/quotes?index_codes=000001,399001,399006,000300,000905,000852,899050&trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.indicators.main_capital_flow" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/indicators/main-capital-flow?trade_date=$trade_date" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.connect.capital_flow" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/connect/capital-flow?trade_date=$trade_date" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.connect.active_top10" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/connect/active-top10?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.dragon_tiger" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/dragon-tiger?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.dragon_tiger.institutions" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/dragon-tiger/institutions?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.participants.hot_money.details" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/participants/hot-money/details?trade_date=$trade_date&limit=1000" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "markets.trading.open_auctions" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/markets/trading/open-auctions?trade_date=$trade_date" -o "$force_result_path.targeted.json"
-        fi
-        if [ "$trade_date" != "" ] && [ "$capability_id" = "stocks.signals.limit_order_amount" ]; then
-            curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" -X POST "$MARKETHUB_BASE_URL/api/admin/capture/limit-order-amount/run-today?trade_date=$trade_date" -o "$force_result_path.targeted.json"
-        fi
     done <<< "$capabilities"
 }
 
