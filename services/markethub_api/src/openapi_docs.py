@@ -13,6 +13,7 @@ TAG_BY_PREFIX = {
     "/api/markets": "市场",
     "/api/rankings": "排行",
     "/api/admin": "管理",
+    "/api/data-health": "数据健康",
     "/api/diagnostics": "诊断",
     "/api/console": "管理",
     "/api/health": "系统",

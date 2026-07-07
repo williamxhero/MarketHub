@@ -24,3 +24,4 @@ services/markethub_console/dist/
 /scripts/test.ps1
 /scripts/build_console.ps1
 tests/
+/scripts

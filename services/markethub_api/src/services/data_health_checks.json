@@ -1,0 +1,4389 @@
+{
+  "version": 1,
+  "capabilities": {
+    "concepts.alias.groups": {
+      "group": "关系映射",
+      "logic_scope": "系统 concept_id 与 provider 原始概念映射",
+      "reference_data": "ref.concept 与 alias 映射表",
+      "reference_objects": [
+        "ref.concept"
+      ],
+      "pass_rule": "同一 concept_id 的 provider 映射成员唯一且 provider_concept_code 非空; 映射有效期合法; concept_id 可在系统概念目录中找到",
+      "empty_result_rule": "系统无任何 alias 映射时为 warning; 指定 concept_id 不存在时空结果健康",
+      "unhealthy_rule": "同一 provider 原始标识映射到多个有效 concept_id; 有效期倒置; 映射到不存在的 concept_id",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        }
+      ]
+    },
+    "concepts.alias.resolve": {
+      "group": "关系映射",
+      "logic_scope": "provider 原始概念标识解析为系统 concept_id",
+      "reference_data": "ref.concept 与 alias 映射表",
+      "reference_objects": [
+        "ref.concept"
+      ],
+      "pass_rule": "给定 provider/provider_concept_type/provider_concept_code 能解析出唯一系统 concept_id; canonical_name 非空; confidence 如存在需在 0 到 1 之间",
+      "empty_result_rule": "原始标识无映射时空结果健康",
+      "unhealthy_rule": "解析出多个有效 concept_id; concept_id 不在系统目录; canonical_name 为空",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        }
+      ]
+    },
+    "concepts.catalog": {
+      "group": "参考表",
+      "logic_scope": "系统概念目录",
+      "reference_data": "ref.concept",
+      "reference_objects": [
+        "ref.concept"
+      ],
+      "pass_rule": "concept_id 唯一且非空; concept_name 非空; listed_date/delisted_date 顺序合法; status 与有效期一致",
+      "empty_result_rule": "目录表为空为 unhealthy",
+      "unhealthy_rule": "主键重复; 名称为空; 有效期倒置; 状态与日期冲突",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        }
+      ]
+    },
+    "concepts.indicators.money_flow": {
+      "group": "资金流/市场指标",
+      "logic_scope": "concept_id + trade_date + scope 的概念资金流",
+      "reference_data": "ref.trade_calendar; ref.concept; ref.concept_stock_membership; fact.stock_daily_1d",
+      "reference_objects": [
+        "fact.stock_daily_1d",
+        "ref.trade_calendar",
+        "ref.concept",
+        "ref.concept_stock_membership"
+      ],
+      "pass_rule": "trade_date 必须是交易日; concept_id 有效; scope 固定为 concept; 同一 concept_id/trade_date/scope 唯一; inflow/outflow/net_inflow 可为 0 但不可出现非法数值",
+      "empty_result_rule": "非交易日空结果健康; 概念无有效成员时空结果 warning",
+      "unhealthy_rule": "交易日且概念有效但长期无数据; 主键重复; scope 非法; 日期不在交易日历",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_membership_valid",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id",
+            "trade_date",
+            "scope"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "fixed_field",
+          "check_id": "scope_fixed",
+          "expected_value": "concept"
+        },
+        {
+          "type": "money_flow_values_valid",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "long_empty",
+          "check_id": "concept_money_flow_long_empty",
+          "required_objects": [
+            "ref.concept",
+            "ref.concept_stock_membership"
+          ]
+        }
+      ]
+    },
+    "concepts.indicators.money_flow.snapshot": {
+      "group": "资金流/市场指标",
+      "logic_scope": "全市场概念资金流交易日快照",
+      "reference_data": "ref.trade_calendar; ref.concept; ref.concept_stock_membership",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.concept",
+        "ref.concept_stock_membership"
+      ],
+      "pass_rule": "trade_date 为交易日; 返回项的 concept_id 均有效; 同一 concept_id/trade_date/scope 唯一; scope 固定为 concept",
+      "empty_result_rule": "非交易日空结果健康",
+      "unhealthy_rule": "交易日快照全空且概念目录非空; 主键重复; 返回无效 concept_id",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_membership_valid",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id",
+            "trade_date",
+            "scope"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "fixed_field",
+          "check_id": "scope_fixed",
+          "expected_value": "concept"
+        },
+        {
+          "type": "money_flow_values_valid",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "long_empty",
+          "check_id": "concept_money_flow_long_empty",
+          "required_objects": [
+            "ref.concept",
+            "ref.concept_stock_membership"
+          ]
+        }
+      ]
+    },
+    "concepts.members": {
+      "group": "关系映射",
+      "logic_scope": "指定日期下的概念成分股",
+      "reference_data": "ref.concept; ref.stock; ref.concept_stock_membership",
+      "reference_objects": [
+        "ref.stock",
+        "ref.concept",
+        "ref.concept_stock_membership"
+      ],
+      "pass_rule": "concept_id 有效; 成分 code 在股票目录中存在; valid_from <= trade_date <= valid_to 或按最近 valid_from 回退; 同一 concept_id/code/date 唯一",
+      "empty_result_rule": "概念不存在时空结果健康; 概念存在但从未有成员为 warning",
+      "unhealthy_rule": "成分股不存在; 同一日期重复成员; 有效期倒置",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_membership_valid",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id",
+            "code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept_stock_membership"
+        }
+      ]
+    },
+    "concepts.members.history": {
+      "group": "关系映射",
+      "logic_scope": "概念成分历史变更",
+      "reference_data": "ref.concept; ref.stock; ref.concept_stock_membership",
+      "reference_objects": [
+        "ref.stock",
+        "ref.concept",
+        "ref.concept_stock_membership"
+      ],
+      "pass_rule": "历史记录 concept_id/code 有效; effective_date 合法; action 非空; 同一 concept_id/code/effective_date/action 不重复",
+      "empty_result_rule": "概念不存在时空结果健康; 概念存在但无历史为 warning",
+      "unhealthy_rule": "成员引用不存在股票; 日期非法; 重复变更记录",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_membership_valid",
+          "object": "ref.concept_stock_membership"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id",
+            "code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept_stock_membership"
+        }
+      ]
+    },
+    "concepts.profile": {
+      "group": "主体资料",
+      "logic_scope": "单个概念资料",
+      "reference_data": "ref.concept",
+      "reference_objects": [
+        "ref.concept"
+      ],
+      "pass_rule": "concept_id 与请求一致; concept_name 非空; 有效期合法",
+      "empty_result_rule": "请求不存在的 concept_id 时空结果健康",
+      "unhealthy_rule": "目录中存在的 concept_id 取不到 profile; 名称为空; 有效期倒置",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        }
+      ]
+    },
+    "concepts.quotes.daily": {
+      "group": "行情时序",
+      "logic_scope": "概念日线与快照",
+      "reference_data": "ref.trade_calendar; ref.concept; fact.concept_daily_1d",
+      "reference_objects": [
+        "fact.concept_daily_1d",
+        "ref.trade_calendar",
+        "ref.concept"
+      ],
+      "pass_rule": "只按交易日检查覆盖; concept_id 有效期内才要求数据; OHLC 满足 low <= open/close <= high; 同一 concept_id/trade_time/freq 唯一; 快照实际业务日期需明确",
+      "empty_result_rule": "非交易日缺数据健康; 概念未上市或已退市日期缺数据健康",
+      "unhealthy_rule": "交易日且概念有效但缺数据; OHLC 关系错误; 主键重复; freq 不是 1d",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.concept_daily_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.concept_daily_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.concept_daily_1d"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id",
+            "trade_time",
+            "freq"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.concept_daily_1d"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        },
+        {
+          "type": "fixed_field",
+          "check_id": "freq_valid",
+          "expected_value": "1d/1m/30m"
+        },
+        {
+          "type": "ohlc_valid",
+          "object": "fact.concept_daily_1d"
+        }
+      ]
+    },
+    "concepts.reference.categories": {
+      "group": "参考表",
+      "logic_scope": "概念分类树",
+      "reference_data": "概念分类引用表",
+      "reference_objects": [],
+      "pass_rule": "category_code 唯一; category_name 非空; parent_code 如非空需能找到父分类; level 合法",
+      "empty_result_rule": "分类表为空为 warning",
+      "unhealthy_rule": "分类主键重复; 父级不存在; 层级循环",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "concept_id"
+          ]
+        }
+      ]
+    },
+    "indexes.catalog": {
+      "group": "参考表",
+      "logic_scope": "指数目录",
+      "reference_data": "ref.index",
+      "reference_objects": [
+        "ref.index"
+      ],
+      "pass_rule": "index_code 唯一且非空; index_name 非空; list_date 合法; status 与有效期一致",
+      "empty_result_rule": "目录表为空为 unhealthy",
+      "unhealthy_rule": "主键重复; 名称为空; list_date 非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.index"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.index"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.index"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "index_reference_valid",
+          "object": "ref.index"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "index_code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.index"
+        }
+      ]
+    },
+    "indexes.members": {
+      "group": "关系映射",
+      "logic_scope": "指定日期下的指数成分",
+      "reference_data": "ref.index; ref.stock; 指数成分源",
+      "reference_objects": [
+        "ref.stock",
+        "ref.index"
+      ],
+      "pass_rule": "指数有效; 成分 code 在股票目录存在; trade_date 为交易日; 同一 index_code/code/trade_date 唯一",
+      "empty_result_rule": "指数不存在时空结果健康; 指数有效但无成分为 warning",
+      "unhealthy_rule": "成分引用不存在股票; 主键重复; 非交易日返回交易日成分未标明口径",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.index"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.index"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.index"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "index_reference_valid",
+          "object": "ref.index"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "index_code",
+            "code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.index"
+        }
+      ]
+    },
+    "indexes.profile": {
+      "group": "主体资料",
+      "logic_scope": "单个指数资料",
+      "reference_data": "ref.index",
+      "reference_objects": [
+        "ref.index"
+      ],
+      "pass_rule": "index_code 与请求一致; index_name 非空; list_date/status 合法",
+      "empty_result_rule": "请求不存在 index_code 时空结果健康",
+      "unhealthy_rule": "目录中存在指数取不到 profile; 名称为空; 日期非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.index"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.index"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.index"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "index_reference_valid",
+          "object": "ref.index"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "index_code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.index"
+        }
+      ]
+    },
+    "indexes.quotes.daily": {
+      "group": "行情时序",
+      "logic_scope": "指数日线",
+      "reference_data": "ref.trade_calendar; ref.index; fact.index_bar_1d",
+      "reference_objects": [
+        "fact.index_bar_1d",
+        "ref.trade_calendar",
+        "ref.index"
+      ],
+      "pass_rule": "只按交易日检查覆盖; 指数 list_date 后才要求数据; OHLC 满足 low <= open/close <= high; 同一 index_code/trade_time/freq 唯一",
+      "empty_result_rule": "非交易日缺数据健康; 指数未上市日期缺数据健康",
+      "unhealthy_rule": "交易日且指数有效但缺数据; OHLC 关系错误; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.index_bar_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.index_bar_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.index_bar_1d"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.index"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.index"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.index"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "index_reference_valid",
+          "object": "ref.index"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "index_code",
+            "trade_time",
+            "freq"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.index_bar_1d"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.index"
+        },
+        {
+          "type": "fixed_field",
+          "check_id": "freq_valid",
+          "expected_value": "1d/1m/30m"
+        },
+        {
+          "type": "ohlc_valid",
+          "object": "fact.index_bar_1d"
+        }
+      ]
+    },
+    "markets.calendar.trading": {
+      "group": "交易日历",
+      "logic_scope": "交易所交易日历",
+      "reference_data": "ref.trade_calendar",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "exchange/trade_date 唯一; 日期连续覆盖请求区间; is_open 为布尔值; 同一 exchange 日期不重复",
+      "empty_result_rule": "请求区间外空结果健康; 区间内日历表为空 unhealthy",
+      "unhealthy_rule": "日期缺口; 主键重复; is_open 为空; 日期格式非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "exchange",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "calendar_continuity_90d"
+        }
+      ]
+    },
+    "markets.calendar.trading.next": {
+      "group": "交易日历",
+      "logic_scope": "给定日期后的 N 个交易日",
+      "reference_data": "ref.trade_calendar",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "结果必须等于基础日历中 trade_date 大于目标日且 is_open=true 的前 N 个交易日; 升序且不重复",
+      "empty_result_rule": "基础日历没有后续交易日时空结果健康",
+      "unhealthy_rule": "返回非交易日; 顺序错误; 与基础日历推导不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "exchange",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "calendar_continuity_90d"
+        }
+      ]
+    },
+    "markets.calendar.trading.previous": {
+      "group": "交易日历",
+      "logic_scope": "给定日期前的 N 个交易日",
+      "reference_data": "ref.trade_calendar",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "结果必须等于基础日历中 trade_date 小于目标日且 is_open=true 的最近 N 个交易日; 倒序或约定顺序稳定且不重复",
+      "empty_result_rule": "基础日历没有前序交易日时空结果健康",
+      "unhealthy_rule": "返回非交易日; 顺序错误; 与基础日历推导不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "exchange",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "calendar_continuity_90d"
+        }
+      ]
+    },
+    "markets.calendar.trading.yearly": {
+      "group": "交易日历",
+      "logic_scope": "年度交易日历",
+      "reference_data": "ref.trade_calendar",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "覆盖请求年份每一天; exchange/trade_date 唯一; is_open 布尔值; yearly 结果与基础 calendar 同年份一致",
+      "empty_result_rule": "请求年份无日历数据为 unhealthy",
+      "unhealthy_rule": "年份缺天; 主键重复; 与基础 calendar 不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "exchange",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "calendar_continuity_90d"
+        }
+      ]
+    },
+    "markets.connect.active_top10": {
+      "group": "资金流/市场指标",
+      "logic_scope": "沪深港通活跃成交前十",
+      "reference_data": "ref.trade_calendar; 股票目录",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "trade_date 为相关市场交易日; rank 如存在应为正数且同市场同日不重复; code/name 非空; 金额非负",
+      "empty_result_rule": "非交易日空结果健康; 当日无榜单数据空结果 warning",
+      "unhealthy_rule": "交易日长期空; rank 重复; code 为空; 金额为负",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "markets.connect.capital_flow": {
+      "group": "资金流/市场指标",
+      "logic_scope": "沪深港通资金流",
+      "reference_data": "ref.trade_calendar",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "trade_date 为相关市场交易日; market 非空; buy/sell/net 金额可为 0 且不可非法; 同一 trade_date/market 唯一",
+      "empty_result_rule": "非交易日空结果健康",
+      "unhealthy_rule": "交易日长期空; market 重复; 金额非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "markets.connect.quotas": {
+      "group": "资金流/市场指标",
+      "logic_scope": "沪深港通额度",
+      "reference_data": "ref.trade_calendar",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "trade_date 为相关市场交易日; market 非空; quota_total/quota_balance/quota_used 非负; 同一 trade_date/market 唯一",
+      "empty_result_rule": "非交易日空结果健康",
+      "unhealthy_rule": "交易日长期空; 额度为负; market 重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "markets.events.block_trades": {
+      "group": "交易事件",
+      "logic_scope": "大宗交易事件",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "只在交易日检查; code/name 非空; price/volume/amount 非负; 同一交易事件不重复",
+      "empty_result_rule": "无大宗交易的交易日空结果健康; 非交易日空结果健康",
+      "unhealthy_rule": "金额数量为负; code 不存在; 重复事件; 日期不在交易日历",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "markets.events.news": {
+      "group": "事件流新闻",
+      "logic_scope": "市场新闻事件流",
+      "reference_data": "新闻事实表; ref.stock; ref.concept",
+      "reference_objects": [
+        "ref.stock",
+        "ref.concept"
+      ],
+      "pass_rule": "event_id 唯一; title 非空; trade_date/announcement_time/crawl_time 合法; 关联股票和概念若存在需可解析; 公告时间晚于抓取时间允许",
+      "empty_result_rule": "无新闻日空结果 warning",
+      "unhealthy_rule": "事件 id 重复; 标题为空; 时间格式非法; 关联主体不可解析",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.concept"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.concept"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.concept"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "concept_reference_valid",
+          "object": "ref.concept"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "event_id"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.concept"
+        }
+      ]
+    },
+    "markets.indicators.main_capital_flow": {
+      "group": "资金流/市场指标",
+      "logic_scope": "市场主力资金流",
+      "reference_data": "ref.trade_calendar",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "trade_date 为交易日; market 非空; main_inflow/main_outflow/net_inflow 可为 0 但不可非法; 同一 trade_date/market 唯一",
+      "empty_result_rule": "非交易日空结果健康",
+      "unhealthy_rule": "交易日长期空; market 重复; 金额非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "markets.participants.dragon_tiger": {
+      "group": "交易事件",
+      "logic_scope": "龙虎榜营业部明细",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; code/name 非空; reason 可空但金额字段非负; 同一 trade_date/code/reason 不重复",
+      "empty_result_rule": "无龙虎榜交易日空结果健康",
+      "unhealthy_rule": "非交易日返回记录; 金额为负; code 不存在; 重复记录",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "markets.participants.dragon_tiger.institutions": {
+      "group": "交易事件",
+      "logic_scope": "龙虎榜机构席位",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; code/name 非空; institution_count 非负; buy/sell/net 金额非负或为空; 同一 trade_date/code 不重复",
+      "empty_result_rule": "无机构席位交易日空结果健康",
+      "unhealthy_rule": "非交易日返回记录; institution_count 为负; 金额为负; code 不存在",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "markets.participants.hot_money": {
+      "group": "交易事件",
+      "logic_scope": "游资名录",
+      "reference_data": "游资参考表",
+      "reference_objects": [],
+      "pass_rule": "name 非空; alias/tag/style 使用空字符串表达缺失; 同一 name/alias 不重复",
+      "empty_result_rule": "参考表为空为 warning",
+      "unhealthy_rule": "name 为空; 重复游资项",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "markets.participants.hot_money.details": {
+      "group": "交易事件",
+      "logic_scope": "游资交易明细",
+      "reference_data": "ref.trade_calendar; ref.stock; 游资参考表",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; name/code 非空; stock_name 可为空; buy/sell/net 金额非负或为空; 同一 name/code/trade_date 不重复",
+      "empty_result_rule": "交易日无游资明细空结果健康",
+      "unhealthy_rule": "非交易日返回记录; 金额为负; code 不存在; name 为空",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "markets.trading.open_auctions": {
+      "group": "交易事件",
+      "logic_scope": "集合竞价快照",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; auction_time 在允许竞价时段; code 非空且在目录中; price/volume/amount 非负; 每只股票每天最多一条同 session 快照",
+      "empty_result_rule": "非交易日空结果健康; provider 无覆盖时空结果 warning",
+      "unhealthy_rule": "非交易日返回记录; 时间不在竞价时段; 金额数量为负; 重复快照",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "markets.trading.sessions": {
+      "group": "参考表",
+      "logic_scope": "交易时段定义",
+      "reference_data": "交易时段配置",
+      "reference_objects": [],
+      "pass_rule": "code/session_name/start_time/end_time/timezone 非空; start_time < end_time; 同一 code/session_name 唯一",
+      "empty_result_rule": "无时段配置为 unhealthy",
+      "unhealthy_rule": "时间倒置; session 重复; timezone 为空",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "rankings.research.broker_monthly_picks": {
+      "group": "研究排名",
+      "logic_scope": "券商月度金股排名",
+      "reference_data": "股票目录; 研报排名源",
+      "reference_objects": [],
+      "pass_rule": "trade_month 格式为 YYYYMM; code/name 非空; rank/recommend_count 为正数或空; 同一 trade_month/institution/code 不重复",
+      "empty_result_rule": "某月无金股数据空结果 warning",
+      "unhealthy_rule": "trade_month 非法; code 为空; rank 非法; 重复记录",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "rankings.research.reports": {
+      "group": "研究排名",
+      "logic_scope": "研报排名",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 或 report_date 合法; code/name 非空; rating/title 使用空字符串表达缺失; 同一报告事件不重复",
+      "empty_result_rule": "无研报日空结果健康",
+      "unhealthy_rule": "日期非法; code 为空; 重复研报",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.catalog": {
+      "group": "参考表",
+      "logic_scope": "股票目录",
+      "reference_data": "ref.stock",
+      "reference_objects": [
+        "ref.stock"
+      ],
+      "pass_rule": "code 唯一且非空; name 非空; market 与 code 前缀一致; listed_date/delisted_date 顺序合法; list_status 与有效期一致",
+      "empty_result_rule": "目录为空为 unhealthy",
+      "unhealthy_rule": "主键重复; 名称为空; 市场和代码前缀冲突; 有效期倒置",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.catalog.archive": {
+      "group": "参考表",
+      "logic_scope": "指定日期股票历史目录",
+      "reference_data": "ref.stock",
+      "reference_objects": [
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 口径下只返回当日已上市且未退市股票; code/name 非空; 同一 code 唯一",
+      "empty_result_rule": "非交易日可返回同日期有效目录; 日期早于所有上市日期空结果健康",
+      "unhealthy_rule": "返回未上市或已退市股票; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.corporate_actions.dividends": {
+      "group": "公司行为",
+      "logic_scope": "分红事件",
+      "reference_data": "股票目录; 公司行为源",
+      "reference_objects": [],
+      "pass_rule": "announce_date 合法; record_date/ex_date/pay_date 可空但如存在需顺序合理; 分红数值非负; 同一事件不重复",
+      "empty_result_rule": "无分红事件空结果健康",
+      "unhealthy_rule": "日期顺序冲突; 分红数值为负; 重复事件",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.corporate_actions.repurchases": {
+      "group": "公司行为",
+      "logic_scope": "回购事件",
+      "reference_data": "股票目录; 公司行为源",
+      "reference_objects": [],
+      "pass_rule": "announce_date 合法; progress 使用空字符串表达缺失; repurchase_volume/amount/highest_price/lowest_price 非负; lowest_price <= highest_price",
+      "empty_result_rule": "无回购事件空结果健康",
+      "unhealthy_rule": "金额数量为负; 价格区间倒置; 重复事件",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.corporate_actions.rights_issues": {
+      "group": "公司行为",
+      "logic_scope": "配股事件",
+      "reference_data": "股票目录; 公司行为源",
+      "reference_objects": [],
+      "pass_rule": "announce_date 合法; rights_ratio/rights_price 非负; record_date/ex_date 顺序合理",
+      "empty_result_rule": "无配股事件空结果健康",
+      "unhealthy_rule": "比例或价格为负; 日期顺序冲突; 重复事件",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.corporate_actions.share_changes": {
+      "group": "公司行为",
+      "logic_scope": "股本变动事件",
+      "reference_data": "股票目录; 公司行为源",
+      "reference_objects": [],
+      "pass_rule": "change_date 合法; total_share/float_share/restricted_share 非负; float_share <= total_share; restricted_share <= total_share",
+      "empty_result_rule": "无股本变动空结果健康",
+      "unhealthy_rule": "股本为负; 分项大于总股本; 日期非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.corporate_actions.unlock_schedules": {
+      "group": "公司行为",
+      "logic_scope": "限售解禁计划",
+      "reference_data": "股票目录; 公司行为源",
+      "reference_objects": [],
+      "pass_rule": "unlock_date 合法; unlock_volume/unlock_ratio 非负; holder_type/share_type 使用空字符串表达缺失",
+      "empty_result_rule": "无解禁事件空结果健康",
+      "unhealthy_rule": "数量或比例为负; 日期非法; 重复事件",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.factors.adj": {
+      "group": "派生指标/信号",
+      "logic_scope": "复权因子",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; code 有效且在上市区间; adj_factor 为正数或空; 同一 code/trade_date 唯一",
+      "empty_result_rule": "非交易日空结果健康; 未上市日期空结果健康",
+      "unhealthy_rule": "交易日上市股票长期缺复权因子; 因子非正; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.factors.technical": {
+      "group": "派生指标/信号",
+      "logic_scope": "技术指标",
+      "reference_data": "ref.trade_calendar; fact.stock_daily_1d",
+      "reference_objects": [
+        "fact.stock_daily_1d",
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "依赖日线覆盖; 预热期内指标为空健康; 预热期后常用指标应可计算; adjust 非空; 同一 code/trade_date/adjust 唯一",
+      "empty_result_rule": "非交易日空结果健康; 日线不足预热窗口空结果健康",
+      "unhealthy_rule": "预热期后指标全空; 日期无日线却返回指标; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "stocks.finance.audits": {
+      "group": "财务报告",
+      "logic_scope": "审计意见",
+      "reference_data": "股票目录; 财务源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; code 与请求一致; audit_result/auditor/sign_accountant 用空字符串表达缺失; announce_date 合法或为空",
+      "empty_result_rule": "无审计记录空结果健康",
+      "unhealthy_rule": "report_period 非法; code 不一致; 日期非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.finance.disclosure_dates": {
+      "group": "财务报告",
+      "logic_scope": "财报披露日期",
+      "reference_data": "股票目录; 财务源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; plan_date/actual_date 合法或为空; actual_date 不应早于不可能业务边界",
+      "empty_result_rule": "无披露日期记录空结果 warning",
+      "unhealthy_rule": "report_period 非法; 日期格式非法; code 不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.finance.express": {
+      "group": "财务报告",
+      "logic_scope": "业绩快报",
+      "reference_data": "股票目录; 财务源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; announce_date 合法; revenue/profit/eps/roe 可为空但不可非法数值",
+      "empty_result_rule": "无快报空结果健康",
+      "unhealthy_rule": "report_period 非法; announce_date 为空; 数值非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.finance.forecasts": {
+      "group": "财务报告",
+      "logic_scope": "业绩预告",
+      "reference_data": "股票目录; 财务源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; forecast_type/summary 使用空字符串表达缺失; net_profit_min <= net_profit_max 如二者都存在",
+      "empty_result_rule": "无预告空结果健康",
+      "unhealthy_rule": "利润区间倒置; report_period 非法; code 不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.finance.indicators": {
+      "group": "财务报告",
+      "logic_scope": "财务指标",
+      "reference_data": "股票目录; 财务源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; code 有效; 比率类字段可为空但不可为 NaN/Inf; 同一 code/report_period 唯一",
+      "empty_result_rule": "无财务指标空结果 warning",
+      "unhealthy_rule": "report_period 非法; 主键重复; 非法数值",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.finance.main_business": {
+      "group": "财务报告",
+      "logic_scope": "主营构成",
+      "reference_data": "股票目录; 财务源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; classification/segment_name 非空; revenue/cost/profit/revenue_ratio 可为空但不可非法; 同一 code/report_period/classification/segment_name 唯一",
+      "empty_result_rule": "无主营构成空结果健康",
+      "unhealthy_rule": "分类或分部名为空; report_period 非法; 重复分部",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.finance.statements": {
+      "group": "财务报告",
+      "logic_scope": "财务报表",
+      "reference_data": "股票目录; 财务源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; report_type 非空; 同一 code/report_period/report_type 唯一; 总资产/负债/权益等可为空但不可非法",
+      "empty_result_rule": "无报表空结果 warning",
+      "unhealthy_rule": "report_type 为空; report_period 非法; 主键重复; 非法数值",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "report_period",
+            "report_type"
+          ]
+        }
+      ]
+    },
+    "stocks.indicators.ah_comparisons": {
+      "group": "派生指标/信号",
+      "logic_scope": "AH 股溢价比较",
+      "reference_data": "ref.trade_calendar; 股票目录",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "trade_date 为交易日; code/name 非空; h_code 可为空但有比较值时必须非空; premium_ratio 可为负但不可非法",
+      "empty_result_rule": "非交易日空结果健康; 当日无 AH 标的空结果健康",
+      "unhealthy_rule": "code 为空; 有价格比较但 h_code 为空; 非法数值",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "stocks.indicators.chip_distribution": {
+      "group": "派生指标/信号",
+      "logic_scope": "筹码分布",
+      "reference_data": "ref.trade_calendar; 股票目录",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "trade_date 为交易日; price/chip_ratio 非负或为空; 同一 code/trade_date/price 唯一",
+      "empty_result_rule": "非交易日空结果健康; provider 无覆盖空结果 warning",
+      "unhealthy_rule": "price 为负; chip_ratio 为负; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "stocks.indicators.chip_performance": {
+      "group": "派生指标/信号",
+      "logic_scope": "筹码表现",
+      "reference_data": "ref.trade_calendar; 股票目录",
+      "reference_objects": [
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "trade_date 为交易日; profit_ratio/avg_cost/cost_70/cost_90 可为空但不可非法; 成本字段非负",
+      "empty_result_rule": "非交易日空结果健康; provider 无覆盖空结果 warning",
+      "unhealthy_rule": "成本为负; 非法数值",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "stocks.indicators.daily_basic": {
+      "group": "派生指标/信号",
+      "logic_scope": "股票每日基础指标",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日且股票上市区间内; turnover_rate/volume_ratio/pe/pb/股本字段可为空但不可非法; 同一 code/trade_date 唯一",
+      "empty_result_rule": "非交易日空结果健康; 未上市日期空结果健康",
+      "unhealthy_rule": "交易日上市股票长期缺数据; 股本为负; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.indicators.daily_market_value": {
+      "group": "派生指标/信号",
+      "logic_scope": "每日市值指标",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日且股票上市区间内; total_mv/float_mv/free_mv 非负或为空; free_mv <= total_mv; float_mv <= total_mv",
+      "empty_result_rule": "非交易日空结果健康; 未上市日期空结果健康",
+      "unhealthy_rule": "市值为负; 分项大于总市值; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.indicators.daily_valuation": {
+      "group": "派生指标/信号",
+      "logic_scope": "每日估值指标",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日且股票上市区间内; pe/pb/ps/pcf/dv_ratio 可为空但不可为 NaN/Inf; 同一 code/trade_date 唯一",
+      "empty_result_rule": "非交易日空结果健康; 未上市日期空结果健康",
+      "unhealthy_rule": "非法数值; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.indicators.money_flow": {
+      "group": "资金流/市场指标",
+      "logic_scope": "单股资金流",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日且股票上市区间内; view 固定为 main; main_inflow/main_outflow/net_inflow 可为 0 且不可非法; 同一 code/trade_date/view 唯一",
+      "empty_result_rule": "非交易日空结果健康; 未上市日期空结果健康",
+      "unhealthy_rule": "交易日上市股票长期缺数据; view 非法; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date",
+            "view"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.indicators.money_flow.batch": {
+      "group": "资金流/市场指标",
+      "logic_scope": "多股单日资金流",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; 返回 code 必须属于请求 codes; 每个 code/trade_date/view 唯一; 空缺按股票上市区间解释",
+      "empty_result_rule": "非交易日空结果健康; 请求 codes 均无效空结果健康",
+      "unhealthy_rule": "返回请求外股票; 主键重复; view 非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.indicators.premarket": {
+      "group": "派生指标/信号",
+      "logic_scope": "盘前指标",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; total_share/float_share/limit_up/limit_down 非负或为空; limit_down <= limit_up",
+      "empty_result_rule": "非交易日空结果健康",
+      "unhealthy_rule": "涨跌停边界倒置; 股本为负; code 不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.indicators.risk_flags": {
+      "group": "派生指标/信号",
+      "logic_scope": "风险标记",
+      "reference_data": "股票目录",
+      "reference_objects": [],
+      "pass_rule": "code/name/flag_type/status 非空; start_date 合法; end_date 为空或不早于 start_date; 同一 code/flag_type/start_date 唯一",
+      "empty_result_rule": "无风险标记空结果健康",
+      "unhealthy_rule": "有效期倒置; flag_type 为空; status 为空; 重复记录",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.ccass_holding_details": {
+      "group": "股权持有人",
+      "logic_scope": "CCASS 明细持仓",
+      "reference_data": "港股交易日历或 provider 日期; 股票目录",
+      "reference_objects": [],
+      "pass_rule": "trade_date 合法; participant_id/name 非空; holding_volume/holding_ratio 非负或为空; 同一 code/trade_date/participant_id 唯一",
+      "empty_result_rule": "无明细空结果 warning",
+      "unhealthy_rule": "participant_id 为空; 持仓为负; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.ccass_holdings": {
+      "group": "股权持有人",
+      "logic_scope": "CCASS 汇总持仓",
+      "reference_data": "港股交易日历或 provider 日期; 股票目录",
+      "reference_objects": [],
+      "pass_rule": "trade_date 合法; participant_count 非负; holding_volume/holding_ratio 非负或为空; 同一 code/trade_date 唯一",
+      "empty_result_rule": "无汇总空结果 warning",
+      "unhealthy_rule": "participant_count 为负; 持仓为负; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.hk_connect_holdings": {
+      "group": "股权持有人",
+      "logic_scope": "港股通持仓",
+      "reference_data": "港股通交易日历或 provider 日期; 股票目录",
+      "reference_objects": [],
+      "pass_rule": "trade_date 合法; holding_volume/holding_ratio/change_volume 可为 0 且不可非法; 同一 code/trade_date 唯一",
+      "empty_result_rule": "无持仓数据空结果 warning",
+      "unhealthy_rule": "持仓为负; 主键重复; 日期非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.pledges.details": {
+      "group": "股权持有人",
+      "logic_scope": "股权质押明细",
+      "reference_data": "股票目录; 质押源",
+      "reference_objects": [],
+      "pass_rule": "start_date 合法; end_date 为空或不早于 start_date; pledge_volume/pledge_ratio 非负或为空; holder_name 可空但 status 合法",
+      "empty_result_rule": "无质押明细空结果健康",
+      "unhealthy_rule": "日期倒置; 质押数量为负; 状态非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.pledges.stats": {
+      "group": "股权持有人",
+      "logic_scope": "股权质押统计",
+      "reference_data": "股票目录; 质押源",
+      "reference_objects": [],
+      "pass_rule": "trade_date 合法; pledge_volume/pledge_ratio/unrestricted_pledge_volume 非负或为空; 同一 code/trade_date 唯一",
+      "empty_result_rule": "无质押统计空结果健康",
+      "unhealthy_rule": "统计值为负; 主键重复; 日期非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.shareholders.changes": {
+      "group": "股权持有人",
+      "logic_scope": "股东人数变化",
+      "reference_data": "股票目录; 股东源",
+      "reference_objects": [],
+      "pass_rule": "trade_date 或披露期合法; holder_count 非负; change_count/change_pct 可负但不可非法; 同一 code/trade_date 唯一",
+      "empty_result_rule": "无披露记录空结果健康",
+      "unhealthy_rule": "holder_count 为负; 日期非法; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.shareholders.count": {
+      "group": "股权持有人",
+      "logic_scope": "股东人数",
+      "reference_data": "股票目录; 股东源",
+      "reference_objects": [],
+      "pass_rule": "trade_date 或披露期合法; holder_count/avg_holding 非负或为空; 同一 code/trade_date 唯一",
+      "empty_result_rule": "无披露记录空结果健康",
+      "unhealthy_rule": "holder_count 为负; avg_holding 为负; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.shareholders.top10": {
+      "group": "股权持有人",
+      "logic_scope": "前十大股东",
+      "reference_data": "股票目录; 股东源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; rank 为 1 到 10 或为空; shareholder_name 非空; holding_volume/holding_ratio 非负或为空; 单报告期少于 10 条为 warning",
+      "empty_result_rule": "无披露记录空结果健康",
+      "unhealthy_rule": "rank 超范围; 股东名称为空; 持仓为负; 同 rank 重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.ownership.shareholders.top10_float": {
+      "group": "股权持有人",
+      "logic_scope": "前十大流通股东",
+      "reference_data": "股票目录; 股东源",
+      "reference_objects": [],
+      "pass_rule": "report_period 合法; rank 为 1 到 10 或为空; shareholder_name 非空; holding_volume/holding_ratio 非负或为空; 单报告期少于 10 条为 warning",
+      "empty_result_rule": "无披露记录空结果健康",
+      "unhealthy_rule": "rank 超范围; 股东名称为空; 持仓为负; 同 rank 重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.profile.basic": {
+      "group": "主体资料",
+      "logic_scope": "股票基础资料",
+      "reference_data": "ref.stock",
+      "reference_objects": [
+        "ref.stock"
+      ],
+      "pass_rule": "code 与请求一致; name/exchange/market/list_status/list_date/delist_date 为非空字符串; market 与 code 前缀一致",
+      "empty_result_rule": "请求不存在股票时空结果健康",
+      "unhealthy_rule": "目录中存在股票取不到基础资料; 名称为空; 市场冲突",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.profile.company": {
+      "group": "主体资料",
+      "logic_scope": "公司资料",
+      "reference_data": "ref.stock; 公司资料源",
+      "reference_objects": [
+        "ref.stock"
+      ],
+      "pass_rule": "code 与请求一致; 字符串缺失统一为空字符串; employee_count 非负或空",
+      "empty_result_rule": "请求不存在股票时空结果健康",
+      "unhealthy_rule": "code 不一致; employee_count 为负; 非法字符串 null",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.profile.management_rewards": {
+      "group": "主体资料",
+      "logic_scope": "管理层薪酬事件",
+      "reference_data": "股票目录; 管理层源",
+      "reference_objects": [],
+      "pass_rule": "ann_date 合法; name 非空; reward_amount/hold_amount 非负或为空; 同一 code/ann_date/name 唯一",
+      "empty_result_rule": "无薪酬披露空结果健康",
+      "unhealthy_rule": "name 为空; 金额为负; 日期非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        }
+      ]
+    },
+    "stocks.profile.managers": {
+      "group": "主体资料",
+      "logic_scope": "管理层名单",
+      "reference_data": "股票目录; 管理层源",
+      "reference_objects": [],
+      "pass_rule": "name 非空; begin_date/end_date 合法且 end_date 不早于 begin_date; 同一 code/name/title/begin_date 唯一",
+      "empty_result_rule": "无管理层数据空结果 warning",
+      "unhealthy_rule": "name 为空; 日期倒置; 重复记录",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        }
+      ]
+    },
+    "stocks.profile.name_history": {
+      "group": "主体资料",
+      "logic_scope": "股票名称历史",
+      "reference_data": "ref.stock_name_history",
+      "reference_objects": [
+        "ref.stock",
+        "ref.stock_name_history"
+      ],
+      "pass_rule": "start_date 合法; end_date 为空或不早于 start_date; name 非空; 同一 code/name/start_date 唯一",
+      "empty_result_rule": "无更名历史时当前名称作为单条或空结果均可 healthy",
+      "unhealthy_rule": "名称为空; 日期倒置; 重复记录",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock_name_history"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock_name_history"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock_name_history"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock_name_history"
+        }
+      ]
+    },
+    "stocks.quotes.auctions": {
+      "group": "交易事件",
+      "logic_scope": "单股集合竞价",
+      "reference_data": "ref.trade_calendar; ref.stock",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; auction_time 在允许竞价时段; price/volume/amount 非负或为空; 同一 code/trade_date/session 唯一",
+      "empty_result_rule": "非交易日空结果健康; provider 无覆盖空结果 warning",
+      "unhealthy_rule": "非交易日返回记录; 时间不在竞价时段; 金额数量为负",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_time",
+            "freq"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.quotes.daily": {
+      "group": "行情时序",
+      "logic_scope": "股票日 K",
+      "reference_data": "ref.trade_calendar; ref.stock; fact.stock_daily_1d",
+      "reference_objects": [
+        "fact.stock_daily_1d",
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "只按交易日检查; 股票上市到退市区间内才要求数据; 停牌占位行算覆盖; OHLC 满足 low <= open/close <= high; 同一 code/trade_time/freq 唯一",
+      "empty_result_rule": "非交易日缺数据健康; 未上市或已退市日期缺数据健康",
+      "unhealthy_rule": "交易日上市股票缺非停牌覆盖; OHLC 关系错误; 主键重复; meta.complete 与缺口不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_time",
+            "freq"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        },
+        {
+          "type": "fixed_field",
+          "check_id": "freq_valid",
+          "expected_value": "1d/1m/30m"
+        },
+        {
+          "type": "ohlc_valid",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "recent_coverage_90d",
+          "check_id": "daily_coverage_90d",
+          "object": "fact.stock_daily_1d",
+          "column": "trade_date"
+        }
+      ]
+    },
+    "stocks.quotes.daily_snapshot": {
+      "group": "行情时序",
+      "logic_scope": "全市场股票日 K 快照",
+      "reference_data": "ref.trade_calendar; ref.stock; fact.stock_daily_1d",
+      "reference_objects": [
+        "fact.stock_daily_1d",
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; 快照覆盖当日有效上市股票; 停牌占位算覆盖; 返回 code 唯一; OHLC 合法",
+      "empty_result_rule": "非交易日空结果健康",
+      "unhealthy_rule": "交易日快照为空; 返回退市前/上市前不应出现的股票; OHLC 错误; code 重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_time",
+            "freq"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        },
+        {
+          "type": "ohlc_valid",
+          "object": "fact.stock_daily_1d"
+        }
+      ]
+    },
+    "stocks.quotes.intraday": {
+      "group": "行情时序",
+      "logic_scope": "股票分钟线",
+      "reference_data": "ref.trade_calendar; ref.stock; fact.stock_bar_1m; fact.stock_bar_30m",
+      "reference_objects": [
+        "fact.stock_bar_1m",
+        "fact.stock_bar_30m",
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "只在交易日和正式交易时段检查; 午休/盘前/盘后缺 bar 健康; 1m/30m 按对应 fact 表检查; 同一 code/trade_time/freq 唯一; OHLC 合法",
+      "empty_result_rule": "非交易日空结果健康; 未上市日期空结果健康",
+      "unhealthy_rule": "交易时段内大量缺 bar; 非交易时段返回未标明数据; OHLC 错误; 主键重复",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.stock_bar_1m"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.stock_bar_1m"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.stock_bar_1m"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.stock_bar_30m"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.stock_bar_30m"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.stock_bar_30m"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_time",
+            "freq"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.stock_bar_1m"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.stock_bar_30m"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        },
+        {
+          "type": "fixed_field",
+          "check_id": "freq_valid",
+          "expected_value": "1d/1m/30m"
+        },
+        {
+          "type": "ohlc_valid",
+          "object": "fact.stock_bar_1m"
+        },
+        {
+          "type": "ohlc_valid",
+          "object": "fact.stock_bar_30m"
+        },
+        {
+          "type": "recent_coverage_90d",
+          "check_id": "minute_session_coverage_90d:fact.stock_bar_1m",
+          "object": "fact.stock_bar_1m",
+          "column": "bar_time"
+        },
+        {
+          "type": "recent_coverage_90d",
+          "check_id": "minute_session_coverage_90d:fact.stock_bar_30m",
+          "object": "fact.stock_bar_30m",
+          "column": "bar_time"
+        }
+      ]
+    },
+    "stocks.reference.bse_code_mappings": {
+      "group": "参考表",
+      "logic_scope": "北交所代码映射",
+      "reference_data": "参考映射源",
+      "reference_objects": [],
+      "pass_rule": "old_code/new_code/effective_date/status 非空; old_code/new_code 唯一映射; effective_date 合法",
+      "empty_result_rule": "映射表为空为 warning",
+      "unhealthy_rule": "old_code 或 new_code 为空; 同一 old_code 有多个 active new_code; 日期非法",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        }
+      ]
+    },
+    "stocks.reference.hk_connect_targets": {
+      "group": "参考表",
+      "logic_scope": "沪深港通标的",
+      "reference_data": "股票目录; 互联互通参考源",
+      "reference_objects": [],
+      "pass_rule": "code/name/direction/status/effective_date 非空; direction 在约定集合内; effective_date 合法; 同一 code/direction/effective_date 唯一",
+      "empty_result_rule": "无标的表为空 warning",
+      "unhealthy_rule": "direction 非法; code 为空; 重复标的",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code"
+          ]
+        }
+      ]
+    },
+    "stocks.research.reports": {
+      "group": "研究排名",
+      "logic_scope": "单股研报",
+      "reference_data": "股票目录; 研报源",
+      "reference_objects": [],
+      "pass_rule": "report_date 合法; code 与请求一致; institution/title/rating 用空字符串表达缺失; target_price 非负或为空",
+      "empty_result_rule": "无研报空结果健康",
+      "unhealthy_rule": "report_date 非法; target_price 为负; code 不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.research.surveys": {
+      "group": "研究排名",
+      "logic_scope": "调研活动",
+      "reference_data": "股票目录; 调研源",
+      "reference_objects": [],
+      "pass_rule": "survey_date 合法; org_name/survey_method/topic/announcement_date 用空字符串表达缺失; 同一 code/survey_date/org_name/topic 不重复",
+      "empty_result_rule": "无调研空结果健康",
+      "unhealthy_rule": "日期非法; 重复调研; code 不一致",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        }
+      ]
+    },
+    "stocks.signals.hl": {
+      "group": "派生指标/信号",
+      "logic_scope": "日内高低点信号",
+      "reference_data": "ref.trade_calendar; fact.stock_daily_1d",
+      "reference_objects": [
+        "fact.stock_daily_1d",
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "trade_date 为交易日; code 有效; high_time/low_time 如存在应在交易时段内; signal 非空; 依赖日线存在",
+      "empty_result_rule": "非交易日空结果健康; 日线无覆盖空结果 warning",
+      "unhealthy_rule": "时间不在交易时段; signal 为空; 返回日期无日线",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        }
+      ]
+    },
+    "stocks.signals.limit_order_amount": {
+      "group": "交易事件",
+      "logic_scope": "涨跌停封单金额",
+      "reference_data": "ref.trade_calendar; ref.stock; 抓取事实表",
+      "reference_objects": [
+        "ref.trade_calendar",
+        "ref.stock"
+      ],
+      "pass_rule": "trade_date 为交易日; code/limit_side/market/captured_at 非空; close/limit_price/order_price/order_volume/order_amount 非负或为空; 同一 code/trade_date/limit_side/captured_at 不重复",
+      "empty_result_rule": "非交易日空结果健康; 无涨跌停股票时空结果健康",
+      "unhealthy_rule": "金额数量为负; limit_side 非法; captured_at 为空; 重复记录",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.stock"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.stock"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.stock"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_reference_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "reference_valid",
+          "check_id": "stock_lifecycle_valid",
+          "object": "ref.stock"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.stock"
+        }
+      ]
+    },
+    "stocks.signals.nine_turn": {
+      "group": "派生指标/信号",
+      "logic_scope": "九转信号",
+      "reference_data": "ref.trade_calendar; fact.stock_daily_1d; 分钟事实表",
+      "reference_objects": [
+        "fact.stock_daily_1d",
+        "ref.trade_calendar"
+      ],
+      "pass_rule": "日频只按交易日检查; 分钟频只按交易时段检查; setup_index/countdown_index 为空或正数; signal 使用空字符串表达无信号; 结果日期必须在行情覆盖窗口",
+      "empty_result_rule": "非交易日空结果健康; 预热窗口不足空结果健康",
+      "unhealthy_rule": "返回日期无行情覆盖; index 为负; freq 与时间粒度冲突",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "table_exists",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "non_trading_day_empty_result"
+        },
+        {
+          "type": "trade_day_missing_data_unhealthy"
+        },
+        {
+          "type": "capability_key_unique_rule",
+          "fields": [
+            "code",
+            "trade_date"
+          ]
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.stock_daily_1d"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "ref.trade_calendar"
+        },
+        {
+          "type": "fixed_field",
+          "check_id": "freq_valid",
+          "expected_value": "1d/1m/30m"
+        }
+      ]
+    }
+  }
+}

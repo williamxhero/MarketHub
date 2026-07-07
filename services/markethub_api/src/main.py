@@ -27,6 +27,7 @@ from quotemux.runtime_core.health import get_provider_metrics
 from routers.admin import router as admin_router
 from routers.concepts import router as concepts_router
 from routers.concepts_runtime import router as concepts_runtime_router
+from routers.data_health import router as data_health_router
 from routers.docs_search import router as docs_router
 from routers.indexes import router as indexes_router
 from routers.markets import router as markets_router
@@ -84,6 +85,7 @@ app.include_router(news_router)
 app.include_router(rankings_router)
 app.include_router(docs_router)
 app.include_router(admin_router)
+app.include_router(data_health_router)
 install_openapi_schema(app)
 
 if (CONSOLE_DIST_ROOT / "assets").exists():

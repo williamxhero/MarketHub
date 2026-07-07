@@ -3,89 +3,668 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MarketHub / QuoteMux</title>
+  <title>MarketHub 数据健康</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <style>
     * {
       box-sizing: border-box;
     }
 
+    [hidden] {
+      display: none !important;
+    }
+
+    :root {
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --line: #d8dee6;
+      --text: #17202a;
+      --muted: #5d6a78;
+      --strong: #0f1720;
+      --accent: #1769aa;
+      --healthy: #17803c;
+      --warning: #a46400;
+      --unhealthy: #b42318;
+      --unknown: #596579;
+    }
+
     body {
       margin: 0;
       min-height: 100vh;
-      display: grid;
-      place-items: center;
-      color: #18212b;
-      background: #f5f6f8;
-      font-family: "Microsoft YaHei UI", "PingFang SC", sans-serif;
-    }
-
-    main {
-      display: grid;
-      gap: 28px;
-      justify-items: center;
-      width: min(100% - 32px, 560px);
-      text-align: center;
-    }
-
-    h1 {
-      margin: 0;
-      font-size: 40px;
-      line-height: 1.2;
-      font-weight: 760;
-    }
-
-    nav {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 12px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif;
     }
 
     a {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 150px;
-      min-height: 44px;
-      padding: 0 18px;
-      border: 1px solid #d8dee8;
-      background: #ffffff;
-      color: #18212b;
-      font-size: 15px;
-      font-weight: 700;
+      color: inherit;
       text-decoration: none;
     }
 
-    a:first-child {
-      border-color: #1f6feb;
-      background: #1f6feb;
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .shell {
+      width: min(100% - 40px, 1320px);
+      margin: 0 auto;
+      padding: 24px 0 36px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .brand h1 {
+      margin: 0;
+      color: var(--strong);
+      font-size: 28px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .nav a,
+    .reload {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .nav a.primary {
+      border-color: var(--accent);
+      background: var(--accent);
       color: #ffffff;
     }
 
-    a:hover {
-      border-color: #164ea6;
+    .overview {
+      display: grid;
+      grid-template-columns: minmax(240px, 1.2fr) repeat(4, minmax(120px, 1fr));
+      gap: 12px;
+      padding: 22px 0;
+      border-bottom: 1px solid var(--line);
+      align-items: stretch;
     }
 
-    @media (max-width: 520px) {
-      h1 {
-        font-size: 30px;
+    .status-panel,
+    .metric {
+      min-height: 82px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 6px;
+    }
+
+    .status-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .status-panel strong {
+      display: block;
+      color: var(--strong);
+      font-size: 23px;
+      line-height: 1.15;
+    }
+
+    .status-panel span,
+    .metric span {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 7px;
+      color: var(--strong);
+      font-size: 25px;
+      line-height: 1;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 72px;
+      height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .badge.healthy {
+      color: var(--healthy);
+      background: #e8f5ec;
+    }
+
+    .badge.warning {
+      color: var(--warning);
+      background: #fff2d8;
+    }
+
+    .badge.unhealthy {
+      color: var(--unhealthy);
+      background: #fde8e5;
+    }
+
+    .badge.unknown,
+    .badge.not_applicable {
+      color: var(--unknown);
+      background: #edf0f4;
+    }
+
+    .content {
+      padding-top: 18px;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) 160px;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .toolbar input,
+    .toolbar select {
+      width: 100%;
+      height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 0 11px;
+      outline: none;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1080px;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #e5e9ee;
+      text-align: left;
+      vertical-align: middle;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f8fafc;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .status-cell {
+      width: 120px;
+      text-align: right;
+    }
+
+    th:nth-child(2),
+    td:nth-child(2),
+    th:nth-child(4),
+    td:nth-child(4) {
+      border-right: 1px solid var(--line);
+    }
+
+    .capability-cell {
+      width: calc((100% - 360px) / 3);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .capability-id {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      color: var(--strong);
+      word-break: break-all;
+    }
+
+    .capability-button {
+      width: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .capability-button:hover .capability-id,
+    .capability-button:focus-visible .capability-id {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(15, 23, 32, 0.42);
+    }
+
+    .modal {
+      width: min(100%, 860px);
+      max-height: min(86vh, 820px);
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 24px 70px rgba(15, 23, 32, 0.22);
+    }
+
+    .modal-head {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 14px;
+      align-items: center;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .modal-capability {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      color: var(--strong);
+      font-size: 17px;
+      line-height: 1.35;
+      word-break: break-all;
+      min-width: 0;
+    }
+
+    .close-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 68px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .modal-body {
+      display: grid;
+      gap: 18px;
+      padding: 18px 20px 22px;
+    }
+
+    .detail-section {
+      display: grid;
+      gap: 10px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .detail-section:last-child {
+      padding-bottom: 0;
+      border-bottom: 0;
+    }
+
+    .detail-section h2 {
+      margin: 0;
+      color: var(--strong);
+      font-size: 15px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    .check-table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    .check-table {
+      min-width: 720px;
+    }
+
+    .check-table th,
+    .check-table td {
+      padding: 10px 12px;
+      font-size: 13px;
+      vertical-align: top;
+    }
+
+    .check-title {
+      color: var(--strong);
+      font-weight: 700;
+    }
+
+    .check-result {
+      width: 100px;
+      white-space: nowrap;
+    }
+
+    .check-note {
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .empty {
+      padding: 26px;
+      color: var(--muted);
+      text-align: center;
+      border: 1px dashed var(--line);
+      background: var(--surface);
+      border-radius: 6px;
+    }
+
+    .error {
+      padding: 14px 0 0;
+      color: var(--unhealthy);
+      font-size: 14px;
+    }
+
+    @media (max-width: 900px) {
+      .shell {
+        width: min(100% - 28px, 1320px);
       }
 
-      nav,
-      a {
-        width: 100%;
+      .topbar,
+      .overview,
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        display: grid;
+      }
+
+      .nav {
+        justify-content: start;
+      }
+
+      .modal-backdrop {
+        padding: 14px;
+      }
+
+      .close-button {
+        justify-self: end;
       }
     }
   </style>
 </head>
 <body>
-  <main>
-    <h1>MarketHub / QuoteMux</h1>
-    <nav aria-label="主要入口">
-      <a href="/api/openapi">API 文档</a>
-      <a href="/admin">管理后台</a>
-    </nav>
-  </main>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <h1>MarketHub 数据健康</h1>
+        <p>按 capability 规则和交易日历检查逻辑健康。</p>
+      </div>
+      <nav class="nav" aria-label="主要入口">
+        <a class="primary" href="/api/openapi">API 文档</a>
+        <a href="/admin">管理后台</a>
+        <button class="reload" id="reload" type="button">刷新</button>
+      </nav>
+    </header>
+
+    <div id="error" class="error" hidden></div>
+
+    <section class="overview" aria-label="总览">
+      <div class="status-panel">
+        <div>
+          <strong id="overallText">加载中</strong>
+          <span id="checkedAt">等待健康检查返回</span>
+        </div>
+        <span id="overallBadge" class="badge warning">检查中</span>
+      </div>
+      <div class="metric"><span>总数</span><strong id="totalCount">-</strong></div>
+      <div class="metric"><span>健康</span><strong id="healthyCount">-</strong></div>
+      <div class="metric"><span>警告</span><strong id="warningCount">-</strong></div>
+      <div class="metric"><span>异常</span><strong id="unhealthyCount">-</strong></div>
+    </section>
+
+    <main class="content">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="搜索 capability">
+        <select id="statusFilter" aria-label="按状态筛选">
+          <option value="">全部状态</option>
+          <option value="healthy">健康</option>
+          <option value="warning">警告</option>
+          <option value="unhealthy">异常</option>
+        </select>
+      </div>
+      <div class="table-wrap" id="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="capability-cell">Capability</th>
+              <th class="status-cell">状态</th>
+              <th class="capability-cell">Capability</th>
+              <th class="status-cell">状态</th>
+              <th class="capability-cell">Capability</th>
+              <th class="status-cell">状态</th>
+            </tr>
+          </thead>
+          <tbody id="capabilityRows"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="empty" hidden>没有匹配的 capability。</div>
+    </main>
+
+    <div class="modal-backdrop" id="detailBackdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+        <header class="modal-head">
+          <strong class="modal-capability" id="detailTitle">-</strong>
+          <span id="detailBadge" class="badge warning">-</span>
+          <button class="close-button" id="detailClose" type="button">关闭</button>
+        </header>
+        <div class="modal-body">
+          <section class="detail-section">
+            <h2>检查结果</h2>
+            <div class="check-table-wrap">
+              <table class="check-table">
+                <thead>
+                  <tr>
+                    <th>检查项</th>
+                    <th>结果</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody id="detailChecks"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const state = { payload: null, capabilities: [] };
+    const labels = { healthy: "健康", warning: "警告", unhealthy: "异常", unknown: "未知", not_applicable: "不适用" };
+    const $ = (id) => document.getElementById(id);
+
+    function statusLabel(status) {
+      return labels[status] || status || "未知";
+    }
+
+    function setBadge(element, status) {
+      element.className = `badge ${status || "warning"}`;
+      element.textContent = statusLabel(status);
+    }
+
+    function text(value) {
+      return value === null || value === undefined || value === "" ? "-" : String(value);
+    }
+
+    function escapeHtml(value) {
+      return text(value).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[char]));
+    }
+
+    async function loadHealth() {
+      $("error").hidden = true;
+      $("reload").disabled = true;
+      try {
+        const response = await fetch("/api/data-health", { headers: { Accept: "application/json" } });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        state.payload = await response.json();
+        state.capabilities = Array.isArray(state.payload.capabilities) ? state.payload.capabilities : [];
+        render();
+      } catch (error) {
+        $("error").textContent = `数据健康接口不可用：${error.message}`;
+        $("error").hidden = false;
+      } finally {
+        $("reload").disabled = false;
+      }
+    }
+
+    function render() {
+      renderSummary();
+      renderTable();
+    }
+
+    function renderSummary() {
+      const payload = state.payload || {};
+      const summary = payload.summary || {};
+      $("overallText").textContent = statusLabel(payload.status);
+      $("checkedAt").textContent = payload.checked_at ? `检查时间 ${payload.checked_at}` : "检查时间 -";
+      setBadge($("overallBadge"), payload.status);
+      $("totalCount").textContent = text(summary.total);
+      $("healthyCount").textContent = text(summary.healthy);
+      $("warningCount").textContent = text(summary.warning);
+      $("unhealthyCount").textContent = text(summary.unhealthy);
+    }
+
+    function filteredCapabilities() {
+      const keyword = $("search").value.trim().toLowerCase();
+      const status = $("statusFilter").value;
+      return state.capabilities.filter((item) => {
+        if (status && item.status !== status) return false;
+        if (!keyword) return true;
+        return text(item.capability_id).toLowerCase().includes(keyword);
+      });
+    }
+
+    function renderTable() {
+      const rows = filteredCapabilities();
+      const tableRows = [];
+      for (let index = 0; index < rows.length; index += 3) {
+        tableRows.push(rows.slice(index, index + 3));
+      }
+      $("capabilityRows").innerHTML = tableRows.map((items) => `
+        <tr>
+          ${renderCapabilityCells(items[0])}
+          ${renderCapabilityCells(items[1])}
+          ${renderCapabilityCells(items[2])}
+        </tr>
+      `).join("");
+      $("tableWrap").hidden = rows.length === 0;
+      $("empty").hidden = rows.length !== 0;
+    }
+
+    function renderCapabilityCells(item) {
+      if (!item) {
+        return `<td class="capability-cell"></td><td class="status-cell"></td>`;
+      }
+      return `
+        <td class="capability-cell"><button class="capability-button" type="button" data-capability-id="${escapeHtml(item.capability_id)}"><span class="capability-id">${escapeHtml(item.capability_id)}</span></button></td>
+        <td class="status-cell"><span class="badge ${item.status}">${statusLabel(item.status)}</span></td>
+      `;
+    }
+
+    function openDetail(capabilityId) {
+      const item = state.capabilities.find((capability) => capability.capability_id === capabilityId);
+      if (!item) return;
+      $("detailTitle").textContent = item.capability_id;
+      setBadge($("detailBadge"), item.status);
+      $("detailChecks").innerHTML = buildCheckRows(item).map((check) => `
+        <tr>
+          <td class="check-title">${escapeHtml(check.title)}</td>
+          <td class="check-result"><span class="badge ${escapeHtml(check.status)}">${escapeHtml(check.result_text || statusLabel(check.status))}</span></td>
+          <td class="check-note">${escapeHtml(check.error_text || "")}</td>
+        </tr>
+      `).join("");
+      $("detailBackdrop").hidden = false;
+    }
+
+    function closeDetail() {
+      $("detailBackdrop").hidden = true;
+      $("detailTitle").textContent = "-";
+      $("detailChecks").innerHTML = "";
+    }
+
+    function buildCheckRows(item) {
+      const checks = Array.isArray(item.checks) ? item.checks : [];
+      if (checks.length > 0) return checks;
+      return [{ title: "结构化检查项", status: "unknown", result_text: "未执行", error_text: "接口未返回 checks。" }];
+    }
+
+    $("reload").addEventListener("click", loadHealth);
+    $("search").addEventListener("input", renderTable);
+    $("statusFilter").addEventListener("change", renderTable);
+    $("detailClose").addEventListener("click", closeDetail);
+    $("capabilityRows").addEventListener("click", (event) => {
+      const button = event.target.closest(".capability-button");
+      if (!button) return;
+      openDetail(button.dataset.capabilityId || "");
+    });
+    loadHealth();
+  </script>
 </body>
 </html>

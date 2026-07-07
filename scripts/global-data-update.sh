@@ -249,6 +249,11 @@ try:
         select count(*)
         from fact.stock_daily_1d day_rows
         where day_rows.trade_date = %s::date
+          and (
+            (day_rows.market = 'SHSE' and left(day_rows.code, 1) = '6')
+            or (day_rows.market = 'BJSE' and left(day_rows.code, 1) in ('4', '8', '9'))
+            or (day_rows.market = 'SZSE' and left(day_rows.code, 1) not in ('4', '6', '8', '9'))
+          )
           and coalesce(day_rows.is_suspended, false) = false
           and coalesce(day_rows.is_st, false) = false
         """,
@@ -262,6 +267,20 @@ try:
         where day_rows.trade_date = %s::date
         """,
         (trade_date,),
+    )
+    stock_intraday_coverage_count = sql_count(
+        connection,
+        """
+        select count(*)
+        from (
+            select 1
+            from fact.stock_bar_1m bar_rows
+            where bar_rows.bar_time >= %s::date
+              and bar_rows.bar_time < %s::date + interval '1 day'
+            limit 1
+        ) rows
+        """,
+        (trade_date, trade_date),
     )
     c231_members_count = sql_count(
         connection,
@@ -329,6 +348,14 @@ checks = [
         "minimum": env_int("MARKETHUB_MIN_CONCEPT_DAILY_ROWS", 200),
         "blocking": True,
         "capabilities": ["concepts.quotes.daily"],
+        "source": "db",
+    },
+    {
+        "name": "stock_intraday_coverage",
+        "count": stock_intraday_coverage_count,
+        "minimum": 1,
+        "blocking": True,
+        "capabilities": ["stocks.quotes.intraday"],
         "source": "db",
     },
     {
@@ -493,6 +520,92 @@ print(str(payload.get("trade_date", "")))
 PY
 }
 
+refresh_stock_intraday_quotes() {
+    local trade_date="$1"
+    local result_prefix="$2"
+    if [ "$trade_date" = "" ]; then
+        log "后处理：缺少交易日，跳过分钟线定向补跑"
+        return 1
+    fi
+    log "后处理：定向补跑股票 1m 分钟线 trade_date=$trade_date"
+    "$MARKETHUB_PYTHON" - "$MARKETHUB_BASE_URL" "$trade_date" "$result_prefix" "$DB_HOST" "$DB_PORT" "$DB_NAME" "$DB_USER" "$DB_PASSWORD" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import urlopen
+
+import psycopg
+
+
+def chunks(items: list[str], size: int) -> list[list[str]]:
+    return [items[index: index + size] for index in range(0, len(items), size)]
+
+
+base_url = sys.argv[1]
+trade_date = sys.argv[2]
+result_prefix = Path(sys.argv[3])
+db_host = sys.argv[4]
+db_port = int(sys.argv[5])
+db_name = sys.argv[6]
+db_user = sys.argv[7]
+db_password = sys.argv[8]
+
+with psycopg.connect(host=db_host, port=db_port, dbname=db_name, user=db_user, password=db_password) as connection:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            select code
+            from ref.stock
+            where code <> '000000'
+              and listed_date <= %s::date
+              and (delisted_date is null or delisted_date >= %s::date)
+            order by code
+            """,
+            (trade_date, trade_date),
+        )
+        codes = [str(row[0]).zfill(6) for row in cursor.fetchall()]
+
+if codes == []:
+    raise SystemExit("没有可补跑的活跃股票代码")
+
+total_items = 0
+failed_batches: list[dict[str, object]] = []
+for batch_index, batch_codes in enumerate(chunks(codes, 100), start=1):
+    params = urlencode(
+        {
+            "codes": ",".join(batch_codes),
+            "freq": "1m",
+            "start_date": trade_date,
+            "end_date": trade_date,
+            "skip_suspended": "false",
+            "skip_st": "false",
+            "limit": "50000",
+        }
+    )
+    output_path = result_prefix.with_suffix(f".batch-{batch_index:03d}.json")
+    try:
+        with urlopen(f"{base_url}/api/stocks/quotes?{params}", timeout=600) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        items = payload.get("items", []) if isinstance(payload, dict) else []
+        total_items += len(items)
+        output_path.write_text(json.dumps({"codes": batch_codes, "item_count": len(items), "meta": payload.get("meta", {})}, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"intraday_batch={batch_index} codes={len(batch_codes)} items={len(items)}", flush=True)
+    except Exception as exc:
+        failed_batches.append({"batch_index": batch_index, "codes": batch_codes, "error": str(exc)})
+        print(f"intraday_batch={batch_index} failed={type(exc).__name__}: {exc}", flush=True)
+
+summary = {"trade_date": trade_date, "code_count": len(codes), "total_items": total_items, "failed_batches": failed_batches}
+result_prefix.with_suffix(".summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+if total_items == 0:
+    raise SystemExit("分钟线定向补跑没有返回任何数据")
+if failed_batches:
+    raise SystemExit("分钟线定向补跑存在失败批次")
+PY
+}
+
 force_refresh_failed_capabilities() {
     local validation_path="$1"
     local capabilities
@@ -520,6 +633,10 @@ force_refresh_failed_capabilities() {
         fi
         if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "stocks.quotes.daily_snapshot" ]; then
             curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" "$MARKETHUB_BASE_URL/api/stocks/quotes/daily-snapshot?trade_date=$compact_trade_date&skip_suspended=true&skip_st=true&limit=10000" -o "$force_result_path.targeted.json"
+            continue
+        fi
+        if [ "$trade_date" != "" ] && [ "$capability_id" = "stocks.quotes.intraday" ]; then
+            refresh_stock_intraday_quotes "$trade_date" "$force_result_path.targeted"
             continue
         fi
         if [ "$compact_trade_date" != "" ] && [ "$capability_id" = "concepts.quotes.daily" ]; then
