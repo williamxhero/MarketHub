@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from quotemux.capabilities.inventory import CapabilityDefinition, list_capability_definitions
 from quotemux.infra.db.availability import get_fact_ref_availability
@@ -42,6 +43,28 @@ OBJECT_PRIMARY_KEYS = {
     "ref.index": ("index_code",),
 }
 
+OBJECT_PRIMARY_KEY_INDEXES = {
+    "fact.stock_daily_1d": "stock_daily_1d_pkey",
+    "fact.stock_bar_1m": "stock_bar_1m_pkey",
+    "fact.stock_bar_30m": "stock_bar_30m_pkey",
+    "fact.index_bar_1d": "index_bar_1d_pkey",
+    "fact.concept_daily_1d": "concept_daily_1d_pkey",
+    "ref.trade_calendar": "trade_calendar_pkey",
+    "ref.stock": "stock_pkey",
+    "ref.stock_name_history": "stock_name_history_pkey",
+    "ref.concept": "concept_pkey",
+    "ref.concept_stock_membership": "concept_stock_membership_pkey",
+    "ref.index": "index_pkey",
+}
+
+OBJECT_TIME_COLUMNS = {
+    "fact.stock_daily_1d": "trade_date",
+    "fact.stock_bar_1m": "bar_time",
+    "fact.stock_bar_30m": "bar_time",
+    "fact.index_bar_1d": "trade_date",
+    "fact.concept_daily_1d": "trade_date",
+}
+
 @dataclass(frozen=True)
 class CheckSpec:
     check_id: str
@@ -63,12 +86,13 @@ class CheckSpec:
 def get_data_health() -> dict[str, object]:
     profiles = _load_profiles()
     definitions = list_capability_definitions()
+    check_cache: dict[str, CheckSpec] = {}
     db_available = is_db_available()
     fact_ref = get_fact_ref_availability() if db_available else _empty_fact_ref_availability()
     fact_ref["status"] = _normalize_status(str(fact_ref.get("status", "warning")))
     objects = _objects_by_name(fact_ref)
     calendar = _check_trade_calendar(objects, db_available)
-    capabilities = [_build_capability_health(definition, profiles, objects, db_available, calendar) for definition in definitions]
+    capabilities = [_build_capability_health(definition, profiles, objects, db_available, calendar, check_cache) for definition in definitions]
     groups = _build_group_health(capabilities)
     summary = _build_summary(capabilities)
     status = _worst_status([str(summary["status"]), str(calendar["status"]), str(fact_ref.get("status", "warning"))])
@@ -140,6 +164,7 @@ def _check_trade_calendar(objects: dict[str, dict[str, object]], db_available: b
             max(trade_date)::text as max_trade_date
         from ref.trade_calendar
         where trade_date >= current_date - interval '90 days'
+          and trade_date < current_date
         """
     )
     if frame.empty:
@@ -162,10 +187,11 @@ def _build_capability_health(
     objects: dict[str, dict[str, object]],
     db_available: bool,
     calendar: dict[str, object],
+    check_cache: dict[str, CheckSpec],
 ) -> dict[str, object]:
     profile = profiles.get(definition.capability_id, {})
     dependencies = _reference_objects(profile)
-    checks = _build_checks(profile, objects, db_available, calendar)
+    checks = _build_checks(profile, objects, db_available, calendar, check_cache)
     status = _status_from_checks(checks)
     issues = [check["error_text"] for check in checks if check["error_text"] != ""]
     return {
@@ -191,6 +217,7 @@ def _build_checks(
     objects: dict[str, dict[str, object]],
     db_available: bool,
     calendar: dict[str, object],
+    check_cache: dict[str, CheckSpec],
 ) -> list[dict[str, str]]:
     checks: list[CheckSpec] = []
     raw_checks = profile.get("checks", [])
@@ -198,7 +225,7 @@ def _build_checks(
         raw_checks = []
     for raw_check in raw_checks:
         if isinstance(raw_check, dict):
-            checks.extend(_run_configured_check(raw_check, profile, objects, db_available, calendar))
+            checks.extend(_run_configured_check(raw_check, profile, objects, db_available, calendar, check_cache))
     return _dedupe_checks(checks)
 
 
@@ -208,6 +235,7 @@ def _run_configured_check(
     objects: dict[str, dict[str, object]],
     db_available: bool,
     calendar: dict[str, object],
+    check_cache: dict[str, CheckSpec],
 ) -> list[CheckSpec]:
     check_type = str(check.get("type", ""))
     object_name = str(check.get("object", ""))
@@ -235,22 +263,27 @@ def _run_configured_check(
     if check_type == "capability_key_unique_rule":
         return [_capability_key_rule_check(_string_list(check.get("fields", [])))]
     if check_type == "primary_key_duplicate_absent":
-        return [_duplicate_check(object_name, objects, db_available)]
+        return [_cached_check(check_cache, f"primary_key_duplicate_absent:{object_name}", lambda: _duplicate_check(object_name, objects, db_available))]
     if check_type == "fixed_field":
         check_id = str(check.get("check_id", ""))
         return [_fixed_field_check(check_id, _fixed_field_title(check_id, str(check.get("expected_value", ""))))]
     if check_type == "ohlc_valid":
-        return [_ohlc_check(object_name, objects, db_available)]
+        return [_cached_check(check_cache, f"ohlc_valid:{object_name}", lambda: _ohlc_check(object_name, objects, db_available))]
     if check_type == "non_negative":
-        return [_non_negative_number_check(object_name, str(check.get("column", "")), objects, db_available)]
+        column = str(check.get("column", ""))
+        return [_cached_check(check_cache, f"non_negative:{object_name}:{column}", lambda: _non_negative_number_check(object_name, column, objects, db_available))]
     if check_type == "money_flow_values_valid":
-        return [_money_flow_value_check(object_name, objects, db_available)]
+        return [_cached_check(check_cache, f"money_flow_values_valid:{object_name}", lambda: _money_flow_value_check(object_name, objects, db_available))]
     if check_type == "recent_coverage_90d":
-        return [_recent_coverage_check(str(check.get("check_id", "")), str(check.get("title", "")), object_name, str(check.get("column", "")), objects, db_available, calendar)]
+        check_id = str(check.get("check_id", ""))
+        column = str(check.get("column", ""))
+        provider_earliest_date = str(check.get("provider_earliest_date", ""))
+        return [_cached_check(check_cache, f"recent_coverage_90d:{check_id}:{object_name}:{column}:{provider_earliest_date}", lambda: _recent_coverage_check(check_id, str(check.get("title", "")), object_name, column, provider_earliest_date, objects, db_available, calendar))]
     if check_type == "calendar_continuity_90d":
         return [_calendar_continuity_check(calendar, db_available)]
     if check_type == "long_empty":
-        return [_long_empty_check(str(check.get("check_id", "")), str(check.get("title", "")), _string_list(check.get("required_objects", [])), objects, db_available, calendar)]
+        check_id = str(check.get("check_id", ""))
+        return [_cached_check(check_cache, f"long_empty:{check_id}", lambda: _long_empty_check(check_id, str(check.get("title", "")), _string_list(check.get("required_objects", [])), objects, db_available, calendar))]
     return [CheckSpec(f"unknown_check_type:{check_type}", f"未知检查类型 {check_type}", "unknown", "未执行", "检查配置无法识别")]
 
 
@@ -344,6 +377,13 @@ def _duplicate_check(object_name: str, objects: dict[str, dict[str, object]], db
     columns = OBJECT_PRIMARY_KEYS.get(object_name, ())
     if columns == ():
         return CheckSpec(f"primary_key_duplicate_absent:{object_name}", title, "not_applicable", "不适用")
+    object_status = objects.get(object_name, {})
+    primary_key_index = OBJECT_PRIMARY_KEY_INDEXES.get(object_name, "")
+    missing_indexes = object_status.get("missing_indexes", [])
+    if primary_key_index != "" and isinstance(missing_indexes, list) and primary_key_index not in missing_indexes:
+        return CheckSpec(f"primary_key_duplicate_absent:{object_name}", title, "healthy", "无")
+    if primary_key_index != "":
+        return CheckSpec(f"primary_key_duplicate_absent:{object_name}", title, "unknown", "未执行", f"缺少主键索引 {primary_key_index}，无法轻量验证主键重复")
     column_sql = ", ".join(columns)
     frame = query_dataframe(f"select count(*)::int as duplicate_group_count from (select {column_sql} from {object_name} group by {column_sql} having count(*) > 1 limit 1) duplicated")
     if frame.empty:
@@ -351,7 +391,7 @@ def _duplicate_check(object_name: str, objects: dict[str, dict[str, object]], db
     duplicate_group_count = int(frame.iloc[0].get("duplicate_group_count", 0) or 0)
     if duplicate_group_count > 0:
         return CheckSpec(f"primary_key_duplicate_absent:{object_name}", title, "unhealthy", "异常", "存在主键重复记录")
-    return CheckSpec(f"primary_key_duplicate_absent:{object_name}", title, "healthy", "?")
+    return CheckSpec(f"primary_key_duplicate_absent:{object_name}", title, "healthy", "无")
 
 
 def _ohlc_check(object_name: str, objects: dict[str, dict[str, object]], db_available: bool) -> CheckSpec:
@@ -359,6 +399,7 @@ def _ohlc_check(object_name: str, objects: dict[str, dict[str, object]], db_avai
         return CheckSpec(f"ohlc_valid:{object_name}", f"{object_name} OHLC 合法", "unknown", "未执行", DB_UNAVAILABLE_ERROR)
     if not _object_exists(object_name, objects):
         return CheckSpec(f"ohlc_valid:{object_name}", f"{object_name} OHLC 合法", "unknown", "未执行", f"缺少依赖表 {object_name}")
+    window_clause = _recent_window_clause(object_name)
     frame = query_dataframe(
         f"""
         select count(*)::int as invalid_count
@@ -368,6 +409,7 @@ def _ohlc_check(object_name: str, objects: dict[str, dict[str, object]], db_avai
           and low is not null
           and close is not null
           and (low > high or open < low or open > high or close < low or close > high)
+          {window_clause}
         """
     )
     return _count_check_result(f"ohlc_valid:{object_name}", f"{object_name} OHLC 合法", frame, "OHLC 关系异常")
@@ -380,7 +422,8 @@ def _non_negative_number_check(object_name: str, column: str, objects: dict[str,
         return CheckSpec(f"non_negative:{object_name}:{column}", f"{object_name} {column} 数值合法", "unknown", "未执行", DB_UNAVAILABLE_ERROR)
     if not _object_exists(object_name, objects):
         return CheckSpec(f"non_negative:{object_name}:{column}", f"{object_name} {column} 数值合法", "unknown", "未执行", f"缺少依赖表 {object_name}")
-    frame = query_dataframe(f"select count(*)::int as invalid_count from {object_name} where {column} is not null and {column} < 0")
+    window_clause = _recent_window_clause(object_name)
+    frame = query_dataframe(f"select count(*)::int as invalid_count from {object_name} where {column} is not null and {column} < 0 {window_clause}")
     return _count_check_result(f"non_negative:{object_name}:{column}", f"{object_name} {column} 数值合法", frame, f"{column} 出现负数")
 
 
@@ -396,11 +439,12 @@ def _money_flow_value_check(object_name: str, objects: dict[str, dict[str, objec
     if value_columns == []:
         return CheckSpec("money_flow_values_valid", "inflow/outflow/net_inflow 数值合法", "unknown", "未执行", "本地依赖表未提供 inflow/outflow/net_inflow 字段，无法执行资金流数值检查")
     clauses = " or ".join(f"{column} is null or {column}::text in ('NaN', 'Infinity', '-Infinity')" for column in value_columns)
-    frame = query_dataframe(f"select count(*)::int as invalid_count from {object_name} where {clauses}")
+    window_clause = _recent_window_clause(object_name)
+    frame = query_dataframe(f"select count(*)::int as invalid_count from {object_name} where ({clauses}) {window_clause}")
     return _count_check_result("money_flow_values_valid", "inflow/outflow/net_inflow 数值合法", frame, "资金流字段出现非法数值")
 
 
-def _recent_coverage_check(check_id: str, title: str, object_name: str, column: str, objects: dict[str, dict[str, object]], db_available: bool, calendar: dict[str, object]) -> CheckSpec:
+def _recent_coverage_check(check_id: str, title: str, object_name: str, column: str, provider_earliest_date: str, objects: dict[str, dict[str, object]], db_available: bool, calendar: dict[str, object]) -> CheckSpec:
     if title == "":
         title = f"{object_name} 最近 90 天覆盖"
     if not db_available:
@@ -409,17 +453,39 @@ def _recent_coverage_check(check_id: str, title: str, object_name: str, column: 
         return CheckSpec(check_id, title, "unknown", "未执行", "交易日历不可用，无法判断覆盖缺口")
     if not _object_exists(object_name, objects):
         return CheckSpec(check_id, title, "unknown", "未执行", f"缺少依赖表 {object_name}")
-    frame = query_dataframe(f"select count(distinct {column}::date)::int as actual_days from {object_name} where {column} >= current_date - interval '90 days'")
+    if not _is_iso_date(provider_earliest_date):
+        return CheckSpec(check_id, title, "unknown", "未执行", f"provider_earliest_date 配置非法: {provider_earliest_date}")
+    frame = query_dataframe(
+        f"""
+        select count(distinct {column}::date)::int as actual_days
+        from {object_name}
+        where {column} >= greatest((current_date - interval '90 days')::date, %s::date)
+          and {column} < current_date
+        """,
+        (provider_earliest_date,),
+    )
     if frame.empty:
         return CheckSpec(check_id, title, "unknown", "未执行", "覆盖检查查询无结果")
     actual_days = int(frame.iloc[0].get("actual_days", 0) or 0)
-    expected_days = int(calendar.get("recent_open_days", 0) or 0)
+    expected_frame = query_dataframe(
+        """
+        select count(*)::int as expected_days
+        from ref.trade_calendar
+        where is_open
+          and trade_date >= greatest((current_date - interval '90 days')::date, %s::date)
+          and trade_date < current_date
+        """,
+        (provider_earliest_date,),
+    )
+    if expected_frame.empty:
+        return CheckSpec(check_id, title, "unknown", "未执行", "交易日历覆盖分母查询无结果")
+    expected_days = int(expected_frame.iloc[0].get("expected_days", 0) or 0)
     if expected_days <= 0:
-        return CheckSpec(check_id, title, "unknown", "未执行", "交易日历最近 90 天没有交易日记录")
+        return CheckSpec(check_id, title, "unknown", "未执行", "provider 起点后的最近窗口没有交易日记录")
     if actual_days <= 0:
-        return CheckSpec(check_id, title, "unhealthy", "异常", "最近 90 天没有本地覆盖数据")
+        return CheckSpec(check_id, title, "unhealthy", "异常", f"provider 起点 {provider_earliest_date} 后的最近窗口没有本地覆盖数据")
     if actual_days < expected_days:
-        return CheckSpec(check_id, title, "warning", "警告", f"最近 90 天覆盖 {actual_days}/{expected_days} 个交易日")
+        return CheckSpec(check_id, title, "warning", "警告", f"provider 起点 {provider_earliest_date} 后的最近窗口覆盖 {actual_days}/{expected_days} 个交易日")
     return CheckSpec(check_id, title, "healthy", "正常")
 
 
@@ -466,6 +532,30 @@ def _table_columns(object_name: str) -> set[str]:
     if frame.empty:
         return set()
     return {str(row["column_name"]) for _, row in frame.iterrows()}
+
+
+def _recent_window_clause(object_name: str) -> str:
+    time_column = OBJECT_TIME_COLUMNS.get(object_name, "")
+    if time_column == "":
+        return ""
+    return f"and {time_column} >= current_date - interval '90 days' and {time_column} < current_date"
+
+
+def _is_iso_date(value: str) -> bool:
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
+def _cached_check(cache: dict[str, CheckSpec], key: str, factory: Callable[[], CheckSpec]) -> CheckSpec:
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    check = factory()
+    cache[key] = check
+    return check
 
 
 def _reference_objects(profile: dict[str, object]) -> list[str]:

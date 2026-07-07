@@ -30,6 +30,7 @@ LOCK_PATH="$RUN_ROOT/global-data-update.lock"
 RUN_ID="$(date '+%Y%m%d_%H%M%S')"
 RESULT_DIR="$RUN_ROOT/results"
 VALIDATION_PATH="$RESULT_DIR/$RUN_ID.validation.json"
+CAPTURE_RESULT_PATH="$RESULT_DIR/$RUN_ID.capture.json"
 LOG_PATH="$LOG_ROOT/global-data-update.log"
 DB_HOST="${MARKETHUB_DB_HOST:-127.0.0.1}"
 DB_PORT="${MARKETHUB_DB_PORT:-55432}"
@@ -41,6 +42,10 @@ CONCEPT_BACKFILL_WINDOW_COUNT="${MARKETHUB_CONCEPT_BACKFILL_WINDOW_COUNT:-7}"
 CONCEPT_BACKFILL_SCRIPT="${MARKETHUB_CONCEPT_BACKFILL_SCRIPT:-$WORKSPACE_ROOT/MarketHub/scripts/backfill_concept_runtime_refs.py}"
 if [ ! -f "$CONCEPT_BACKFILL_SCRIPT" ] && [ -f "/data/MarketHub2/current/MarketHub/scripts/backfill_concept_runtime_refs.py" ]; then
     CONCEPT_BACKFILL_SCRIPT="/data/MarketHub2/current/MarketHub/scripts/backfill_concept_runtime_refs.py"
+fi
+DATA_HEALTH_SCRIPT="${MARKETHUB_DATA_HEALTH_SCRIPT:-$SCRIPT_DIR/data-health-check.sh}"
+if [ ! -f "$DATA_HEALTH_SCRIPT" ] && [ -f "/data/markethub/scripts/data-health-check.sh" ]; then
+    DATA_HEALTH_SCRIPT="/data/markethub/scripts/data-health-check.sh"
 fi
 
 log() {
@@ -170,6 +175,26 @@ preprocess() {
     fi
 }
 
+run_due_captures() {
+    log "核心执行：同步运行到期 capability 数据更新"
+    curl --fail --silent --show-error --connect-timeout 10 --max-time "$CAPTURE_WAIT_SECONDS" -X POST "$MARKETHUB_BASE_URL/api/admin/capture/run-due" -o "$CAPTURE_RESULT_PATH"
+    "$MARKETHUB_PYTHON" - "$CAPTURE_RESULT_PATH" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(payload, list):
+    raise SystemExit("到期 capability 更新返回值不是列表")
+failed = [item for item in payload if isinstance(item, dict) and str(item.get("status", "")) == "failed"]
+print(f"due_capture_runs={len(payload)} failed={len(failed)}")
+if failed:
+    raise SystemExit("到期 capability 更新存在失败项")
+PY
+}
+
 validate_market_coverage() {
     local validation_path="$1"
     local status
@@ -268,17 +293,28 @@ try:
         """,
         (trade_date,),
     )
-    stock_intraday_coverage_count = sql_count(
+    stock_intraday_code_count = sql_count(
+        connection,
+        """
+        select count(distinct bar_rows.code)
+        from fact.stock_bar_1m bar_rows
+        where bar_rows.bar_time >= %s::date
+          and bar_rows.bar_time < %s::date + interval '1 day'
+        """,
+        (trade_date, trade_date),
+    )
+    stock_intraday_close_count = sql_count(
         connection,
         """
         select count(*)
         from (
-            select 1
+            select bar_rows.market, bar_rows.code, max(bar_rows.bar_time)::time as last_bar_time
             from fact.stock_bar_1m bar_rows
             where bar_rows.bar_time >= %s::date
               and bar_rows.bar_time < %s::date + interval '1 day'
-            limit 1
-        ) rows
+            group by bar_rows.market, bar_rows.code
+        ) code_rows
+        where code_rows.last_bar_time >= time '15:00'
         """,
         (trade_date, trade_date),
     )
@@ -351,9 +387,17 @@ checks = [
         "source": "db",
     },
     {
-        "name": "stock_intraday_coverage",
-        "count": stock_intraday_coverage_count,
-        "minimum": 1,
+        "name": "stock_intraday_code_coverage",
+        "count": stock_intraday_code_count,
+        "minimum": env_int("MARKETHUB_MIN_STOCK_INTRADAY_CODES", 3000),
+        "blocking": True,
+        "capabilities": ["stocks.quotes.intraday"],
+        "source": "db",
+    },
+    {
+        "name": "stock_intraday_close_coverage",
+        "count": stock_intraday_close_count,
+        "minimum": env_int("MARKETHUB_MIN_STOCK_INTRADAY_CODES", 3000),
         "blocking": True,
         "capabilities": ["stocks.quotes.intraday"],
         "source": "db",
@@ -722,10 +766,17 @@ postprocess() {
     return 1
 }
 
+check_data_health() {
+    log "后处理：执行数据健康检查"
+    "$DATA_HEALTH_SCRIPT"
+}
+
 run_once() {
     log "开始 MarketHub / QuoteMux 全局数据更新"
     preprocess
+    run_due_captures
     postprocess
+    check_data_health
     log "完成 MarketHub / QuoteMux 全局数据更新"
 }
 

@@ -3830,7 +3830,8 @@
           "type": "recent_coverage_90d",
           "check_id": "daily_coverage_90d",
           "object": "fact.stock_daily_1d",
-          "column": "trade_date"
+          "column": "trade_date",
+          "provider_earliest_date": "1990-12-19"
         }
       ]
     },
@@ -4062,13 +4063,15 @@
           "type": "recent_coverage_90d",
           "check_id": "minute_session_coverage_90d:fact.stock_bar_1m",
           "object": "fact.stock_bar_1m",
-          "column": "bar_time"
+          "column": "bar_time",
+          "provider_earliest_date": "2024-01-01"
         },
         {
           "type": "recent_coverage_90d",
           "check_id": "minute_session_coverage_90d:fact.stock_bar_30m",
           "object": "fact.stock_bar_30m",
-          "column": "bar_time"
+          "column": "bar_time",
+          "provider_earliest_date": "2024-01-01"
         }
       ]
     },
