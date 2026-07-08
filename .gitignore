@@ -27,3 +27,5 @@ tests/
 /scripts/*
 !/scripts/data-health-check.sh
 !/scripts/global-data-update-with-health.sh
+/scripts
+/services/markethub_api/notes/*.md
