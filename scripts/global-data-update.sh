@@ -43,11 +43,6 @@ CONCEPT_BACKFILL_SCRIPT="${MARKETHUB_CONCEPT_BACKFILL_SCRIPT:-$WORKSPACE_ROOT/Ma
 if [ ! -f "$CONCEPT_BACKFILL_SCRIPT" ] && [ -f "/data/MarketHub2/current/MarketHub/scripts/backfill_concept_runtime_refs.py" ]; then
     CONCEPT_BACKFILL_SCRIPT="/data/MarketHub2/current/MarketHub/scripts/backfill_concept_runtime_refs.py"
 fi
-DATA_HEALTH_SCRIPT="${MARKETHUB_DATA_HEALTH_SCRIPT:-$SCRIPT_DIR/data-health-check.sh}"
-if [ ! -f "$DATA_HEALTH_SCRIPT" ] && [ -f "/data/markethub/scripts/data-health-check.sh" ]; then
-    DATA_HEALTH_SCRIPT="/data/markethub/scripts/data-health-check.sh"
-fi
-
 log() {
     printf '[%s] %s\n' "$(date '+%F %T')" "$1"
 }
@@ -766,17 +761,11 @@ postprocess() {
     return 1
 }
 
-check_data_health() {
-    log "后处理：执行数据健康检查"
-    "$DATA_HEALTH_SCRIPT"
-}
-
 run_once() {
     log "开始 MarketHub / QuoteMux 全局数据更新"
     preprocess
     run_due_captures
     postprocess
-    check_data_health
     log "完成 MarketHub / QuoteMux 全局数据更新"
 }
 

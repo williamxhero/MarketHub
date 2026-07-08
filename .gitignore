@@ -26,4 +26,4 @@ services/markethub_console/dist/
 tests/
 /scripts/*
 !/scripts/data-health-check.sh
-/scripts
+!/scripts/global-data-update-with-health.sh

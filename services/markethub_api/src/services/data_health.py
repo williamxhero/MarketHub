@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from core.config import DATA_ROOT
 from quotemux.capabilities.inventory import CapabilityDefinition, list_capability_definitions
 from quotemux.infra.db.availability import get_fact_ref_availability
 from quotemux.infra.db.client import is_db_available, query_dataframe
@@ -84,6 +86,16 @@ class CheckSpec:
 
 
 def get_data_health() -> dict[str, object]:
+    return _read_latest_payload()
+
+
+def run_data_health_check() -> dict[str, object]:
+    payload = _compute_data_health()
+    _write_latest_payload(payload)
+    return payload
+
+
+def _compute_data_health() -> dict[str, object]:
     profiles = _load_profiles()
     definitions = list_capability_definitions()
     check_cache: dict[str, CheckSpec] = {}
@@ -107,6 +119,55 @@ def get_data_health() -> dict[str, object]:
         },
         "groups": groups,
         "capabilities": capabilities,
+    }
+
+
+def _read_latest_payload() -> dict[str, object]:
+    latest_path = _latest_payload_path()
+    if not latest_path.is_file():
+        return _empty_latest_payload()
+    try:
+        with latest_path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return _empty_latest_payload()
+    if not isinstance(payload, dict):
+        return _empty_latest_payload()
+    return payload
+
+
+def _write_latest_payload(payload: dict[str, object]) -> None:
+    latest_path = _latest_payload_path()
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = latest_path.with_suffix(".json.tmp")
+    with tmp_path.open("w", encoding="utf-8") as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2)
+        file.write("\n")
+    tmp_path.replace(latest_path)
+
+
+def _latest_payload_path() -> Path:
+    return _data_health_root() / "latest.json"
+
+
+def _data_health_root() -> Path:
+    root_text = os.getenv("MARKETHUB_DATA_HEALTH_ROOT", "")
+    if root_text != "":
+        return Path(root_text)
+    runtime_root_text = os.getenv("MARKETHUB_RUNTIME_ROOT", "")
+    if runtime_root_text != "":
+        return Path(runtime_root_text) / "data-health"
+    return DATA_ROOT / "data-health"
+
+
+def _empty_latest_payload() -> dict[str, object]:
+    return {
+        "status": "unknown",
+        "checked_at": "",
+        "summary": {"status": "unknown", "total": 0, "healthy": 0, "warning": 0, "unhealthy": 0},
+        "dependencies": {},
+        "groups": [],
+        "capabilities": [],
     }
 
 

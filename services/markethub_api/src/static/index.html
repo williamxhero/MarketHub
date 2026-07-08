@@ -90,7 +90,8 @@
     }
 
     .nav a,
-    .reload {
+    .reload,
+    .run-check {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -103,6 +104,18 @@
       font-weight: 700;
       border-radius: 6px;
       cursor: pointer;
+    }
+
+    .run-check {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .reload:disabled,
+    .run-check:disabled {
+      cursor: not-allowed;
+      opacity: 0.62;
     }
 
     .nav a.primary {
@@ -457,6 +470,7 @@
       <nav class="nav" aria-label="主要入口">
         <a class="primary" href="/api/openapi">API 文档</a>
         <a href="/admin">管理后台</a>
+        <button class="run-check" id="runCheck" type="button">全量检查</button>
         <button class="reload" id="reload" type="button">刷新</button>
       </nav>
     </header>
@@ -574,6 +588,28 @@
       }
     }
 
+    async function runFullCheck() {
+      $("error").hidden = true;
+      $("runCheck").disabled = true;
+      $("reload").disabled = true;
+      $("checkedAt").textContent = "正在执行全量检查";
+      try {
+        const response = await fetch("/api/data-health/run", { method: "POST", headers: { Accept: "application/json" } });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        state.payload = await response.json();
+        state.capabilities = Array.isArray(state.payload.capabilities) ? state.payload.capabilities : [];
+        render();
+      } catch (error) {
+        $("error").textContent = `全量检查失败：${error.message}`;
+        $("error").hidden = false;
+      } finally {
+        $("runCheck").disabled = false;
+        $("reload").disabled = false;
+      }
+    }
+
     function render() {
       renderSummary();
       renderTable();
@@ -656,6 +692,7 @@
     }
 
     $("reload").addEventListener("click", loadHealth);
+    $("runCheck").addEventListener("click", runFullCheck);
     $("search").addEventListener("input", renderTable);
     $("statusFilter").addEventListener("change", renderTable);
     $("detailClose").addEventListener("click", closeDetail);

@@ -104,6 +104,8 @@ def _write_default_environment() -> None:
 def _install_runtime_scripts() -> None:
     script_names = [
         "global-data-update.sh",
+        "global-data-update-with-health.sh",
+        "data-health-check.sh",
         "limit-order-amount-update.sh",
     ]
     for script_name in script_names:

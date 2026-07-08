@@ -168,9 +168,11 @@ MARKETHUB_RUNTIME_ROOT=/data/markethub python3 install_markethub.py
 
 ```
 $MARKETHUB_RUNTIME_ROOT/scripts/global-data-update.sh
+$MARKETHUB_RUNTIME_ROOT/scripts/global-data-update-with-health.sh
+$MARKETHUB_RUNTIME_ROOT/scripts/data-health-check.sh
 $MARKETHUB_RUNTIME_ROOT/scripts/limit-order-amount-update.sh
 ```
 
-`global-data-update.sh` 用于普通 capability 到期更新。`limit-order-amount-update.sh` 用于涨跌停封单额专用采集，Task Center 应在北京时间每个开盘日 `18:00` 单独调度它，不走普通 `run-due-async`；脚本会先检查当天交易日历，非开盘日直接返回 `skipped`。
+`global-data-update.sh` 用于普通 capability 到期更新。`global-data-update-with-health.sh` 用于 04:00 全局更新任务，数据更新成功结束后会继续调用 `data-health-check.sh` 执行数据健康检查。`limit-order-amount-update.sh` 用于涨跌停封单额专用采集，Task Center 应在北京时间每个开盘日 `18:00` 单独调度它，不走普通 `run-due-async`；脚本会先检查当天交易日历，非开盘日直接返回 `skipped`。
 
 `MarketHub/scripts/run_api.py` 会读取 `$MARKETHUB_RUNTIME_ROOT/env/markethub.env`，保证 API、QuoteMux runtime 和运行脚本使用同一个运行目录配置。
