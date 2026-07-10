@@ -620,6 +620,59 @@
         }
       ]
     },
+    "boards.quotes.daily": {
+      "group": "行情时序",
+      "logic_scope": "行业板块日线",
+      "reference_data": "ref.trade_calendar; ref.stock; fact.stock_daily_1d; fact.board_daily_1d",
+      "reference_objects": [
+        "fact.board_daily_1d",
+        "ref.trade_calendar",
+        "ref.stock",
+        "fact.stock_daily_1d"
+      ],
+      "pass_rule": "每个已完成交易日均有基于股票行业分类派生的行业板块日线",
+      "empty_result_rule": "非交易日缺数据健康",
+      "unhealthy_rule": "交易日缺少行业板块日线或最近交易日覆盖中断",
+      "checks": [
+        {
+          "type": "logic_rule_registered"
+        },
+        {
+          "type": "database_available"
+        },
+        {
+          "type": "table_exists",
+          "object": "fact.board_daily_1d"
+        },
+        {
+          "type": "indexes_complete",
+          "object": "fact.board_daily_1d"
+        },
+        {
+          "type": "table_non_empty",
+          "object": "fact.board_daily_1d"
+        },
+        {
+          "type": "trade_calendar_available"
+        },
+        {
+          "type": "recent_coverage_90d",
+          "check_id": "recent_coverage_90d:fact.board_daily_1d",
+          "title": "行业板块日线最近交易日连续覆盖",
+          "object": "fact.board_daily_1d",
+          "column": "trade_date",
+          "provider_earliest_date": "2026-06-01"
+        },
+        {
+          "type": "primary_key_duplicate_absent",
+          "object": "fact.board_daily_1d"
+        },
+        {
+          "type": "ohlc_valid",
+          "object": "fact.board_daily_1d"
+        }
+      ]
+    },
     "concepts.quotes.daily": {
       "group": "行情时序",
       "logic_scope": "概念日线与快照",
@@ -717,6 +770,14 @@
         {
           "type": "ohlc_valid",
           "object": "fact.concept_daily_1d"
+        },
+        {
+          "type": "recent_coverage_90d",
+          "check_id": "recent_coverage_90d:fact.concept_daily_1d",
+          "title": "概念日线最近交易日连续覆盖",
+          "object": "fact.concept_daily_1d",
+          "column": "trade_date",
+          "provider_earliest_date": "2026-06-01"
         }
       ]
     },
@@ -4065,6 +4126,15 @@
           "object": "fact.stock_bar_1m",
           "column": "bar_time",
           "provider_earliest_date": "2024-01-01"
+        },
+        {
+          "type": "recent_minute_session_complete",
+          "check_id": "recent_minute_session_complete:fact.stock_bar_1m",
+          "title": "1m 最近交易日分钟完整性",
+          "object": "fact.stock_bar_1m",
+          "expected_minutes": 241,
+          "lookback_days": 10,
+          "min_row_ratio": 0.95
         },
         {
           "type": "recent_coverage_90d",

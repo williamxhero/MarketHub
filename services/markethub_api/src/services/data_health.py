@@ -18,6 +18,7 @@ KNOWN_OBJECT_NAMES = (
     "fact.stock_bar_1m",
     "fact.stock_bar_30m",
     "fact.index_bar_1d",
+    "fact.board_daily_1d",
     "fact.concept_daily_1d",
     "ref.trade_calendar",
     "ref.stock",
@@ -36,6 +37,7 @@ OBJECT_PRIMARY_KEYS = {
     "fact.stock_bar_1m": ("market", "code", "bar_time"),
     "fact.stock_bar_30m": ("market", "code", "bar_time"),
     "fact.index_bar_1d": ("index_code", "trade_date"),
+    "fact.board_daily_1d": ("board_code", "trade_date"),
     "fact.concept_daily_1d": ("concept_id", "trade_date"),
     "ref.trade_calendar": ("exchange", "trade_date"),
     "ref.stock": ("market", "code"),
@@ -50,6 +52,7 @@ OBJECT_PRIMARY_KEY_INDEXES = {
     "fact.stock_bar_1m": "stock_bar_1m_pkey",
     "fact.stock_bar_30m": "stock_bar_30m_pkey",
     "fact.index_bar_1d": "index_bar_1d_pkey",
+    "fact.board_daily_1d": "board_daily_1d_pkey",
     "fact.concept_daily_1d": "concept_daily_1d_pkey",
     "ref.trade_calendar": "trade_calendar_pkey",
     "ref.stock": "stock_pkey",
@@ -64,6 +67,7 @@ OBJECT_TIME_COLUMNS = {
     "fact.stock_bar_1m": "bar_time",
     "fact.stock_bar_30m": "bar_time",
     "fact.index_bar_1d": "trade_date",
+    "fact.board_daily_1d": "trade_date",
     "fact.concept_daily_1d": "trade_date",
 }
 
@@ -340,6 +344,12 @@ def _run_configured_check(
         column = str(check.get("column", ""))
         provider_earliest_date = str(check.get("provider_earliest_date", ""))
         return [_cached_check(check_cache, f"recent_coverage_90d:{check_id}:{object_name}:{column}:{provider_earliest_date}", lambda: _recent_coverage_check(check_id, str(check.get("title", "")), object_name, column, provider_earliest_date, objects, db_available, calendar))]
+    if check_type == "recent_minute_session_complete":
+        check_id = str(check.get("check_id", ""))
+        expected_minutes = int(check.get("expected_minutes", 241) or 241)
+        lookback_days = int(check.get("lookback_days", 10) or 10)
+        min_row_ratio = float(check.get("min_row_ratio", 0.95) or 0.95)
+        return [_cached_check(check_cache, f"recent_minute_session_complete:{check_id}:{object_name}:{expected_minutes}:{lookback_days}:{min_row_ratio}", lambda: _recent_minute_session_check(check_id, str(check.get("title", "")), object_name, expected_minutes, lookback_days, min_row_ratio, objects, db_available, calendar))]
     if check_type == "calendar_continuity_90d":
         return [_calendar_continuity_check(calendar, db_available)]
     if check_type == "long_empty":
@@ -550,6 +560,121 @@ def _recent_coverage_check(check_id: str, title: str, object_name: str, column: 
     return CheckSpec(check_id, title, "healthy", "正常")
 
 
+def _recent_minute_session_check(
+    check_id: str,
+    title: str,
+    object_name: str,
+    expected_minutes: int,
+    lookback_days: int,
+    min_row_ratio: float,
+    objects: dict[str, dict[str, object]],
+    db_available: bool,
+    calendar: dict[str, object],
+) -> CheckSpec:
+    if check_id == "":
+        check_id = f"recent_minute_session_complete:{object_name}"
+    if title == "":
+        title = f"{object_name} 最近交易日分钟完整性"
+    if not db_available:
+        return CheckSpec(check_id, title, "unknown", "未执行", DB_UNAVAILABLE_ERROR)
+    if str(calendar.get("status", "unhealthy")) != "healthy":
+        return CheckSpec(check_id, title, "unknown", "未执行", "交易日历不可用，无法判断分钟完整性")
+    if not _object_exists(object_name, objects):
+        return CheckSpec(check_id, title, "unknown", "未执行", f"缺少依赖表 {object_name}")
+    if expected_minutes <= 0 or lookback_days <= 0:
+        return CheckSpec(check_id, title, "unknown", "未执行", "分钟完整性检查配置非法")
+    frame = query_dataframe(
+        f"""
+        with clock as (
+            select
+                (now() at time zone 'Asia/Shanghai')::date as today,
+                (now() at time zone 'Asia/Shanghai')::time as now_time
+        ),
+        expected_days as (
+            select ref.trade_calendar.trade_date
+            from ref.trade_calendar
+            cross join clock
+            where ref.trade_calendar.is_open
+              and ref.trade_calendar.trade_date >= clock.today - %s::int
+              and (
+                  ref.trade_calendar.trade_date < clock.today
+                  or (ref.trade_calendar.trade_date = clock.today and clock.now_time >= time '15:10')
+              )
+        ),
+        expected_minutes as (
+            select expected_days.trade_date, expected_days.trade_date + minute_series.minute_time as bar_time
+            from expected_days
+            cross join (
+                select time '09:30' + minute_offset * interval '1 minute' as minute_time
+                from generate_series(0, 120) as minute_offset
+                union all
+                select time '13:01' + minute_offset * interval '1 minute' as minute_time
+                from generate_series(0, 119) as minute_offset
+            ) minute_series
+        ),
+        minute_counts as (
+            select
+                expected_minutes.trade_date as trade_date,
+                expected_minutes.bar_time::time as minute_time,
+                count(bars.*)::int as row_count
+            from expected_minutes
+            left join {object_name} bars
+              on bars.{OBJECT_TIME_COLUMNS[object_name]} = expected_minutes.bar_time
+            group by 1, 2
+        ),
+        day_stats as (
+            select
+                trade_date,
+                count(*) filter (where row_count > 0)::int as minute_count,
+                sum(row_count)::bigint as total_rows,
+                min(minute_time) filter (where row_count > 0)::text as first_minute,
+                max(minute_time) filter (where row_count > 0)::text as last_minute,
+                min(row_count) filter (where row_count > 0)::int as min_rows_per_minute,
+                max(row_count)::int as max_rows_per_minute
+            from minute_counts
+            group by trade_date
+        )
+        select
+            expected_days.trade_date::text as trade_date,
+            coalesce(day_stats.minute_count, 0)::int as minute_count,
+            coalesce(day_stats.total_rows, 0)::bigint as total_rows,
+            coalesce(day_stats.first_minute, '') as first_minute,
+            coalesce(day_stats.last_minute, '') as last_minute,
+            coalesce(day_stats.min_rows_per_minute, 0)::int as min_rows_per_minute,
+            coalesce(day_stats.max_rows_per_minute, 0)::int as max_rows_per_minute
+        from expected_days
+        left join day_stats on day_stats.trade_date = expected_days.trade_date
+        order by expected_days.trade_date desc
+        """,
+        (lookback_days,),
+    )
+    if frame.empty:
+        return CheckSpec(check_id, title, "unknown", "未执行", "最近窗口没有已完成交易日")
+    issues: list[str] = []
+    for _, row in frame.iterrows():
+        trade_date = str(row.get("trade_date", ""))
+        minute_count = int(row.get("minute_count", 0) or 0)
+        min_rows = int(row.get("min_rows_per_minute", 0) or 0)
+        max_rows = int(row.get("max_rows_per_minute", 0) or 0)
+        if minute_count <= 0:
+            issues.append(f"{trade_date} 无 1m 数据")
+            continue
+        first_minute = _minute_text(str(row.get("first_minute", "")))
+        last_minute = _minute_text(str(row.get("last_minute", "")))
+        day_issues: list[str] = []
+        if minute_count < expected_minutes:
+            day_issues.append(f"分钟数 {minute_count}/{expected_minutes}")
+        if first_minute != "09:30" or last_minute != "15:00":
+            day_issues.append(f"首尾分钟 {first_minute}-{last_minute}")
+        if max_rows > 0 and min_rows < int(max_rows * min_row_ratio):
+            day_issues.append(f"每分钟股票数 {min_rows}-{max_rows}")
+        if day_issues != []:
+            issues.append(f"{trade_date} " + "，".join(day_issues))
+    if issues != []:
+        return CheckSpec(check_id, title, "warning", "警告", "；".join(issues[:8]))
+    return CheckSpec(check_id, title, "healthy", f"最近 {len(frame.index)} 个已完成交易日完整")
+
+
 def _calendar_continuity_check(calendar: dict[str, object], db_available: bool) -> CheckSpec:
     if not db_available:
         return CheckSpec("calendar_continuity_90d", "交易日历最近 90 天连续覆盖", "unknown", "未执行", DB_UNAVAILABLE_ERROR)
@@ -608,6 +733,10 @@ def _is_iso_date(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _minute_text(value: str) -> str:
+    return value[:5] if len(value) >= 5 else value
 
 
 def _cached_check(cache: dict[str, CheckSpec], key: str, factory: Callable[[], CheckSpec]) -> CheckSpec:

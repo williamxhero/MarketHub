@@ -51,9 +51,17 @@ def _bootstrap_env() -> None:
 _bootstrap_env()
 
 from quotemux.fact_ref_writes import get_fact_ref_writer
-from quotemux.infra.db.client import execute_sql
+from quotemux.infra.db.client import execute_sql, query_dataframe
 from quotemux.requests.markets import TradingCalendarRequest
 from quotemux.runtime import QuoteMux
+from quotemux.concept_runtime import (
+    CONCEPT_MEMBERS_SOURCE_ORDER,
+    _crawler_provider_aliases,
+    _dedupe_member_union,
+    _rewrite_provider_member_items,
+    _timed_source_package_call,
+)
+from platform_models import BoardMemberItem
 
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -121,6 +129,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window-count", type=int, default=DEFAULT_WINDOW_COUNT, help="最近开盘交易日窗口数")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="概念成分抓取并发数")
     parser.add_argument("--concept-id", type=str, default="", help="只回填指定概念成分")
+    parser.add_argument("--members-only", action="store_true", help="只重建概念成分股表")
+    parser.add_argument("--quotes-only", action="store_true", help="只按统一成分股聚合口径重建概念日线")
     return parser.parse_args()
 
 
@@ -145,6 +155,13 @@ def recent_trade_dates(runtime: QuoteMux, window_count: int) -> tuple[str, ...]:
     return tuple(values[-window_count:])
 
 
+def latest_concept_daily_trade_date() -> str:
+    frame = query_dataframe("select coalesce(max(trade_date)::text, '') as trade_date from fact.concept_daily_1d", ())
+    if frame.empty:
+        return ""
+    return str(frame.iloc[0].to_dict().get("trade_date", ""))
+
+
 def write_items(capability_id: str, items: Sequence[object]) -> int:
     if not items:
         return 0
@@ -154,12 +171,6 @@ def write_items(capability_id: str, items: Sequence[object]) -> int:
     if not writer(list(items)):
         raise RuntimeError(f"写入失败: {capability_id}")
     return len(items)
-
-
-def fetch_daily_snapshot_ids(runtime: QuoteMux, trade_date: str) -> tuple[list[object], tuple[str, ...]]:
-    items = runtime.concepts.get_market_daily_snapshot(trade_date, MAX_CONCEPT_LIMIT, 0)
-    concept_ids = tuple(sorted({item.concept_id for item in items if item.concept_id != ""}))
-    return items, concept_ids
 
 
 def normalize_concept_id(value: str) -> str:
@@ -174,27 +185,45 @@ def fetch_member_payload(runtime: QuoteMux, concept_id: str, trade_dates: tuple[
     return ConceptMemberBackfillPayload(concept_id, "", ())
 
 
-def active_concept_ids_by_date(runtime: QuoteMux, trade_dates: tuple[str, ...]) -> tuple[dict[str, tuple[str, ...]], int]:
-    mapping: dict[str, tuple[str, ...]] = {}
+def fetch_provider_member_payload(runtime: QuoteMux, concept_id: str, trade_dates: tuple[str, ...]) -> ConceptMemberBackfillPayload:
+    for trade_date in reversed(trade_dates):
+        aliases = runtime.concepts._concept_aliases(concept_id, trade_date, "concepts.members", CONCEPT_MEMBERS_SOURCE_ORDER)
+        items = []
+        for alias in _crawler_provider_aliases(aliases):
+            try:
+                raw_items = _timed_source_package_call(runtime.concepts._settings, "concepts.members", "crawler_provider", "get_concept_members", f"{alias.board_type}:{alias.board_code}", trade_date)
+            except Exception:
+                continue
+            if isinstance(raw_items, list):
+                items.extend(_rewrite_provider_member_items([item for item in raw_items if isinstance(item, BoardMemberItem)], alias))
+        if items != []:
+            return ConceptMemberBackfillPayload(concept_id, trade_date, tuple(_dedupe_member_union(items)))
+        for alias in aliases:
+            if alias.provider in {"crawler_provider", "derived_core"}:
+                continue
+            try:
+                raw_items = _timed_source_package_call(runtime.concepts._settings, "concepts.members", alias.provider, "get_concept_members", alias.board_code, trade_date)
+            except Exception:
+                continue
+            if isinstance(raw_items, list):
+                items.extend(_rewrite_provider_member_items([item for item in raw_items if isinstance(item, BoardMemberItem)], alias))
+        if items != []:
+            return ConceptMemberBackfillPayload(concept_id, trade_date, tuple(_dedupe_member_union(items)))
+    return ConceptMemberBackfillPayload(concept_id, "", ())
+
+
+def rebuild_daily_snapshots(runtime: QuoteMux, trade_dates: tuple[str, ...], concept_ids: tuple[str, ...]) -> int:
     daily_rows = 0
     for trade_date in trade_dates:
-        items, concept_ids = fetch_daily_snapshot_ids(runtime, trade_date)
+        items = runtime.concepts._get_derived_snapshot_items(list(concept_ids), trade_date)
         daily_rows += write_items("concepts.quotes.daily", items)
-        mapping[trade_date] = concept_ids
-        log(f"已回填概念日线快照 {trade_date}: concepts={len(concept_ids)} rows={len(items)}")
-    return mapping, daily_rows
+        log(f"已按统一成分股聚合口径重建概念日线 {trade_date}: rows={len(items)}")
+    return daily_rows
 
 
 def current_catalog(runtime: QuoteMux) -> tuple[object, ...]:
     items = runtime.concepts.get_catalog("", "a_share", "active", MAX_CONCEPT_LIMIT, 0)
     return tuple(items)
-
-
-def deduped_active_concept_ids(active_ids_by_date: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
-    ids: list[str] = []
-    for concept_ids in active_ids_by_date.values():
-        ids.extend(concept_ids)
-    return tuple(sorted(set(ids)))
 
 
 def member_write_items(snapshot_items: tuple[object, ...], valid_from: str) -> list[object]:
@@ -204,13 +233,6 @@ def member_write_items(snapshot_items: tuple[object, ...], valid_from: str) -> l
             continue
         rows.append(item.model_copy(update={"join_date": valid_from}))
     return rows
-
-
-def select_membership_concept_ids(active_ids_by_date: dict[str, tuple[str, ...]], requested_concept_id: str) -> tuple[str, ...]:
-    normalized = normalize_concept_id(requested_concept_id)
-    if normalized != "":
-        return (normalized,)
-    return deduped_active_concept_ids(active_ids_by_date)
 
 
 def members_for_concepts(
@@ -241,6 +263,52 @@ def members_for_concepts(
     return snapshot_rows
 
 
+def delete_membership_rows(concept_ids: tuple[str, ...]) -> None:
+    if concept_ids == ():
+        return
+    if not execute_sql("delete from ref.concept_stock_membership where concept_id = any(%s)", (list(concept_ids),)):
+        raise RuntimeError("清理概念成分股行失败")
+
+
+def delete_orphan_membership_rows() -> None:
+    if not execute_sql(
+        """
+        delete from ref.concept_stock_membership membership_rows
+        where not exists (
+            select 1
+            from ref.concept concept_ref
+            where concept_ref.concept_id = membership_rows.concept_id
+        )
+        """,
+        (),
+    ):
+        raise RuntimeError("清理孤儿概念成分股行失败")
+
+
+def rebuild_membership_for_concepts(runtime: QuoteMux, concept_ids: tuple[str, ...], trade_dates: tuple[str, ...], workers: int) -> int:
+    payloads: list[ConceptMemberBackfillPayload] = []
+    completed = 0
+    total = len(concept_ids)
+    if total == 0:
+        return 0
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        future_map = {executor.submit(fetch_provider_member_payload, runtime, concept_id, trade_dates): concept_id for concept_id in concept_ids}
+        for future in as_completed(future_map):
+            concept_id = future_map[future]
+            payload = future.result()
+            if payload.snapshot_items != ():
+                payloads.append(payload)
+            completed += 1
+            if completed % 20 == 0 or completed == total:
+                log(f"概念成分抓取进度 {completed}/{total} payloads={len(payloads)} last={concept_id}")
+    delete_membership_rows(concept_ids)
+    delete_orphan_membership_rows()
+    snapshot_rows = 0
+    for payload in payloads:
+        snapshot_rows += write_items("concepts.members", member_write_items(payload.snapshot_items, payload.snapshot_trade_date or trade_dates[-1]))
+    return snapshot_rows
+
+
 def ensure_positive_window(window_count: int) -> int:
     if window_count < 1:
         raise ValueError("window_count 必须大于 0")
@@ -259,20 +327,39 @@ def main() -> None:
         raise RuntimeError("最近交易日为空，无法回填概念本地表")
 
     log(f"开始回填概念本地表: trade_dates={trade_dates[0]}..{trade_dates[-1]} days={len(trade_dates)} workers={workers}")
+    if args.members_only:
+        latest_trade_date = latest_concept_daily_trade_date()
+        if latest_trade_date != "":
+            trade_dates = (latest_trade_date,)
     ensure_concept_fact_ref_tables()
     catalog_rows = 0
     daily_rows = 0
+    if args.members_only:
+        if requested_concept_id == "":
+            concept_ids = tuple(item.concept_id for item in current_catalog(runtime) if item.concept_id != "")
+        else:
+            concept_ids = (requested_concept_id,)
+        log(f"概念成分重建目标数 {len(concept_ids)}")
+        snapshot_rows = rebuild_membership_for_concepts(runtime, concept_ids, trade_dates, workers)
+        log(f"概念成分重建完成 snapshot_rows={snapshot_rows}")
+        return
+    if args.quotes_only:
+        concept_ids = tuple(item.concept_id for item in current_catalog(runtime) if item.concept_id != "")
+        daily_rows = rebuild_daily_snapshots(runtime, trade_dates, concept_ids)
+        log(f"概念日线重建完成 daily_rows={daily_rows}")
+        return
     if requested_concept_id == "":
         catalog_items = current_catalog(runtime)
         catalog_rows = write_items("concepts.catalog", catalog_items)
         log(f"已回填概念目录 rows={catalog_rows}")
-        active_ids_by_date, daily_rows = active_concept_ids_by_date(runtime, trade_dates)
-        concept_ids = select_membership_concept_ids(active_ids_by_date, requested_concept_id)
+        concept_ids = tuple(item.concept_id for item in catalog_items if item.concept_id != "")
     else:
         concept_ids = (requested_concept_id,)
     log(f"概念成分回填目标数 {len(concept_ids)}")
 
     snapshot_rows = members_for_concepts(runtime, concept_ids, trade_dates, workers, requested_concept_id)
+    if requested_concept_id == "":
+        daily_rows = rebuild_daily_snapshots(runtime, trade_dates, concept_ids)
     log(
         "概念本地表回填完成 "
         f"catalog_rows={catalog_rows} daily_rows={daily_rows} snapshot_rows={snapshot_rows}"
