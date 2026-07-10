@@ -65,9 +65,9 @@ SCHEMA_SQL = (
     """
     update ref.stock
     set listing_board = case
-        when market = 'BJSE' or code like '4%' or code like '8%' or code like '9%' then 'beijing'
-        when market = 'SHSE' and (code like '688%' or code like '689%') then 'star_market'
-        when market = 'SZSE' and (code like '300%' or code like '301%') then 'chi_next'
+        when market = 'BJSE' or left(code, 1) in ('4', '8', '9') then 'beijing'
+        when market = 'SHSE' and left(code, 3) in ('688', '689') then 'star_market'
+        when market = 'SZSE' and left(code, 3) in ('300', '301') then 'chi_next'
         else 'main_board'
     end
     where listing_board = ''
