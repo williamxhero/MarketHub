@@ -102,24 +102,40 @@ with metric_rows as (
         close,
         lag(close) over (partition by market, code order by trade_date) as previous_close
     from fact.stock_daily_1d
-),
-updated_rows as (
-    update fact.stock_daily_1d target
-    set pre_close = coalesce(target.pre_close, metric_rows.previous_close),
-        change = coalesce(target.change, target.close - metric_rows.previous_close),
-        pct_chg = coalesce(
-            target.pct_chg,
-            (target.close - metric_rows.previous_close) / nullif(metric_rows.previous_close, 0) * 100
-        )
-    from metric_rows
-    where target.market = metric_rows.market
-      and target.code = metric_rows.code
-      and target.trade_date = metric_rows.trade_date
-      and metric_rows.previous_close is not null
-      and (target.pre_close is null or target.change is null or target.pct_chg is null)
-    returning 1
 )
-select count(*) as updated_count from updated_rows
+update fact.stock_daily_1d target
+set pre_close = coalesce(target.pre_close, metric_rows.previous_close),
+    change = coalesce(target.change, target.close - metric_rows.previous_close),
+    pct_chg = coalesce(
+        target.pct_chg,
+        (target.close - metric_rows.previous_close) / nullif(metric_rows.previous_close, 0) * 100
+    )
+from metric_rows
+where target.market = metric_rows.market
+  and target.code = metric_rows.code
+  and target.trade_date = metric_rows.trade_date
+  and metric_rows.previous_close is not null
+  and (target.pre_close is null or target.change is null or target.pct_chg is null)
+"""
+
+
+BACKFILL_REMAINING_SQL = """
+with metric_rows as (
+    select
+        market,
+        code,
+        trade_date,
+        lag(close) over (partition by market, code order by trade_date) as previous_close
+    from fact.stock_daily_1d
+)
+select count(*) as remaining_count
+from fact.stock_daily_1d target
+join metric_rows
+  on target.market = metric_rows.market
+ and target.code = metric_rows.code
+ and target.trade_date = metric_rows.trade_date
+where metric_rows.previous_close is not null
+  and (target.pre_close is null or target.change is null or target.pct_chg is null)
 """
 
 
@@ -127,9 +143,13 @@ def main() -> None:
     for statement in SCHEMA_SQL:
         if not execute_sql(statement, ()):
             raise RuntimeError("行情与股票引用表结构迁移失败")
-    frame = query_dataframe(BACKFILL_SQL, ())
-    updated_count = 0 if frame.empty else int(frame.iloc[0].to_dict().get("updated_count", 0) or 0)
-    print(f"行情与股票引用表结构迁移完成，历史日线指标回填 {updated_count} 行")
+    if not execute_sql(BACKFILL_SQL, ()):
+        raise RuntimeError("历史日线指标回填失败")
+    frame = query_dataframe(BACKFILL_REMAINING_SQL, ())
+    remaining_count = 0 if frame.empty else int(frame.iloc[0].to_dict().get("remaining_count", 0) or 0)
+    if remaining_count != 0:
+        raise RuntimeError(f"历史日线指标回填不完整，剩余 {remaining_count} 行")
+    print("行情与股票引用表结构迁移完成，历史日线指标已回填")
 
 
 if __name__ == "__main__":
