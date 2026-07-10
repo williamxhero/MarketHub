@@ -63,6 +63,7 @@ release_root="$remote_root/releases/$release_name"
 
 mkdir -p "$release_root"
 tar -xzf "$remote_archive" -C "$release_root"
+ln -s /data/markethub/.venv "$release_root/.venv"
 chmod +x "$release_root/MarketHub/scripts/global-data-update.sh"
 
 set -a
