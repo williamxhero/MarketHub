@@ -238,7 +238,15 @@ def rebuild_daily_snapshots(runtime: QuoteMux, trade_dates: tuple[str, ...], con
     daily_rows = 0
     for trade_date in trade_dates:
         items = runtime.concepts._get_derived_snapshot_items(list(concept_ids), trade_date)
+        if len(items) < int(len(concept_ids) * 0.9):
+            raise RuntimeError(f"概念日线覆盖不完整: trade_date={trade_date} expected={len(concept_ids)} actual={len(items)}")
         daily_rows += write_items("concepts.quotes.daily", items)
+        written_concept_ids = [item.concept_id for item in items if item.concept_id != ""]
+        if not execute_sql(
+            "delete from fact.concept_daily_1d where trade_date = %s::date and not (concept_id = any(%s))",
+            (trade_date, written_concept_ids),
+        ):
+            raise RuntimeError(f"清理旧概念日线失败: trade_date={trade_date}")
         log(f"已按统一成分股聚合口径重建概念日线 {trade_date}: rows={len(items)}")
     return daily_rows
 
