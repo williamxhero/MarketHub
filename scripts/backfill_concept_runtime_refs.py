@@ -4,7 +4,7 @@ import argparse
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo
@@ -52,7 +52,6 @@ _bootstrap_env()
 
 from quotemux.fact_ref_writes import get_fact_ref_writer
 from quotemux.infra.db.client import execute_sql, query_dataframe
-from quotemux.requests.markets import TradingCalendarRequest
 from quotemux.runtime import QuoteMux
 from quotemux.concept_runtime import (
     CONCEPT_MEMBERS_SOURCE_ORDER,
@@ -140,19 +139,42 @@ def ensure_concept_fact_ref_tables() -> None:
             raise RuntimeError("概念本地事实/引用表建表失败")
 
 
-def recent_trade_dates(runtime: QuoteMux, window_count: int) -> tuple[str, ...]:
-    today = datetime.now(SHANGHAI_TZ).date()
-    start_day = today - timedelta(days=max(10, window_count * 3))
-    items = runtime.markets.get_trading_calendar(
-        TradingCalendarRequest(
-            exchange="SSE",
-            start_date=start_day.strftime("%Y-%m-%d"),
-            end_date=today.strftime("%Y-%m-%d"),
-            is_open=True,
+def recent_trade_dates(window_count: int) -> tuple[str, ...]:
+    frame = query_dataframe(
+        """
+        with recent_counts as (
+            select
+                trade_date,
+                count(*) filter (where coalesce(amount, 0) > 0) as positive_amount_count
+            from fact.stock_daily_1d
+            where trade_date >= current_date - interval '45 days'
+            group by trade_date
+        ),
+        benchmark as (
+            select coalesce(max(positive_amount_count), 0) as expected_count
+            from recent_counts
         )
+        select recent_counts.trade_date::text as trade_date
+        from recent_counts
+        cross join benchmark
+        where recent_counts.positive_amount_count >= greatest(1, benchmark.expected_count * 0.9)
+        order by recent_counts.trade_date desc
+        limit %s
+        """,
+        (window_count,),
     )
-    values = [item.trade_date for item in items if item.trade_date != ""]
-    return tuple(values[-window_count:])
+    if frame.empty:
+        return ()
+    values = [str(row["trade_date"]) for row in frame.to_dict("records") if str(row["trade_date"]) != ""]
+    return tuple(reversed(values))
+
+
+def delete_incomplete_concept_daily_rows(latest_complete_trade_date: str) -> None:
+    if not execute_sql(
+        "delete from fact.concept_daily_1d where trade_date > %s::date",
+        (latest_complete_trade_date,),
+    ):
+        raise RuntimeError("清理未完成交易日的概念日线失败")
 
 
 def latest_concept_daily_trade_date() -> str:
@@ -322,7 +344,7 @@ def main() -> None:
     requested_concept_id = normalize_concept_id(str(args.concept_id))
     runtime = QuoteMux()
 
-    trade_dates = recent_trade_dates(runtime, window_count)
+    trade_dates = recent_trade_dates(window_count)
     if trade_dates == ():
         raise RuntimeError("最近交易日为空，无法回填概念本地表")
 
@@ -346,6 +368,7 @@ def main() -> None:
     if args.quotes_only:
         concept_ids = tuple(item.concept_id for item in current_catalog(runtime) if item.concept_id != "")
         daily_rows = rebuild_daily_snapshots(runtime, trade_dates, concept_ids)
+        delete_incomplete_concept_daily_rows(trade_dates[-1])
         log(f"概念日线重建完成 daily_rows={daily_rows}")
         return
     if requested_concept_id == "":

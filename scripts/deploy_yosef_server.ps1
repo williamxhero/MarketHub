@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$HostName = "yosef-server",
     [string]$RemoteRoot = "/data/MarketHub2",
     [int]$ConceptWindowCount = 7
@@ -100,9 +100,20 @@ Invoke-NativeCommand -FilePath "ssh" -Arguments @(
     "set -a; . /data/markethub/env/markethub.env; set +a; export PYTHONPATH=$RemoteRoot/current/QuoteMux/src; /data/markethub/.venv/bin/python $RemoteRoot/current/MarketHub/scripts/backfill_concept_runtime_refs.py --quotes-only --window-count $ConceptWindowCount"
 )
 
-Invoke-NativeCommand -FilePath "ssh" -Arguments @(
-    $HostName,
-    "curl -fsS --max-time 1800 -X POST http://127.0.0.1:8803/api/admin/capture-runs/boards.quotes.daily"
-)
+$marketTime = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTimeOffset]::UtcNow, "China Standard Time")
+if ($marketTime.TimeOfDay -ge [TimeSpan]::FromHours(20)) {
+    $boardResult = & ssh $HostName "curl -fsS --max-time 1800 -X POST http://127.0.0.1:8803/api/admin/capture-runs/boards.quotes.daily"
+    if ($LASTEXITCODE -ne 0) {
+        throw "行业板块日线补跑请求失败"
+    }
+    $boardPayload = $boardResult | ConvertFrom-Json
+    if ($boardPayload.status -ne "success" -or [int]$boardPayload.row_count -le 0) {
+        throw "行业板块日线补跑失败: status=$($boardPayload.status) row_count=$($boardPayload.row_count)"
+    }
+    Write-Output $boardResult
+}
+else {
+    Write-Output "当前未到 20:00，跳过尚未完成交易日的行业板块日线补跑"
+}
 
 Write-Output "部署完成: $RemoteRoot/releases/$releaseName"
