@@ -38,6 +38,7 @@ SCHEMA_SQL = (
     "alter table fact.stock_daily_1d add column if not exists pre_close double precision",
     "alter table fact.stock_daily_1d add column if not exists change double precision",
     "alter table fact.stock_daily_1d add column if not exists pct_chg double precision",
+    "alter table fact.stock_daily_1d drop constraint if exists stock_daily_1d_market_code_check",
     """
     do $$
     begin
@@ -62,15 +63,114 @@ SCHEMA_SQL = (
     """,
     "alter table ref.stock add column if not exists industry character varying not null default ''",
     "alter table ref.stock add column if not exists listing_board character varying not null default ''",
+    "alter table ref.stock add column if not exists board_type character varying not null default ''",
+    """
+    insert into ref.stock (market, code, name, industry, listing_board, listed_date, delisted_date, area)
+    select
+        'SHSE',
+        code,
+        name,
+        industry,
+        listing_board,
+        listed_date,
+        delisted_date,
+        area
+    from ref.stock
+    where market = 'BJSE' and left(code, 3) = '900'
+    on conflict (market, code) do update set
+        name = excluded.name,
+        industry = excluded.industry,
+        listing_board = excluded.listing_board,
+        listed_date = excluded.listed_date,
+        delisted_date = excluded.delisted_date,
+        area = excluded.area,
+        updated_at = now()
+    """,
+    "delete from ref.stock where market = 'BJSE' and left(code, 3) = '900'",
+    """
+    update ref.stock
+    set listed_date = case code
+            when '900941' then date '1996-08-09'
+            when '900945' then date '1997-06-26'
+        end,
+        listing_board = 'main_board',
+        updated_at = now()
+    where market = 'SHSE'
+      and code in ('900941', '900945')
+    """,
+    """
+    do $$
+    begin
+        if to_regclass('ref.concept_stock_membership') is not null then
+            delete from ref.concept_stock_membership
+            where stock_market = 'BJSE' and stock_code = '834683';
+        end if;
+    end $$;
+    """,
+    "delete from ref.stock where market = 'BJSE' and code = '834683' and listed_date is null",
+    """
+    do $$
+    begin
+        if to_regclass('ref.concept_stock_membership') is not null then
+            insert into ref.concept_stock_membership (concept_id, stock_market, stock_code, valid_from, valid_to, weight, updated_at)
+            select concept_id, 'SHSE', stock_code, valid_from, valid_to, weight, now()
+            from ref.concept_stock_membership
+            where stock_market = 'BJSE' and left(stock_code, 3) = '900'
+            on conflict (concept_id, stock_market, stock_code, valid_from) do update set
+                valid_to = excluded.valid_to,
+                weight = excluded.weight,
+                updated_at = now();
+
+            delete from ref.concept_stock_membership
+            where stock_market = 'BJSE' and left(stock_code, 3) = '900';
+        end if;
+    end $$;
+    """,
+    """
+    update fact.stock_daily_1d target
+    set market = 'SHSE'
+    where target.market = 'BJSE'
+      and left(target.code, 3) = '900'
+      and not exists (
+          select 1
+          from fact.stock_daily_1d existing_rows
+          where existing_rows.market = 'SHSE'
+            and existing_rows.code = target.code
+            and existing_rows.trade_date = target.trade_date
+      )
+    """,
+    "delete from fact.stock_daily_1d where market = 'BJSE' and left(code, 3) = '900'",
+    """
+    alter table fact.stock_daily_1d add constraint stock_daily_1d_market_code_check check (
+        (market = 'SHSE' and left(code, 1) in ('5', '6', '9'))
+        or (market = 'BJSE' and (left(code, 1) in ('4', '8') or left(code, 3) = '920'))
+        or (market = 'SZSE' and left(code, 1) not in ('4', '5', '6', '8', '9'))
+    )
+    """,
     """
     update ref.stock
     set listing_board = case
-        when market = 'BJSE' or left(code, 1) in ('4', '8', '9') then 'beijing'
+        when market = 'BJSE' or left(code, 1) in ('4', '8') or left(code, 3) = '920' then 'beijing'
         when market = 'SHSE' and left(code, 3) in ('688', '689') then 'star_market'
         when market = 'SZSE' and left(code, 3) in ('300', '301') then 'chi_next'
         else 'main_board'
     end
-    where listing_board = ''
+    """,
+    "update ref.stock set board_type = listing_board where board_type <> listing_board",
+    """
+    do $$
+    begin
+        if to_regclass('capability_capture_policy') is not null then
+            update capability_capture_policy
+            set cadence = 'daily',
+                month_day = null,
+                window_count = 1,
+                batch_size = 1,
+                notes = '股票目录，每日同步新上市和退市状态',
+                updated_at = now()
+            where capability_id = 'stocks.catalog';
+        end if;
+    end $$;
     """,
     """
     create table if not exists fact.board_daily_1d (
@@ -90,6 +190,7 @@ SCHEMA_SQL = (
     )
     """,
     "create index if not exists board_daily_1d_date_idx on fact.board_daily_1d (trade_date)",
+    "delete from fact.board_daily_1d where left(board_code, 9) <> 'INDUSTRY:'",
 )
 
 
