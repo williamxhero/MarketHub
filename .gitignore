@@ -25,7 +25,11 @@ services/markethub_console/dist/
 /scripts/build_console.ps1
 tests/
 /scripts/*
-!/scripts/data-health-check.sh
-!/scripts/global-data-update-with-health.sh
-/scripts
+!/scripts/import_daily_1m_7z_to_fact.py
+!/scripts/test_import_daily_1m_7z_to_fact.py
+!/scripts/import_multiday_1m_7z_to_fact.py
+!/scripts/test_import_multiday_1m_7z_to_fact.py
+!/scripts/rebuild_stock_30m_from_1m.py
+!/scripts/test_rebuild_stock_30m_from_1m.py
 /services/markethub_api/notes/*.md
+/scripts

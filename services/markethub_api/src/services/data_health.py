@@ -102,7 +102,7 @@ def run_data_health_check() -> dict[str, object]:
 def _compute_data_health() -> dict[str, object]:
     profiles = _load_profiles()
     definitions = list_capability_definitions()
-    check_cache: dict[str, CheckSpec] = {}
+    check_cache: dict[str, object] = {}
     db_available = is_db_available()
     fact_ref = get_fact_ref_availability() if db_available else _empty_fact_ref_availability()
     fact_ref["status"] = _normalize_status(str(fact_ref.get("status", "warning")))
@@ -252,7 +252,7 @@ def _build_capability_health(
     objects: dict[str, dict[str, object]],
     db_available: bool,
     calendar: dict[str, object],
-    check_cache: dict[str, CheckSpec],
+    check_cache: dict[str, object],
 ) -> dict[str, object]:
     profile = profiles.get(definition.capability_id, {})
     dependencies = _reference_objects(profile)
@@ -282,7 +282,7 @@ def _build_checks(
     objects: dict[str, dict[str, object]],
     db_available: bool,
     calendar: dict[str, object],
-    check_cache: dict[str, CheckSpec],
+    check_cache: dict[str, object],
 ) -> list[dict[str, str]]:
     checks: list[CheckSpec] = []
     raw_checks = profile.get("checks", [])
@@ -300,7 +300,7 @@ def _run_configured_check(
     objects: dict[str, dict[str, object]],
     db_available: bool,
     calendar: dict[str, object],
-    check_cache: dict[str, CheckSpec],
+    check_cache: dict[str, object],
 ) -> list[CheckSpec]:
     check_type = str(check.get("type", ""))
     object_name = str(check.get("object", ""))
@@ -355,6 +355,11 @@ def _run_configured_check(
     if check_type == "long_empty":
         check_id = str(check.get("check_id", ""))
         return [_cached_check(check_cache, f"long_empty:{check_id}", lambda: _long_empty_check(check_id, str(check.get("title", "")), _string_list(check.get("required_objects", [])), objects, db_available, calendar))]
+    if check_type == "market_data_contract":
+        metric_names = _string_list(check.get("metrics", []))
+        index_code = str(check.get("index_code", "000001"))
+        required_objects = _string_list(check.get("required_objects", []))
+        return _market_data_contract_checks(metric_names, index_code, required_objects, objects, db_available, calendar, check_cache)
     return [CheckSpec(f"unknown_check_type:{check_type}", f"未知检查类型 {check_type}", "unknown", "未执行", "检查配置无法识别")]
 
 
@@ -605,8 +610,8 @@ def _recent_minute_session_check(
             select expected_days.trade_date, expected_days.trade_date + minute_series.minute_time as bar_time
             from expected_days
             cross join (
-                select time '09:30' + minute_offset * interval '1 minute' as minute_time
-                from generate_series(0, 120) as minute_offset
+                select time '09:31' + minute_offset * interval '1 minute' as minute_time
+                from generate_series(0, 119) as minute_offset
                 union all
                 select time '13:01' + minute_offset * interval '1 minute' as minute_time
                 from generate_series(0, 119) as minute_offset
@@ -664,7 +669,7 @@ def _recent_minute_session_check(
         day_issues: list[str] = []
         if minute_count < expected_minutes:
             day_issues.append(f"分钟数 {minute_count}/{expected_minutes}")
-        if first_minute != "09:30" or last_minute != "15:00":
+        if first_minute != "09:31" or last_minute != "15:00":
             day_issues.append(f"首尾分钟 {first_minute}-{last_minute}")
         if max_rows > 0 and min_rows < int(max_rows * min_row_ratio):
             day_issues.append(f"每分钟股票数 {min_rows}-{max_rows}")
@@ -694,6 +699,305 @@ def _long_empty_check(check_id: str, title: str, required_objects: list[str], ob
     if missing != []:
         return CheckSpec(check_id, title, "unknown", "未执行", "缺少依赖表 " + ", ".join(missing))
     return CheckSpec(check_id, title, "healthy", "正常")
+
+
+MARKET_DATA_CONTRACT_REQUIRED_OBJECTS = (
+    "fact.index_bar_1d",
+    "fact.concept_daily_1d",
+    "fact.stock_daily_1d",
+    "fact.board_daily_1d",
+    "ref.index",
+    "ref.stock",
+    "ref.concept",
+    "ref.concept_stock_membership",
+)
+
+MARKET_DATA_CONTRACT_EXPECTATIONS: dict[str, tuple[int, str, str]] = {
+    "first_stage_index_trade_date_count": (6, "eq", "第一阶段核心指数最近 6 根日线"),
+    "first_stage_index_core_null_count": (0, "eq", "第一阶段核心指数核心字段非空"),
+    "first_stage_index_invalid_volume_amount_count": (0, "eq", "第一阶段核心指数成交量和成交额为正"),
+    "first_stage_ref_index_missing_count": (0, "eq", "第一阶段核心指数存在目录元数据"),
+    "first_stage_ref_index_bad_name_count": (0, "eq", "第一阶段核心指数名称有效"),
+    "first_stage_concept_trade_date_count": (3, "eq", "第一阶段概念最近 3 个交易日"),
+    "first_stage_incomplete_concept_count": (0, "eq", "第一阶段概念日线覆盖完整"),
+    "first_stage_concept_core_invalid_count": (0, "eq", "第一阶段概念涨跌幅和成交额有效"),
+    "second_stage_trade_date_count": (8, "eq", "第二阶段概念最近 8 个交易日"),
+    "second_stage_incomplete_concept_count": (0, "eq", "第二阶段概念日线覆盖完整"),
+    "second_stage_null_pct_chg_count": (0, "eq", "第二阶段概念涨跌幅非空"),
+    "second_stage_invalid_amount_count": (0, "eq", "第二阶段概念成交额为正"),
+    "second_stage_missing_member_stock_count": (0, "eq", "第二阶段概念成分匹配当日个股日线"),
+    "second_stage_missing_member_pre_close_count": (0, "eq", "第二阶段概念成分前收完整"),
+    "second_stage_invalid_market_code_count": (0, "eq", "第二阶段概念成分市场和代码前缀一致"),
+    "second_stage_amount_mismatch_count": (0, "eq", "第二阶段概念成交额可由成分股重算一致"),
+    "second_stage_pct_chg_mismatch_count": (0, "eq", "第二阶段概念涨跌幅可由成分股重算一致"),
+    "global_latest_date_mismatch_count": (0, "eq", "核心事实表最新交易日一致"),
+    "global_duplicate_concept_key_count": (0, "eq", "概念日线主键不重复"),
+    "global_duplicate_stock_key_count": (0, "eq", "个股日线主键不重复"),
+    "global_duplicate_board_key_count": (0, "eq", "板块日线主键不重复"),
+    "global_duplicate_index_key_count": (0, "eq", "指数日线主键不重复"),
+    "global_board_daily_core_null_count": (0, "eq", "板块日线当日核心字段非空"),
+    "global_stock_daily_core_null_count": (0, "eq", "个股日线当日核心字段非空"),
+    "global_stock_daily_without_ref_count": (0, "eq", "当日个股日线匹配股票目录"),
+    "global_active_stock_without_daily_count": (0, "eq", "有效股票有当日日线"),
+    "global_missing_board_type_column_count": (0, "eq", "股票目录提供 board_type 字段"),
+    "global_blank_board_type_count": (0, "eq", "股票目录 board_type 非空"),
+    "global_board_type_listing_board_mismatch_count": (0, "eq", "股票目录 board_type 与 listing_board 一致"),
+    "global_index_daily_without_ref_count": (0, "eq", "当日指数日线匹配指数目录"),
+    "global_ref_index_bad_name_count": (0, "eq", "指数目录名称有效"),
+}
+
+
+def _market_data_contract_checks(
+    metric_names: list[str],
+    index_code: str,
+    required_objects: list[str],
+    objects: dict[str, dict[str, object]],
+    db_available: bool,
+    calendar: dict[str, object],
+    check_cache: dict[str, object],
+) -> list[CheckSpec]:
+    if metric_names == []:
+        metric_names = list(MARKET_DATA_CONTRACT_EXPECTATIONS.keys())
+    required = required_objects or list(MARKET_DATA_CONTRACT_REQUIRED_OBJECTS)
+    unavailable_check = _market_data_contract_unavailable(metric_names, required, objects, db_available, calendar)
+    if unavailable_check is not None:
+        return unavailable_check
+    metrics = _cached_market_data_contract_metrics(check_cache, index_code)
+    if metrics == {}:
+        return [_unknown_market_data_contract_check(metric_name, "市场数据契约查询无结果") for metric_name in metric_names]
+    return [_market_data_contract_check(metric_name, metrics) for metric_name in metric_names]
+
+
+def _market_data_contract_unavailable(metric_names: list[str], required_objects: list[str], objects: dict[str, dict[str, object]], db_available: bool, calendar: dict[str, object]) -> list[CheckSpec] | None:
+    if not db_available:
+        return [_unknown_market_data_contract_check(metric_name, DB_UNAVAILABLE_ERROR) for metric_name in metric_names]
+    if str(calendar.get("status", "unhealthy")) != "healthy":
+        return [_unknown_market_data_contract_check(metric_name, "交易日历不可用，无法执行市场数据契约检查") for metric_name in metric_names]
+    missing = [object_name for object_name in required_objects if not _object_exists(object_name, objects)]
+    if missing != []:
+        return [_unknown_market_data_contract_check(metric_name, "缺少依赖表 " + ", ".join(missing)) for metric_name in metric_names]
+    return None
+
+
+def _cached_market_data_contract_metrics(check_cache: dict[str, object], index_code: str) -> dict[str, int]:
+    key = f"market_data_contract_metrics:{index_code}"
+    cached = check_cache.get(key)
+    if isinstance(cached, dict):
+        return {str(metric_name): int(value or 0) for metric_name, value in cached.items()}
+    metrics = _query_market_data_contract_metrics(index_code)
+    check_cache[key] = metrics
+    return metrics
+
+
+def _market_data_contract_check(metric_name: str, metrics: dict[str, int]) -> CheckSpec:
+    expected, operator, title = MARKET_DATA_CONTRACT_EXPECTATIONS.get(metric_name, (0, "eq", metric_name))
+    actual = int(metrics.get(metric_name, 0) or 0)
+    passed = actual >= expected if operator == "gte" else actual == expected
+    check_id = f"market_data_contract:{metric_name}"
+    if passed:
+        return CheckSpec(check_id, title, "healthy", f"{actual}")
+    operator_text = ">=" if operator == "gte" else "="
+    return CheckSpec(check_id, title, "unhealthy", "异常", f"实际 {actual}，期望 {operator_text} {expected}")
+
+
+def _unknown_market_data_contract_check(metric_name: str, error_text: str) -> CheckSpec:
+    title = MARKET_DATA_CONTRACT_EXPECTATIONS.get(metric_name, (0, "eq", metric_name))[2]
+    return CheckSpec(f"market_data_contract:{metric_name}", title, "unknown", "未执行", error_text)
+
+
+def _query_market_data_contract_metrics(index_code: str) -> dict[str, int]:
+    frame = query_dataframe(
+        """
+        with target as (
+            select least(
+                (select max(trade_date) from fact.index_bar_1d where index_code = %s),
+                (select max(trade_date) from fact.concept_daily_1d),
+                (select max(trade_date) from fact.stock_daily_1d),
+                (select max(trade_date) from fact.board_daily_1d)
+            ) as trade_date,
+            %s::varchar as index_code
+        ), recent_index_bars as (
+            select index_rows.*
+            from fact.index_bar_1d index_rows
+            cross join target
+            where index_rows.index_code = target.index_code
+              and index_rows.trade_date <= target.trade_date
+            order by index_rows.trade_date desc
+            limit 6
+        ), first_stage_trade_dates as (
+            select distinct concept_rows.trade_date
+            from fact.concept_daily_1d concept_rows
+            cross join target
+            where concept_rows.trade_date <= target.trade_date
+            order by concept_rows.trade_date desc
+            limit 3
+        ), trade_dates as (
+            select distinct concept_rows.trade_date
+            from fact.concept_daily_1d concept_rows
+            cross join target
+            where concept_rows.trade_date <= target.trade_date
+            order by concept_rows.trade_date desc
+            limit 8
+        ), active_members as (
+            select distinct membership.concept_id, membership.stock_market, membership.stock_code
+            from ref.concept_stock_membership membership
+            cross join target
+            where membership.valid_from <= target.trade_date
+              and (membership.valid_to is null or membership.valid_to >= target.trade_date)
+        ), member_counts as (
+            select concept_id, count(*) as member_count
+            from active_members
+            group by concept_id
+        ), eligible_concepts as (
+            select concept_rows.concept_id, concept_ref.name, member_counts.member_count
+            from fact.concept_daily_1d concept_rows
+            cross join target
+            join ref.concept concept_ref on concept_ref.concept_id = concept_rows.concept_id
+            join member_counts on member_counts.concept_id = concept_rows.concept_id
+            where concept_rows.trade_date = target.trade_date
+              and member_counts.member_count <= 500
+              and concept_ref.name is not null
+              and concept_ref.name <> ''
+        ), concept_coverage as (
+            select eligible_concepts.concept_id, count(concept_rows.trade_date) as bar_count
+            from eligible_concepts
+            cross join trade_dates
+            left join fact.concept_daily_1d concept_rows
+              on concept_rows.concept_id = eligible_concepts.concept_id
+             and concept_rows.trade_date = trade_dates.trade_date
+            group by eligible_concepts.concept_id
+        ), first_stage_concept_coverage as (
+            select eligible_concepts.concept_id, count(concept_rows.trade_date) as bar_count
+            from eligible_concepts
+            cross join first_stage_trade_dates
+            left join fact.concept_daily_1d concept_rows
+              on concept_rows.concept_id = eligible_concepts.concept_id
+             and concept_rows.trade_date = first_stage_trade_dates.trade_date
+            group by eligible_concepts.concept_id
+        ), current_members as (
+            select membership.concept_id, membership.stock_market, membership.stock_code
+            from active_members membership
+            join eligible_concepts on eligible_concepts.concept_id = membership.concept_id
+            cross join target
+            join ref.stock stock_ref
+              on stock_ref.market = membership.stock_market
+             and stock_ref.code = membership.stock_code
+             and stock_ref.listed_date <= target.trade_date
+             and (stock_ref.delisted_date is null or stock_ref.delisted_date >= target.trade_date)
+        ), stock_history as (
+            select
+                stock_rows.market,
+                stock_rows.code,
+                stock_rows.trade_date,
+                stock_rows.close,
+                stock_rows.pct_chg,
+                stock_rows.amount,
+                stock_rows.is_st,
+                stock_rows.is_suspended,
+                lag(stock_rows.close) over(partition by stock_rows.market, stock_rows.code order by stock_rows.trade_date) as pre_close
+            from fact.stock_daily_1d stock_rows
+            cross join target
+            where stock_rows.trade_date between target.trade_date - interval '20 days' and target.trade_date
+        ), current_stock as (
+            select stock_history.*
+            from stock_history
+            cross join target
+            where stock_history.trade_date = target.trade_date
+        ), expected_concept as (
+            select current_members.concept_id,
+                   sum(current_stock.amount) filter (
+                       where coalesce(current_stock.is_suspended, false) = false
+                         and coalesce(current_stock.is_st, false) = false
+                         and current_stock.close is not null
+                         and current_stock.pre_close is not null
+                         and current_stock.amount > 0
+                   ) as amount,
+                   sum(current_stock.pct_chg * current_stock.amount) filter (
+                       where coalesce(current_stock.is_suspended, false) = false
+                         and coalesce(current_stock.is_st, false) = false
+                         and current_stock.pct_chg is not null
+                         and current_stock.amount > 0
+                   ) / nullif(sum(current_stock.amount) filter (
+                       where coalesce(current_stock.is_suspended, false) = false
+                         and coalesce(current_stock.is_st, false) = false
+                         and current_stock.pct_chg is not null
+                         and current_stock.amount > 0
+                   ), 0) as pct_chg
+            from current_members
+            left join current_stock
+              on current_stock.market = current_members.stock_market
+             and current_stock.code = current_members.stock_code
+            group by current_members.concept_id
+        ), current_concept as (
+            select concept_rows.concept_id, concept_rows.amount, concept_rows.pct_chg
+            from fact.concept_daily_1d concept_rows
+            cross join target
+            join eligible_concepts on eligible_concepts.concept_id = concept_rows.concept_id
+            where concept_rows.trade_date = target.trade_date
+        ), latest_dates as (
+            select 'fact.index_bar_1d' as table_name, max(index_rows.trade_date) as trade_date
+            from fact.index_bar_1d index_rows
+            cross join target
+            where index_rows.trade_date <= target.trade_date
+            union all
+            select 'fact.concept_daily_1d', max(concept_rows.trade_date)
+            from fact.concept_daily_1d concept_rows
+            cross join target
+            where concept_rows.trade_date <= target.trade_date
+            union all
+            select 'fact.stock_daily_1d', max(stock_rows.trade_date)
+            from fact.stock_daily_1d stock_rows
+            cross join target
+            where stock_rows.trade_date <= target.trade_date
+            union all
+            select 'fact.board_daily_1d', max(board_rows.trade_date)
+            from fact.board_daily_1d board_rows
+            cross join target
+            where board_rows.trade_date <= target.trade_date
+        )
+        select
+            (select count(*) from recent_index_bars)::int as first_stage_index_trade_date_count,
+            (select count(*) from recent_index_bars where open is null or high is null or low is null or close is null or pre_close is null or volume is null or amount is null or pct_chg is null)::int as first_stage_index_core_null_count,
+            (select count(*) from recent_index_bars where volume <= 0 or amount <= 0)::int as first_stage_index_invalid_volume_amount_count,
+            (select count(*) from target where not exists (select 1 from ref.index index_ref where index_ref.index_code = target.index_code))::int as first_stage_ref_index_missing_count,
+            (select count(*) from target join ref.index index_ref on index_ref.index_code = target.index_code where index_ref.index_name is null or index_ref.index_name = '' or index_ref.index_name like '%%?%%')::int as first_stage_ref_index_bad_name_count,
+            (select count(*) from first_stage_trade_dates)::int as first_stage_concept_trade_date_count,
+            (select count(*) from first_stage_concept_coverage where bar_count <> 3)::int as first_stage_incomplete_concept_count,
+            (select count(*) from fact.concept_daily_1d concept_rows join eligible_concepts on eligible_concepts.concept_id = concept_rows.concept_id join first_stage_trade_dates on first_stage_trade_dates.trade_date = concept_rows.trade_date where concept_rows.pct_chg is null or concept_rows.amount is null or concept_rows.amount <= 0)::int as first_stage_concept_core_invalid_count,
+            (select count(*) from trade_dates)::int as second_stage_trade_date_count,
+            (select count(*) from concept_coverage where bar_count <> 8)::int as second_stage_incomplete_concept_count,
+            (select count(*) from fact.concept_daily_1d concept_rows join eligible_concepts on eligible_concepts.concept_id = concept_rows.concept_id join trade_dates on trade_dates.trade_date = concept_rows.trade_date where concept_rows.pct_chg is null)::int as second_stage_null_pct_chg_count,
+            (select count(*) from fact.concept_daily_1d concept_rows join eligible_concepts on eligible_concepts.concept_id = concept_rows.concept_id join trade_dates on trade_dates.trade_date = concept_rows.trade_date where concept_rows.amount is null or concept_rows.amount <= 0)::int as second_stage_invalid_amount_count,
+            (select count(*) from current_members left join current_stock on current_stock.market = current_members.stock_market and current_stock.code = current_members.stock_code where current_stock.code is null)::int as second_stage_missing_member_stock_count,
+            (select count(*) from current_members join current_stock on current_stock.market = current_members.stock_market and current_stock.code = current_members.stock_code where current_stock.pre_close is null)::int as second_stage_missing_member_pre_close_count,
+            (select count(*) from current_members where not (
+                (stock_market = 'SHSE' and (left(stock_code, 1) in ('5', '6') or left(stock_code, 3) = '900'))
+                or (stock_market = 'BJSE' and (left(stock_code, 1) in ('4', '8') or left(stock_code, 3) = '920'))
+                or (stock_market = 'SZSE' and left(stock_code, 1) not in ('4', '5', '6', '8', '9'))
+            ))::int as second_stage_invalid_market_code_count,
+            (select count(*) from current_concept join expected_concept using(concept_id) where expected_concept.amount is null or abs(current_concept.amount - expected_concept.amount) > greatest(1.0, abs(expected_concept.amount) * 0.000001))::int as second_stage_amount_mismatch_count,
+            (select count(*) from current_concept join expected_concept using(concept_id) where expected_concept.pct_chg is null or abs(current_concept.pct_chg - expected_concept.pct_chg) > 0.001)::int as second_stage_pct_chg_mismatch_count,
+            (select case when count(distinct trade_date) = 1 then 0 else 1 end from latest_dates)::int as global_latest_date_mismatch_count,
+            (select count(*) from (select concept_id, trade_date, count(*) from fact.concept_daily_1d group by concept_id, trade_date having count(*) > 1) duplicated)::int as global_duplicate_concept_key_count,
+            (select count(*) from (select market, code, trade_date, count(*) from fact.stock_daily_1d group by market, code, trade_date having count(*) > 1) duplicated)::int as global_duplicate_stock_key_count,
+            (select count(*) from (select board_code, trade_date, count(*) from fact.board_daily_1d group by board_code, trade_date having count(*) > 1) duplicated)::int as global_duplicate_board_key_count,
+            (select count(*) from (select index_code, trade_date, count(*) from fact.index_bar_1d group by index_code, trade_date having count(*) > 1) duplicated)::int as global_duplicate_index_key_count,
+            (select count(*) from fact.board_daily_1d board_rows cross join target where board_rows.trade_date = target.trade_date and (board_rows.open is null or board_rows.high is null or board_rows.low is null or board_rows.close is null or board_rows.pre_close is null or board_rows.change is null or board_rows.pct_chg is null or board_rows.amount is null or board_rows.volume is null))::int as global_board_daily_core_null_count,
+            (select count(*) from fact.stock_daily_1d stock_rows cross join target where stock_rows.trade_date = target.trade_date and (stock_rows.close is null or stock_rows.pre_close is null or stock_rows.pct_chg is null or stock_rows.amount is null))::int as global_stock_daily_core_null_count,
+            (select count(*) from fact.stock_daily_1d stock_rows cross join target where stock_rows.trade_date = target.trade_date and not exists (select 1 from ref.stock stock_ref where stock_ref.market = stock_rows.market and stock_ref.code = stock_rows.code))::int as global_stock_daily_without_ref_count,
+            (select count(*) from ref.stock stock_ref cross join target where stock_ref.listed_date <= target.trade_date and (stock_ref.delisted_date is null or stock_ref.delisted_date >= target.trade_date) and not exists (select 1 from fact.stock_daily_1d stock_rows where stock_rows.market = stock_ref.market and stock_rows.code = stock_ref.code and stock_rows.trade_date = target.trade_date))::int as global_active_stock_without_daily_count,
+            (select case when exists (select 1 from information_schema.columns where table_schema = 'ref' and table_name = 'stock' and column_name = 'board_type') then 0 else 1 end)::int as global_missing_board_type_column_count,
+            (select count(*) from ref.stock stock_ref where coalesce(to_jsonb(stock_ref)->>'board_type', '') = '')::int as global_blank_board_type_count,
+            (select count(*) from ref.stock stock_ref where coalesce(to_jsonb(stock_ref)->>'board_type', '') <> coalesce(stock_ref.listing_board, ''))::int as global_board_type_listing_board_mismatch_count,
+            (select count(*) from fact.index_bar_1d index_rows cross join target where index_rows.trade_date = target.trade_date and not exists (select 1 from ref.index index_ref where index_ref.index_code = index_rows.index_code))::int as global_index_daily_without_ref_count,
+            (select count(*) from ref.index index_ref where index_ref.index_name is null or index_ref.index_name = '' or index_ref.index_name like '%%?%%')::int as global_ref_index_bad_name_count
+        """,
+        (index_code, index_code),
+    )
+    if frame.empty:
+        return {}
+    row = frame.iloc[0]
+    return {metric_name: int(row.get(metric_name, 0) or 0) for metric_name in MARKET_DATA_CONTRACT_EXPECTATIONS}
 
 
 def _count_check_result(check_id: str, title: str, frame: object, error_text: str) -> CheckSpec:
@@ -739,9 +1043,11 @@ def _minute_text(value: str) -> str:
     return value[:5] if len(value) >= 5 else value
 
 
-def _cached_check(cache: dict[str, CheckSpec], key: str, factory: Callable[[], CheckSpec]) -> CheckSpec:
+def _cached_check(cache: dict[str, object], key: str, factory: Callable[[], CheckSpec]) -> CheckSpec:
     cached = cache.get(key)
     if cached is not None:
+        if not isinstance(cached, CheckSpec):
+            raise TypeError(f"缓存项 {key} 不是 CheckSpec")
         return cached
     check = factory()
     cache[key] = check

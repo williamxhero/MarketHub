@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Literal
 
 from fastapi import APIRouter, Query
+from quotemux.models import StockQuotesQueryResult
 
 from data_threads import run_data_task, run_quote_task
+from routers.stock_quote_models import StockQuotesQueryPayload
 from services import stocks
 from services.common import filter_response_fields
 from services.runtime_memory import run_with_memory_log
@@ -87,13 +90,37 @@ async def api_stock_quotes(
     skip_suspended: bool = Query(True, description='仅对 `1d/1w/1mo` 生效；强制过滤停牌行。'),
     skip_st: bool = Query(False, description='仅对 `1d/1w/1mo` 生效；如果某只股票在请求窗口内任一行 `is_st=true`，则该股票所有返回行都会被过滤。'),
     fill_missing: bool = Query(False, description='控制是否返回日线缺口补洞产生的停牌占位行；历史交易日缺口默认会进入 provider 补缺链路，只有 `fill_missing=true&skip_suspended=false` 时才返回 `is_suspended=true` 行。'),
+    meta_detail: Literal["summary", "full"] = Query("summary", description="summary 只返回缺失数量；full 额外展开 missing_trade_times。"),
 ) -> dict[str, object]:
     actual_codes = codes if codes != "" else code
     detail = _quote_request_detail(actual_codes, freq, start_date, end_date, limit)
-    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, skip_st, fill_missing)
+    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, skip_st, fill_missing, meta_detail)
     is_heavy = int(detail["code_count"]) > 5 or int(detail["limit"]) > 2000
     runner = run_quote_task if is_heavy else run_data_task
     return await runner(_filter_stock_quote_query_result, stocks.get_quotes_query_result, args, fields, STOCK_QUOTE_FIELDS, detail)
+
+
+@router.post(
+    "/api/stocks/quotes/query",
+    summary="批量查询股票行情和完整性元数据",
+    description=(
+        "大批量股票行情的标准入口，推荐每批 100 至 200 只；少量代码和交互调试可使用 GET /api/stocks/quotes。"
+        "请求体可指定 adjust、trade_date 或时间范围。limit 是整个响应的硬裁剪上限，不是分页大小；"
+        "发生裁剪时 meta.truncated=true，meta.total_rows 和 meta.returned_rows 分别给出裁剪前后行数。"
+        "meta_detail=summary 默认只返回 missing_count，full 才展开 missing_trade_times。"
+        "返回合同固定为 StockQuotesQueryResult，GET 和 POST 对相同查询条件返回相同 items 与 meta。"
+    ),
+    response_model=StockQuotesQueryResult,
+)
+async def api_stock_quotes_query(payload: StockQuotesQueryPayload) -> dict[str, object]:
+    codes = ",".join(payload.codes)
+    detail = _quote_request_detail(codes, payload.freq, payload.start_date, payload.end_date, payload.limit)
+    args = (
+        "", codes, payload.freq, payload.trade_date, payload.start_date, payload.end_date,
+        payload.start_time, payload.end_time, payload.count, payload.adjust, payload.limit,
+        payload.skip_suspended, payload.skip_st, payload.fill_missing, payload.meta_detail,
+    )
+    return await run_quote_task(_filter_stock_quote_query_result, stocks.get_quotes_query_result, args, "", STOCK_QUOTE_FIELDS, detail)
 
 
 @router.get("/api/stocks/quotes/daily-snapshot", summary='返回指定交易日的全市场股票日线快照', description='`GET` 返回指定交易日的全市场股票日线快照。\n\n## 查询参数\n\n- `trade_date`（`str`）：交易日期，格式 `YYYY-MM-DD`。\n- `fields`（`str`）：按逗号指定返回字段。\n- `limit`（`int`）：返回记录上限。\n- `offset`（`int`）：结果偏移量。\n- `skip_suspended`（`bool`）：过滤停牌行。\n- `skip_st`（`bool`）：过滤 ST 股票。\n\n## 返回类型\n\n顶层返回 `list[StockQuoteItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `trade_time`（`str`）：交易日期。\n- `freq`（`str`）：固定返回 `1d`。\n- `open`（`float | None`）：开盘价。\n- `high`（`float | None`）：最高价。\n- `low`（`float | None`）：最低价。\n- `close`（`float | None`）：收盘价。\n- `pre_close`（`float | None`）：前收盘价。\n- `change`（`float | None`）：涨跌额。\n- `pct_chg`（`float | None`）：涨跌幅。\n- `volume`（`float | None`）：成交量。\n- `amount`（`float | None`）：成交额。\n- `adjust`（`str`）：固定返回 `none`。\n- `is_suspended`（`bool`）：是否停牌。\n- `is_st`（`bool`）：是否 ST。\n\n## 补充说明\n\n- 该接口直接读取本地 `fact.stock_daily_1d`，返回口径与 `/api/stocks/quotes?freq=1d&start_date=...&end_date=...` 的日线事实表保持一致。\n- 缺少指定交易日数据时快速返回空数组，不在请求线程内触发全市场外源补齐。\n- `pre_close`、`change`、`pct_chg` 会基于前一个已有交易日收盘价派生。')

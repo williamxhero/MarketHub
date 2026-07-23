@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 from fastapi import HTTPException
 
@@ -62,6 +64,7 @@ def get_quotes_query_result(
     skip_suspended: bool,
     skip_st: bool,
     fill_missing: bool,
+    meta_detail: Literal["summary", "full"],
 ) -> StockQuotesQueryResult:
     return _QUOTEMUX.stocks.get_quotes_query_result(
         StockQuotesRequest(
@@ -78,6 +81,7 @@ def get_quotes_query_result(
             skip_suspended=skip_suspended,
             skip_st=skip_st,
             fill_missing=fill_missing,
+            meta_detail=meta_detail,
         )
     )
 

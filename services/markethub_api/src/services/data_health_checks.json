@@ -3893,6 +3893,10 @@
           "object": "fact.stock_daily_1d",
           "column": "trade_date",
           "provider_earliest_date": "1990-12-19"
+        },
+        {
+          "type": "market_data_contract",
+          "index_code": "000001"
         }
       ]
     },
@@ -4132,7 +4136,7 @@
           "check_id": "recent_minute_session_complete:fact.stock_bar_1m",
           "title": "1m 最近交易日分钟完整性",
           "object": "fact.stock_bar_1m",
-          "expected_minutes": 241,
+          "expected_minutes": 240,
           "lookback_days": 10,
           "min_row_ratio": 0.95
         },

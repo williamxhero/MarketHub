@@ -299,6 +299,25 @@ async def api_admin_capture_runs(
     return admin_runtime.list_capture_runs(capability_id, status, limit)
 
 
+@router.get("/api/admin/capture-gaps")
+async def api_admin_capture_gaps(
+    capability_id: str = "",
+    status: str = "",
+    limit: int = Query(500, ge=1, le=5000),
+) -> list[dict[str, object]]:
+    return admin_runtime.list_capture_gaps(capability_id, status, limit)
+
+
+@router.post("/api/admin/capture-gaps/audit")
+async def api_admin_audit_capture_gaps(window_count: int = Query(30, ge=1, le=250)) -> dict[str, object]:
+    return await anyio.to_thread.run_sync(admin_runtime.audit_intraday_capture_gaps, window_count)
+
+
+@router.post("/api/admin/capture-gaps/retry")
+async def api_admin_retry_capture_gaps(window_count: int = Query(30, ge=1, le=250)) -> dict[str, object]:
+    return await anyio.to_thread.run_sync(admin_runtime.retry_intraday_capture_gaps, window_count)
+
+
 @router.post("/api/admin/capture-runs/{capability_id}")
 async def api_admin_run_capture(capability_id: str) -> dict[str, object]:
     return await anyio.to_thread.run_sync(admin_runtime.run_capture, capability_id)

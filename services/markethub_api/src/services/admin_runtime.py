@@ -1189,6 +1189,27 @@ def list_capture_runs(capability_id: str = "", status: str = "", limit: int = 10
     return list(_capture_admin().list_runs(root_capability_id, status, limit))
 
 
+def list_capture_gaps(capability_id: str = "", status: str = "", limit: int = 500) -> list[dict[str, object]]:
+    root_capability_id = "" if capability_id == "" else get_capability_config_root(capability_id)
+    return list(_capture_admin().list_gaps(root_capability_id, status, limit))
+
+
+def audit_intraday_capture_gaps(window_count: int = 30) -> dict[str, object]:
+    return run_with_memory_log(
+        "capture.audit_intraday_gaps",
+        {"window_count": window_count},
+        lambda: _capture_admin().audit_intraday_gaps(window_count),
+    )
+
+
+def retry_intraday_capture_gaps(window_count: int = 30) -> dict[str, object]:
+    return run_with_memory_log(
+        "capture.retry_intraday_gaps",
+        {"window_count": window_count},
+        lambda: _capture_admin().retry_intraday_gaps(window_count),
+    )
+
+
 def run_capture(capability_id: str) -> dict[str, object]:
     capture_admin = _capture_admin()
     root_capability_id = get_capability_config_root(capability_id)
