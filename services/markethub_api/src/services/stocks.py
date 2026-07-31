@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from core.config import DEFAULT_LIMIT
 from quotemux import QuoteMux, StockDailyLocalWindowRequest, StockDailySnapshotRequest, StockQuotesRequest
-from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialStatementItem, StockManagerItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
+from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialStatementItem, StockManagerItem, StockMarginItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
 from services.common import ensure_limit, require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
 
 
@@ -108,6 +108,22 @@ def get_money_flow_batch(codes: str, trade_date: str, view: str) -> list[StockMo
     code_list = require_codes("", codes)
     view_type = require_money_flow_view(view)
     return _QUOTEMUX.stocks.get_money_flow_batch(",".join(code_list), trade_date, view_type)
+
+
+def get_money_flow_snapshot(trade_date: str, view: str) -> list[StockMoneyFlowItem]:
+    return _QUOTEMUX.stocks.get_money_flow_snapshot(trade_date, require_money_flow_view(view))
+
+
+def get_margin_snapshot(trade_date: str) -> list[StockMarginItem]:
+    return _QUOTEMUX.stocks.get_margin_snapshot(trade_date)
+
+
+def get_express_snapshot(announce_date: str) -> list[ExpressItem]:
+    return _QUOTEMUX.stocks.get_express_snapshot(announce_date)
+
+
+def get_forecast_snapshot(announce_date: str) -> list[ForecastItem]:
+    return _QUOTEMUX.stocks.get_forecast_snapshot(announce_date)
 
 
 def get_financial_statements(code: str, codes: str, report_period: str, start_period: str, end_period: str, report_type: str) -> list[StockFinancialStatementItem]:

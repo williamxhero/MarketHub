@@ -29,6 +29,7 @@ from routers.concepts import router as concepts_router
 from routers.concepts_runtime import router as concepts_runtime_router
 from routers.data_health import router as data_health_router
 from routers.docs_search import router as docs_router
+from routers.etfs import router as etfs_router
 from routers.indexes import router as indexes_router
 from routers.markets import router as markets_router
 from routers.news import router as news_router
@@ -77,6 +78,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(stocks_router)
+app.include_router(etfs_router)
 app.include_router(concepts_runtime_router)
 app.include_router(concepts_router)
 app.include_router(indexes_router)

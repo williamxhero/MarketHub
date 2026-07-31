@@ -224,7 +224,7 @@ async def api_stock_nine_turn(code: str, freq: str = Query("daily", description=
 
 @router.get("/api/stocks/{code}/factors/adj", summary='返回单只股票的复权因子序列', description='`GET` 返回单只股票的复权因子序列。\n\n## 路径参数\n\n- `code`（类型：`str`）：股票代码。\n\n## 查询参数\n\n- `start_date`（类型：`str`）：起始日期，格式 `YYYY-MM-DD`。\n- `end_date`（类型：`str`）：结束日期，格式 `YYYY-MM-DD`。\n- `base_date`（类型：`str`）：参数说明见接口上下文。\n\n## 返回类型\n\n顶层返回 `list[AdjFactorItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `trade_date`（`str`）：交易日期。\n- `adj_factor`（`float | None`）：复权因子。')
 async def api_stock_adj_factors(code: str, start_date: str = Query("", description='起始日期，格式 `YYYY-MM-DD`。'), end_date: str = Query("", description='结束日期，格式 `YYYY-MM-DD`。'), base_date: str = Query("", description='参数说明见接口上下文。')) -> list[dict[str, object]]:
-    return await run_data_task(_dump_item_list, stocks.get_adj_factors, (code, start_date, end_date, base_date))
+    return await run_quote_task(_dump_item_list, stocks.get_adj_factors, (code, start_date, end_date, base_date))
 
 
 @router.get("/api/stocks/{code}/factors/technical", summary='返回单只股票的技术指标序列', description='`GET` 返回单只股票的技术指标序列。\n\n## 路径参数\n\n- `code`（类型：`str`）：股票代码。\n\n## 查询参数\n\n- `trade_date`（类型：`str`）：交易日期，格式 `YYYY-MM-DD`。\n- `start_date`（类型：`str`）：起始日期，格式 `YYYY-MM-DD`。\n- `end_date`（类型：`str`）：结束日期，格式 `YYYY-MM-DD`。\n- `adjust`（类型：`str`；默认：`none`）：复权方式。\n- `fields`（类型：`str`）：按逗号指定返回字段，不传返回全部字段。\n\n## 返回类型\n\n顶层返回 `list[TechnicalFactorItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `trade_date`（`str`）：交易日期。\n- `adjust`（`str`）：复权方式。\n- `ma5`（`float | None`）：5 日均线。\n- `ma10`（`float | None`）：10 日均线。\n- `ma20`（`float | None`）：20 日均线。\n- `ma60`（`float | None`）：60 日均线。\n- `ema12`（`float | None`）：12 日 EMA。\n- `ema26`（`float | None`）：26 日 EMA。\n- `dif`（`float | None`）：MACD 的 DIF 值。\n- `dea`（`float | None`）：MACD 的 DEA 值。\n- `macd`（`float | None`）：MACD 柱值。\n- `rsi6`（`float | None`）：6 日 RSI。\n- `rsi12`（`float | None`）：12 日 RSI。\n- `rsi24`（`float | None`）：24 日 RSI。\n- `kdj_k`（`float | None`）：KDJ 的 K 值。\n- `kdj_d`（`float | None`）：KDJ 的 D 值。\n- `kdj_j`（`float | None`）：KDJ 的 J 值。\n- `boll_upper`（`float | None`）：布林带上轨。\n- `boll_mid`（`float | None`）：布林带中轨。\n- `boll_lower`（`float | None`）：布林带下轨。\n\n## 补充说明\n\n- `trade_date` 适合单日查询，`start_date` 与 `end_date` 用于区间筛选。\n- 传入 `fields` 后，响应中的每条记录只保留所选字段。')
@@ -255,6 +255,29 @@ async def api_stock_money_flow_batch(
 ) -> list[dict[str, object]]:
     """批量查询多只股票的资金流数据"""
     return await run_data_task(_dump_item_list, stocks.get_money_flow_batch, (codes, trade_date, view))
+
+
+@router.get("/api/stocks/indicators/money-flow/snapshot")
+async def api_stock_money_flow_snapshot(
+    trade_date: str = Query(..., description="交易日期。"),
+    view: str = Query("main", description="返回视图标识。"),
+) -> list[dict[str, object]]:
+    return await run_data_task(_dump_item_list, stocks.get_money_flow_snapshot, (trade_date, view))
+
+
+@router.get("/api/stocks/indicators/margin/snapshot")
+async def api_stock_margin_snapshot(trade_date: str = Query(..., description="交易日期。")) -> list[dict[str, object]]:
+    return await run_data_task(_dump_item_list, stocks.get_margin_snapshot, (trade_date,))
+
+
+@router.get("/api/stocks/finance/express/snapshot")
+async def api_stock_express_snapshot(announce_date: str = Query(..., description="公告日期。")) -> list[dict[str, object]]:
+    return await run_data_task(_dump_item_list, stocks.get_express_snapshot, (announce_date,))
+
+
+@router.get("/api/stocks/finance/forecasts/snapshot")
+async def api_stock_forecast_snapshot(announce_date: str = Query(..., description="公告日期。")) -> list[dict[str, object]]:
+    return await run_data_task(_dump_item_list, stocks.get_forecast_snapshot, (announce_date,))
 
 @router.get("/api/stocks/indicators/ah-comparisons", summary='返回 AH 股比价数据', description='`GET` 返回 AH 股比价数据。\n\n## 查询参数\n\n- `code`（类型：`str`）：股票代码。\n- `trade_date`（类型：`str`）：交易日期，格式 `YYYY-MM-DD`。\n- `start_date`（类型：`str`）：起始日期，格式 `YYYY-MM-DD`。\n- `end_date`（类型：`str`）：结束日期，格式 `YYYY-MM-DD`。\n- `limit`（类型：`int`；默认：`200`；范围：`1-5000`）：返回记录上限。\n- `offset`（类型：`int`；默认：`0`；最小值：`0`）：结果偏移量，从 `0` 开始。\n\n## 返回类型\n\n顶层返回 `list[StockAHComparisonItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `name`（`str`）：A 股简称。\n- `h_code`（`str`）：对应 H 股代码。\n- `trade_date`（`str`）：交易日期。\n- `a_close`（`float | None`）：A 股收盘价。\n- `h_close`（`float | None`）：H 股收盘价。\n- `premium_ratio`（`float | None`）：A/H 溢价率，单位 %。\n\n## 补充说明\n\n- `trade_date` 适合单日查询，`start_date` 与 `end_date` 用于区间筛选。')
 async def api_stock_ah_comparisons(

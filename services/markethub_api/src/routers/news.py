@@ -60,17 +60,6 @@ async def api_market_news_events(
     include_sources: bool = Query(False, description='是否回带来源映射。'),
     include_content_text: bool = Query(False, description='是否返回正文纯文本。'),
 ) -> dict[str, object]:
-    return await run_data_task(
-        _dump_news_events,
-        trade_date,
-        announcement_date,
-        crawl_date,
-        stock_code,
-        event_type,
-        min_importance_score,
-        sort_by,
-        limit,
-        offset,
-        include_sources,
-        include_content_text,
-    )
+    # News ownership is temporarily served by the 8815 news service. Keep this
+    # compatibility endpoint silent so MarketHub does not read or recapture text.
+    return {"events": []}
