@@ -18,3 +18,9 @@
 ## 安装
 
 请使用 AI 安装并跑通本项目，提示词示例：“阅读 https://github.com/williamxhero/MarketHub/AIREADME.md 并在 本机 D:\MarketHub\ 目录中安装这个项目”
+
+
+
+## 回测框架
+
+想要回测策略，可以使用 [ApexTrade](https://github.com/leodo/apex-trade) + [MarketHub 数据适配器](https://github.com/williamxhero/apex-trader-markethub-adapter)
