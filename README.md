@@ -1,6 +1,4 @@
-# MarketHub
-
-## 这是个什么东西？
+# MarketHub 是个什么东西？
 
 **MarketHub 是给底层的超级引擎 `QuoteMux` 套上了一层好用的 HTTP API 接口、超详细的文档 和 管理界面**
 
@@ -19,4 +17,4 @@
 
 ## 安装
 
-请使用 AI 安装并跑通本项目，提示词示例：“阅读 https://github.com/williamxhero/MarketHub/AIREADME.md 并在 D:\MarketHub\ 目录中安装这个项目”
+请使用 AI 安装并跑通本项目，提示词示例：“阅读 https://github.com/williamxhero/MarketHub/AIREADME.md 并在 本机 D:\MarketHub\ 目录中安装这个项目”

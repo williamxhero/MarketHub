@@ -25,5 +25,12 @@ services/markethub_console/dist/
 /scripts/build_console.ps1
 tests/
 /scripts/*
+!/scripts/bootstrap_database.py
+!/scripts/install_database_service.py
+!/scripts/install_all_packages.py
+!/scripts/run_api.py
+!/scripts/deploy_yosef_server.ps1
+!/scripts/data-health-check.sh
+!/scripts/migrate_market_daily_contracts.py
 
 /services/markethub_api/notes/*.md
