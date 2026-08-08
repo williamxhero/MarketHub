@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -9,7 +9,7 @@ import sys
 SCRIPT_ROOT = Path(__file__).resolve().parent
 MARKETHUB_ROOT = SCRIPT_ROOT.parents[1]
 WORKSPACE_ROOT = MARKETHUB_ROOT.parent
-VENV_ROOT = WORKSPACE_ROOT / '.venv'
+VENV_ROOT = WORKSPACE_ROOT / ".venv"
 
 
 def main() -> None:
@@ -20,36 +20,35 @@ def main() -> None:
 
 
 def _venv_python_executable() -> Path:
-    python_text = os.getenv('MARKETHUB_PYTHON', '')
-    if python_text != '':
+    python_text = os.getenv("MARKETHUB_PYTHON", "")
+    if python_text != "":
         return Path(python_text)
-    venv_text = os.getenv('MARKETHUB_VENV_ROOT', '')
-    if venv_text != '':
+    venv_text = os.getenv("MARKETHUB_VENV_ROOT", "")
+    if venv_text != "":
         return _python_executable(Path(venv_text))
     return _python_executable(VENV_ROOT)
 
 
 def _python_executable(venv_path: Path) -> Path:
-    if sys.platform.startswith('win'):
-        return venv_path / 'Scripts' / 'python.exe'
-    return venv_path / 'bin' / 'python'
+    if sys.platform.startswith("win"):
+        return venv_path / "Scripts" / "python.exe"
+    return venv_path / "bin" / "python"
 
 
 def _assert_layout(python_executable: Path) -> None:
     if not python_executable.is_file():
-        raise RuntimeError('缺少虚拟环境解释器，请先在工作区根目录执行 install_markethub.py 完成安装。')
+        raise RuntimeError("缺少虚拟环境解释器，请先在工作区根目录执行 install_markethub.py 完成安装。")
 
 
 def _install_all_packages(python_executable: Path) -> None:
     env = os.environ.copy()
-    env['MARKETHUB_PROJECT_ROOT'] = str(MARKETHUB_ROOT)
-    env['QUOTEMUX_RUNTIME_ROOT'] = str(WORKSPACE_ROOT / 'runtime')
-    # 发布时必须使用当前 release 携带的包源，不能继承旧 current 的环境变量。
-    env['QUOTEMUX_PACKAGE_REPO_SPEC'] = str(WORKSPACE_ROOT / 'QuoteMux_Packages')
-    env['QUOTEMUX_ALLOW_LOCAL_PACKAGE_REPO'] = 'true'
-    env['DATALAKE_ROOT'] = str(WORKSPACE_ROOT / 'datalake')
+    env.pop("QUOTEMUX_PACKAGE_REPO_SPEC", None)
+    env.pop("QUOTEMUX_ALLOW_LOCAL_PACKAGE_REPO", None)
+    env["MARKETHUB_PROJECT_ROOT"] = str(MARKETHUB_ROOT)
+    env["QUOTEMUX_RUNTIME_ROOT"] = str(WORKSPACE_ROOT / "runtime")
+    env["DATALAKE_ROOT"] = str(WORKSPACE_ROOT / "datalake")
     subprocess.run(
-        [str(python_executable), '-c', 'from quotemux import install_all_packages; print(install_all_packages())'],
+        [str(python_executable), "-c", "from quotemux import install_all_packages; print(install_all_packages())"],
         cwd=str(WORKSPACE_ROOT),
         env=env,
         check=True,
@@ -57,25 +56,19 @@ def _install_all_packages(python_executable: Path) -> None:
 
 
 def _install_playwright_browsers() -> None:
-    package_venv_root = WORKSPACE_ROOT / 'runtime' / 'package_venvs'
-    candidates = sorted(package_venv_root.glob('crawler_provider-*'))
+    package_venv_root = WORKSPACE_ROOT / "runtime" / "package_venvs"
+    candidates = sorted(package_venv_root.glob("crawler_provider-*"))
     if candidates == []:
         return
-    python_executable = _package_python_executable(candidates[-1])
+    python_executable = _python_executable(candidates[-1])
     if not python_executable.is_file():
         return
     subprocess.run(
-        [str(python_executable), '-m', 'playwright', 'install', 'chromium'],
+        [str(python_executable), "-m", "playwright", "install", "chromium"],
         cwd=str(WORKSPACE_ROOT),
         check=True,
     )
 
 
-def _package_python_executable(venv_path: Path) -> Path:
-    if sys.platform.startswith('win'):
-        return venv_path / 'Scripts' / 'python.exe'
-    return venv_path / 'bin' / 'python'
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

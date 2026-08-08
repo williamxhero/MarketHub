@@ -8,11 +8,12 @@ import subprocess
 import sys
 
 
-ROOT = Path(__file__).resolve().parent
-VENV_ROOT = ROOT / ".venv"
-QUOTEMUX_ROOT = ROOT / "QuoteMux"
-MARKETHUB_ROOT = ROOT / "MarketHub"
-RUNTIME_ROOT = Path(os.getenv("MARKETHUB_RUNTIME_ROOT", str(ROOT / "runtime"))).expanduser().resolve()
+SCRIPT_ROOT = Path(__file__).resolve().parent
+MARKETHUB_ROOT = SCRIPT_ROOT if (SCRIPT_ROOT / "requirements.txt").is_file() else SCRIPT_ROOT / "MarketHub"
+WORKSPACE_ROOT = MARKETHUB_ROOT.parent
+VENV_ROOT = WORKSPACE_ROOT / ".venv"
+QUOTEMUX_ROOT = WORKSPACE_ROOT / "QuoteMux"
+RUNTIME_ROOT = Path(os.getenv("MARKETHUB_RUNTIME_ROOT", str(WORKSPACE_ROOT / "runtime"))).expanduser().resolve()
 
 
 def main() -> None:
@@ -64,7 +65,7 @@ def _prepare_workspace() -> None:
 
 
 def _ensure_workspace_directories() -> None:
-    (ROOT / 'datalake').mkdir(parents=True, exist_ok=True)
+    (WORKSPACE_ROOT / 'datalake').mkdir(parents=True, exist_ok=True)
     (RUNTIME_ROOT / 'cache_payloads').mkdir(parents=True, exist_ok=True)
     (RUNTIME_ROOT / 'data-update').mkdir(parents=True, exist_ok=True)
     (RUNTIME_ROOT / 'env').mkdir(parents=True, exist_ok=True)
@@ -130,25 +131,25 @@ def _verify_install(python_executable: Path) -> None:
 
 
 def _install_all_packages(python_executable: Path) -> None:
-    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "deploy" / "install_all_packages.py")], cwd=str(ROOT), check=True)
+    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "deploy" / "install_all_packages.py")], cwd=str(WORKSPACE_ROOT), check=True)
 
 
 def _bootstrap_database(python_executable: Path) -> None:
     if os.getenv("MARKETHUB_SKIP_DATABASE_BOOTSTRAP", "") == "1":
         return
-    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "bootstrap_database.py")], cwd=str(ROOT), check=True)
+    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "deploy" / "bootstrap_database.py")], cwd=str(WORKSPACE_ROOT), check=True)
 
 
 def _ensure_database_service(python_executable: Path) -> None:
     if os.getenv("MARKETHUB_SKIP_DATABASE_SERVICE_INSTALL", "") == "1":
         return
-    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "deploy" / "install_database_service.py")], cwd=str(ROOT), check=True)
+    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "deploy" / "install_database_service.py")], cwd=str(WORKSPACE_ROOT), check=True)
 
 
 def _print_next_steps(python_executable: Path) -> None:
     print(f"Python: {python_executable}")
     print("启动命令:")
-    print(f"  {python_executable} {MARKETHUB_ROOT / 'scripts' / 'run_api.py'}")
+    print(f"  {python_executable} {MARKETHUB_ROOT / 'scripts' / 'deploy' / 'run_api.py'}")
     print("启动后访问: http://127.0.0.1:8803/admin")
     print("然后点击: 安装或更新全部 Packages")
 

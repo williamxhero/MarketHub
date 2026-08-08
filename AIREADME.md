@@ -4,7 +4,7 @@
 
 ## 0. 参数收集
 
-确认 OS（Windows/Linux/WSL2）、WORKSPACE_ROOT、Python >= 3.12 解释器路径、是否已有 PostgreSQL + TimescaleDB、DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD、provider token、是否只本机运行或远程发布、DEPLOY_HOST/DEPLOY_ROOT/SERVICE_NAME、SCHEDULER 和时区。没有数据库时，询问用户是否授权 AI 在目标机器安装；如果用户没有现成数据库且授权安装，AI 必须自己安装并配置，不得要求用户手工完成。密码、token 和私有主机信息不得写入 Git 或文档。
+确认 OS（Windows/Linux/WSL2）、WORKSPACE_ROOT、Python >= 3.12 解释器路径、是否已有 PostgreSQL + TimescaleDB、DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD、provider token、SCHEDULER 和时区。没有数据库时，询问用户是否授权 AI 在目标机器安装；如果用户没有现成数据库且授权安装，AI 必须自己安装并配置，不得要求用户手工完成。密码、token 和私有主机信息不得写入 Git 或文档。
 
 ## 1. 目录与两个仓库
 
@@ -13,20 +13,17 @@ MarketHub 和 QuoteMux 必须同级，安装器复制到工作区根目录：
 <WORKSPACE_ROOT>/
   MarketHub/
   QuoteMux/
-  install_markethub.py
 
 在用户确认的工作区执行：
 
 git clone --branch main https://github.com/williamxhero/MarketHub.git MarketHub
 git clone --branch main https://github.com/williamxhero/QuoteMux.git QuoteMux
-copy MarketHub\\install_markethub.py install_markethub.py       # Windows
-cp MarketHub/install_markethub.py install_markethub.py         # Linux/WSL
 
-已有仓库先检查 git status --short；有未提交修改停止并询问，干净时才允许 git pull --ff-only。不要把安装器放在 MarketHub 子目录中执行。
+已有仓库先检查 git status --short；有未提交修改停止并询问，干净时才允许 git pull --ff-only。安装器必须从工作区根目录调用。
 
 ## 2. 前置依赖
 
-安装 Git、Python、pip、curl；远程 Linux 发布还需要 tar、ssh、scp。运行时需要 PostgreSQL 和 TimescaleDB。数据库不存在时，安装 AI 应根据用户确认的 OS 使用原生包管理器安装 PostgreSQL 和 TimescaleDB，创建运行所需的数据库和账号，并写入运行环境；数据库已存在时，使用用户提供的 DB_* 参数连接。不要因为数据库尚未准备好就结束安装。
+安装 Git、Python、pip、curl。运行时需要 PostgreSQL 和 TimescaleDB。数据库不存在时，安装 AI 应根据用户确认的 OS 使用原生包管理器安装 PostgreSQL 和 TimescaleDB，创建运行所需的数据库和账号，并写入运行环境；数据库已存在时，使用用户提供的 DB_* 参数连接。不要因为数据库尚未准备好就结束安装。
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
@@ -36,7 +33,7 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 在工作区根目录执行：
 
-<PYTHON> install_markethub.py
+<PYTHON> MarketHub/install_markethub.py
 
 该安装器创建共享 .venv，以 editable 模式安装 QuoteMux，安装 MarketHub 依赖，准备 Console、runtime、日志、缓存和环境文件；随后从 git+https://github.com/williamxhero/QuoteMux_Packages.git@main 在线安装全部 source packages，并自动运行数据库 bootstrap。不要 clone QuoteMux_Packages，也不要设置 QUOTEMUX_PACKAGE_REPO_SPEC 指向本地目录。带 requirements.txt 的 package 进入隔离环境，需要时安装 Playwright Chromium。
 
@@ -48,7 +45,7 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 启动 API：
 
-<PYTHON> MarketHub/scripts/run_api.py
+<PYTHON> MarketHub/scripts/deploy/run_api.py
 
 启动脚本会读取环境文件并加入 QuoteMux、Packages 和 API 源码路径。使用用户确认的主机和端口验收：
 
@@ -71,7 +68,6 @@ POST http://<MARKETHUB_HOST>:<MARKETHUB_PORT>/api/admin/capture/run-due-async
 如果用户选择 systemd，创建 service/timer 时使用用户确认的环境文件和绝对脚本路径，并执行 daemon-reload、enable --now 及一次手动运行。
 
 如果用户选择 Windows Task Scheduler，只注册 API 启动任务和 HTTP 到期检查；不要声称 Bash 全局更新已经部署。
-## 6. 远程发布
 
 
 ## 7. 停止条件

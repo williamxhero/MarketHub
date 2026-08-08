@@ -1,8 +1,9 @@
 # 每日更新脚本
 
-此目录存放 Task Center 中直接调用的 MarketHub 每日更新入口脚本。
+安装器会将本目录的脚本复制到 `$MARKETHUB_RUNTIME_ROOT/scripts/`。请在 Linux、WSL 或其他具备 Bash、curl 的调度器中执行。
 
-- `global-data-update.sh`：执行常规全局数据更新，补跑到期 capability、处理分钟数据缺口并校验行情覆盖。
-- `global-data-update-with-health.sh`：用于每日最终补跑；完成全局数据更新后，再执行数据健康检查。
+- `global-data-update.sh`：调用本地 API 运行所有到期采集，并在结果中出现失败任务时退出失败。
+- `data-health-check.sh`：调用本地 API 生成并校验数据健康快照。
+- `global-data-update-with-health.sh`：依次运行上述两个脚本。
 
-安装后，这些脚本会复制到运行目录的 `$MARKETHUB_RUNTIME_ROOT/scripts/`，Task Center 继续从该运行目录执行。
+脚本只依赖安装器生成的运行环境文件和公开 API，不依赖特定服务器路径、私有回填脚本或本地数据文件。

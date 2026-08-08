@@ -7,7 +7,7 @@ import sys
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
-MARKETHUB_ROOT = SCRIPT_ROOT.parent
+MARKETHUB_ROOT = SCRIPT_ROOT.parents[1]
 WORKSPACE_ROOT = MARKETHUB_ROOT.parent
 SERVICE_ROOT = MARKETHUB_ROOT / 'services' / 'markethub_api'
 APP_PATH = SERVICE_ROOT / 'app.py'
