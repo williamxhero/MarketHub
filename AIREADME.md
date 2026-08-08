@@ -30,7 +30,7 @@ cp MarketHub/install_markethub.py install_markethub.py         # Linux/WSL
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
-不要假设数据库端口、数据库名、用户或密码。将确认或刚刚创建的 DB_* 值写入运行环境文件或 secret 存储。然后判断项目是否需要提前建表：如果 MarketHub/QuoteMux 的启动或迁移入口会自动创建表，直接调用该入口；如果必须提前创建，安装 AI 自己执行项目已有的迁移/初始化入口，例如 MarketHub/scripts/migrate_market_daily_contracts.py。不要要求用户手工执行 SQL，也不要让 AI 凭空重写替代项目契约的全量建表脚本。
+不要假设数据库端口、数据库名、用户或密码。将确认或刚刚创建的 DB_* 值写入运行环境文件或 secret 存储。然后判断项目是否需要提前建表：如果 MarketHub/QuoteMux 的启动或初始化入口会自动创建表，直接调用该入口；如果必须提前创建，安装 AI 自己执行项目已有的初始化入口，例如 MarketHub/scripts/deploy/bootstrap_database.py。不要要求用户手工执行 SQL，也不要让 AI 凭空重写替代项目契约的全量建表脚本。
 
 ## 3. 安装核心和 Packages
 
@@ -40,7 +40,7 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 该安装器创建共享 .venv，以 editable 模式安装 QuoteMux，安装 MarketHub 依赖，准备 Console、runtime、日志、缓存和环境文件；随后从 git+https://github.com/williamxhero/QuoteMux_Packages.git@main 在线安装全部 source packages，并自动运行数据库 bootstrap。不要 clone QuoteMux_Packages，也不要设置 QUOTEMUX_PACKAGE_REPO_SPEC 指向本地目录。带 requirements.txt 的 package 进入隔离环境，需要时安装 Playwright Chromium。
 
-数据库 bootstrap 会创建或确认数据库角色和数据库、启用 TimescaleDB、创建基础行情/引用表、初始化 QuoteMux 缓存/采集/超时策略表，并调用项目迁移。安装器会先运行 scripts/install_database_service.py 探测并尝试安装数据库服务；如果目标 OS 的包管理器或管理员权限不可用，AI 必须报告该真实权限阻塞，而不是要求用户手工建库/建表。安装结果必须包含成功的 PackageInstallResult 和数据库初始化输出；失败停止。
+数据库 bootstrap 会创建或确认数据库角色和数据库、启用 TimescaleDB、创建基础行情/引用表、初始化 QuoteMux 缓存/采集/超时策略表。安装器会先运行 scripts/deploy/install_database_service.py 探测并尝试安装数据库服务；如果目标 OS 的包管理器或管理员权限不可用，AI 必须报告该真实权限阻塞，而不是要求用户手工建库/建表。安装结果必须包含成功的 PackageInstallResult 和数据库初始化输出；失败停止。
 
 ## 4. 配置与启动
 
@@ -73,7 +73,6 @@ POST http://<MARKETHUB_HOST>:<MARKETHUB_PORT>/api/admin/capture/run-due-async
 如果用户选择 Windows Task Scheduler，只注册 API 启动任务和 HTTP 到期检查；不要声称 Bash 全局更新已经部署。
 ## 6. 远程发布
 
-只有用户明确要求远程 Linux 发布时才使用 scripts/deploy_yosef_server.ps1。它要求 AI 明确传入 DEPLOY_HOST、DEPLOY_ROOT、REMOTE_RUNTIME_ROOT、REMOTE_ENV_PATH、SERVICE_NAME 和 HEALTH_URL；脚本会打包 MarketHub 和 QuoteMux、在线安装 Packages、执行数据库 bootstrap、切换 release、创建 systemd 服务并检查健康接口。AI 必须先验证 SSH 与免交互 sudo 权限；缺失时报告真实权限阻塞，不能静默跳过验收，也不能改用 Docker。
 
 ## 7. 停止条件
 

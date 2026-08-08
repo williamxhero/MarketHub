@@ -107,8 +107,7 @@ def _write_default_environment() -> None:
 
 def _install_runtime_scripts() -> None:
     for source_directory, script_names in (
-        ("dailyupdate", ("global-data-update.sh", "global-data-update-with-health.sh")),
-        ("scripts", ("data-health-check.sh",)),
+        ("scripts/dailyupdate", ("global-data-update.sh", "global-data-update-with-health.sh", "data-health-check.sh")),
     ):
         for script_name in script_names:
             source_path = MARKETHUB_ROOT / source_directory / script_name
@@ -131,7 +130,7 @@ def _verify_install(python_executable: Path) -> None:
 
 
 def _install_all_packages(python_executable: Path) -> None:
-    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "install_all_packages.py")], cwd=str(ROOT), check=True)
+    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "deploy" / "install_all_packages.py")], cwd=str(ROOT), check=True)
 
 
 def _bootstrap_database(python_executable: Path) -> None:
@@ -143,7 +142,7 @@ def _bootstrap_database(python_executable: Path) -> None:
 def _ensure_database_service(python_executable: Path) -> None:
     if os.getenv("MARKETHUB_SKIP_DATABASE_SERVICE_INSTALL", "") == "1":
         return
-    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "install_database_service.py")], cwd=str(ROOT), check=True)
+    subprocess.run([str(python_executable), str(MARKETHUB_ROOT / "scripts" / "deploy" / "install_database_service.py")], cwd=str(ROOT), check=True)
 
 
 def _print_next_steps(python_executable: Path) -> None:
