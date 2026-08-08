@@ -20,10 +20,14 @@ services/markethub_console/dist/
 !/docs/
 /docs/*
 !/docs/openapi-dynamic-docs-full-migration-plan.md
+!/docs/stock-strategy-factor-window.md
 /AGENTS.md
 /scripts/test.ps1
 /scripts/build_console.ps1
 tests/
+!/services/markethub_api/tests/
+/services/markethub_api/tests/*
+!/services/markethub_api/tests/test_strategy_factor_window.py
 /scripts/*
 !/scripts/bootstrap_database.py
 !/scripts/install_database_service.py
@@ -32,5 +36,9 @@ tests/
 !/scripts/deploy_yosef_server.ps1
 !/scripts/data-health-check.sh
 !/scripts/migrate_market_daily_contracts.py
+!/scripts/backfill_stock_market_indicators.py
+!/scripts/backfill_stock_money_flow.py
+!/scripts/backfill_stock_price_band.py
+!/scripts/test_backfill_stock_price_band.py
 
 /services/markethub_api/notes/*.md

@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from core.config import DEFAULT_LIMIT
 from quotemux import QuoteMux, StockDailyLocalWindowRequest, StockDailySnapshotRequest, StockQuotesRequest
-from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialStatementItem, StockManagerItem, StockMarginItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
+from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialPitRawItem, StockFinancialStatementItem, StockManagerItem, StockMarginItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, StockStrategyFactorItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
 from services.common import ensure_limit, require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
 
 
@@ -260,6 +260,20 @@ def get_technical_factors(code: str, trade_date: str, start_date: str, end_date:
         )
         for _, row in frame.iterrows()
     ]
+
+
+def get_strategy_factor_window(start_date: str, end_date: str, codes: str = "") -> list[StockStrategyFactorItem]:
+    try:
+        return _QUOTEMUX.stocks.get_strategy_factor_window(start_date, end_date, codes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def get_financial_pit_period(report_period: str) -> list[StockFinancialPitRawItem]:
+    try:
+        return _QUOTEMUX.stocks.get_financial_pit_period(report_period)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def get_ah_comparisons(code: str, trade_date: str, start_date: str, end_date: str, limit: int, offset: int) -> list[StockAHComparisonItem]:

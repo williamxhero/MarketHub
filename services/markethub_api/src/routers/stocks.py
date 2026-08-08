@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import math
 from typing import Literal
 
 from fastapi import APIRouter, Query
-from quotemux.models import StockQuotesQueryResult
+from quotemux.models import StockQuotesQueryResult, StockStrategyFactorItem
 
 from data_threads import run_data_task, run_quote_task
 from routers.stock_quote_models import StockQuotesQueryPayload
@@ -14,6 +15,16 @@ from services.runtime_memory import run_with_memory_log
 
 
 router = APIRouter()
+
+
+def _sanitize_json_value(value: object) -> object:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sanitize_json_value(item) for key, item in value.items()}
+    return value
 
 STOCK_QUOTE_FIELDS = {"code", "trade_time", "freq", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "volume", "amount", "adjust", "is_suspended", "is_st"}
 TECHNICAL_FIELDS = {
@@ -240,6 +251,51 @@ async def api_stock_technical_factors(
     return await run_data_task(_filter_items, stocks.get_technical_factors, args, fields, TECHNICAL_FIELDS)
 
 
+@router.get(
+    "/api/stocks/factors/strategy-window",
+    summary="返回全市场点时策略因子窗口",
+    description="""`GET` 从本地事实表批量返回全 A 股策略因子窗口。
+
+## 查询参数
+
+- `start_date`（`str`）：起始交易日期，格式 `YYYY-MM-DD`。
+- `end_date`（`str`）：结束交易日期，格式 `YYYY-MM-DD`。
+
+## 返回类型
+
+顶层直接返回 `list[StockStrategyFactorItem]`，固定按 `trade_date, code` 排序。
+
+## 返回字段
+
+- `trade_date`、`code`：交易日与股票代码。
+- `listing_board`：上市板块。
+- `close`：未复权收盘价。
+- `dividend_yield_pct`：Tushare `dv_ratio`，单位 `%`。
+- `float_market_cap`：Tushare `circ_mv`，单位万元。
+- `circulating_shares`：Tushare `float_share`，单位万股。
+- `free_float_shares`：Tushare `free_share`，单位万股。
+- `active_buy_amount`：Tushare 四档主动买入金额之和，单位元。
+- `active_buy_amount_proportion_all`：`active_buy_amount / (float_market_cap * 10000)`；市值缺失或为零时返回 `null`。
+- `volume_shares`：成交量，统一单位为股。
+- `mean_volume_5d_shares`：最近 5 个交易日平均成交量，单位股。
+- `mean_volume_5d_to_free_float_shares`：`mean_volume_5d_shares / (free_float_shares * 10000)`；自由流通股本缺失或为零时返回 `null`。
+- `ma10`、`ma20`、`ma40`：基于本地未复权日收盘价计算的移动平均。
+- `is_st`、`is_suspended`：该交易日的风险与停牌状态。
+- `upper_limit`、`lower_limit`、`price_band_state`：历史涨跌停边界及收盘价所处状态。
+
+## 数据流
+
+仅使用 `derived_core` source package；该 source 一次 SQL 读取本地 `fact` / `ref` 表，不在请求线程逐股票访问外源，也不做隐式 provider fallback。缺失值保持 `null`，缺失字符串保持空字符串。""",
+)
+async def api_stock_strategy_factor_window(
+    start_date: str = Query(..., description="起始交易日期，格式 YYYY-MM-DD。"),
+    end_date: str = Query(..., description="结束交易日期，格式 YYYY-MM-DD。"),
+    codes: str = Query("", description="可选股票代码，逗号分隔；不传则返回全市场。"),
+) -> list[StockStrategyFactorItem]:
+    result = await run_data_task(stocks.get_strategy_factor_window, start_date, end_date, codes)
+    return _sanitize_json_value(result)
+
+
 @router.get("/api/stocks/{code}/indicators/money-flow", summary='返回单只股票的资金流指标', description='`GET` 返回单只股票的资金流指标。\n\n## 路径参数\n\n- `code`（类型：`str`）：股票代码。\n\n## 查询参数\n\n- `trade_date`（类型：`str`）：交易日期，格式 `YYYY-MM-DD`。\n- `start_date`（类型：`str`）：起始日期，格式 `YYYY-MM-DD`。\n- `end_date`（类型：`str`）：结束日期，格式 `YYYY-MM-DD`。\n- `view`（类型：`str`；默认：`main`）：资金流视图，当前固定使用 `main`。\n\n## 返回类型\n\n顶层返回 `list[StockMoneyFlowItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `trade_date`（`str`）：交易日期。\n- `view`（`str`）：返回视图标识。\n- `main_inflow`（`float | None`）：主力流入金额。\n- `main_outflow`（`float | None`）：主力流出金额。\n- `net_inflow`（`float | None`）：净流入金额。\n\n## 补充说明\n\n- `trade_date` 适合单日查询，`start_date` 与 `end_date` 用于区间筛选。')
 async def api_stock_money_flow(code: str, trade_date: str = Query("", description='交易日期。'), start_date: str = Query("", description='起始日期，格式 `YYYY-MM-DD`。'), end_date: str = Query("", description='结束日期，格式 `YYYY-MM-DD`。'), view: str = Query("main", description='返回视图标识。')) -> list[dict[str, object]]:
     return await run_data_task(_dump_item_list, stocks.get_money_flow, (code, trade_date, start_date, end_date, view))
@@ -342,6 +398,11 @@ async def api_stock_financial_statements(code: str = Query("", description='股�
 @router.get("/api/stocks/finance/indicators", summary='返回股票财务指标数据', description='`GET` 返回股票财务指标数据。\n\n## 查询参数\n\n- `code`（类型：`str`）：单个股票代码；与 `codes` 至少传一个。\n- `codes`（类型：`str`）：多个股票代码，逗号分隔；与 `code` 至少传一个。\n- `report_period`（类型：`str`）：单个报告期，格式 `YYYY-MM-DD`。\n- `start_period`（类型：`str`）：报告期起始日期，格式 `YYYY-MM-DD`。\n- `end_period`（类型：`str`）：报告期结束日期，格式 `YYYY-MM-DD`。\n\n## 返回类型\n\n顶层返回 `list[StockFinanceIndicatorItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `report_period`（`str`）：报告期。\n- `roe`（`float | None`）：净资产收益率，单位 %。\n- `roa`（`float | None`）：总资产收益率，单位 %。\n- `gross_margin`（`float | None`）：毛利率，单位 %。\n- `net_margin`（`float | None`）：净利率，单位 %。\n- `asset_turnover`（`float | None`）：总资产周转率。\n- `current_ratio`（`float | None`）：流动比率。\n- `debt_to_asset`（`float | None`）：资产负债率，单位 %。\n\n## 补充说明\n\n- `code` 与 `codes` 至少需要传一个。\n- `report_period` 用于精确查询单个报告期，`start_period` 与 `end_period` 用于区间筛选。')
 async def api_stock_finance_indicators(code: str = Query("", description='股票代码。'), codes: str = Query("", description='多个股票代码，逗号分隔；与 `code` 至少传一个。'), report_period: str = Query("", description='报告期。'), start_period: str = Query("", description='报告期起始日期，格式 `YYYY-MM-DD`。'), end_period: str = Query("", description='报告期结束日期，格式 `YYYY-MM-DD`。')) -> list[dict[str, object]]:
     return await run_data_task(_dump_item_list, stocks.get_finance_indicators, (code, codes, report_period, start_period, end_period))
+
+
+@router.get("/api/stocks/finance/pit/raw-period", summary="返回报告期财务 PIT 原始事实", description="返回 Tushare `fina_indicator_vip` 与 `income_vip` 合并后的公告日可见原始财务事实。保留 `announcement_date`、`actual_announcement_date`、`report_period`、`report_type`、`company_type`、`update_flag`；该接口不宣称 BigQuant 组合因子等价。")
+async def api_stock_financial_pit_period(report_period: str = Query(..., description="报告期，格式 YYYY-MM-DD。")) -> list[dict[str, object]]:
+    return await run_data_task(_dump_item_list, stocks.get_financial_pit_period, (report_period,))
 
 
 @router.get("/api/stocks/{code}/finance/audits", summary='返回单只股票的审计意见记录', description='`GET` 返回单只股票的审计意见记录。\n\n## 路径参数\n\n- `code`（类型：`str`）：股票代码。\n\n## 查询参数\n\n- `report_period`（类型：`str`）：单个报告期，格式 `YYYY-MM-DD`。\n- `start_period`（类型：`str`）：报告期起始日期，格式 `YYYY-MM-DD`。\n- `end_period`（类型：`str`）：报告期结束日期，格式 `YYYY-MM-DD`。\n\n## 返回类型\n\n顶层返回 `list[AuditItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `report_period`（`str`）：报告期。\n- `audit_result`（`str`）：审计意见结论。\n- `auditor`（`str`）：审计机构。\n- `sign_accountant`（`str`）：签字会计师。\n- `announce_date`（`str`）：公告日期。\n\n## 补充说明\n\n- `report_period` 用于精确查询单个报告期，`start_period` 与 `end_period` 用于区间筛选。')
