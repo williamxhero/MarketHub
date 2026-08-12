@@ -30,11 +30,15 @@ from routers.concepts_runtime import router as concepts_runtime_router
 from routers.data_health import router as data_health_router
 from routers.docs_search import router as docs_router
 from routers.etfs import router as etfs_router
+from routers.futures import router as futures_router
 from routers.indexes import router as indexes_router
 from routers.markets import router as markets_router
 from routers.news import router as news_router
+from routers.p0_fundamentals import router as p0_fundamentals_router
 from routers.rankings import router as rankings_router
 from routers.stocks import router as stocks_router
+from services import adj_factor_warmup, reader_packages
+from services.market_data_version import current_market_data_version
 
 
 SYNC_ROUTE_THREAD_TOKENS = 100
@@ -66,7 +70,7 @@ def _get_cors_origins() -> list[str]:
 
 app = FastAPI(
     title="整合 API 服务",
-    version="0.2.0",
+    version=os.getenv("MARKETHUB_RELEASE", "0.2.0"),
     docs_url="/api/openapi",
     redoc_url=None,
     openapi_url="/api/openapi.json",
@@ -79,11 +83,13 @@ app.add_middleware(
 )
 app.include_router(stocks_router)
 app.include_router(etfs_router)
+app.include_router(futures_router)
 app.include_router(concepts_runtime_router)
 app.include_router(concepts_router)
 app.include_router(indexes_router)
 app.include_router(markets_router)
 app.include_router(news_router)
+app.include_router(p0_fundamentals_router)
 app.include_router(rankings_router)
 app.include_router(docs_router)
 app.include_router(admin_router)
@@ -123,10 +129,13 @@ async def on_startup() -> None:
     # MarketHub 绝大多数接口仍是同步路由，需要给共享线程池留出余量，避免探活和文档入口被一起饿死。
     limiter = anyio.to_thread.current_default_thread_limiter()
     limiter.total_tokens = SYNC_ROUTE_THREAD_TOKENS
+    reader_packages.ensure_reader_packages_ready()
+    adj_factor_warmup.resume_tasks()
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    adj_factor_warmup.stop_tasks()
     close_pool()
 
 
@@ -223,7 +232,10 @@ async def console_config() -> dict[str, str]:
 - `service`（`str`）：服务标识。
 - `status`（`str`）：健康状态；正常情况下为 `ok`。
 - `version`（`str`）：当前服务版本。
-- `updated_at`（`str`）：健康检查文案中的更新时间。""",
+- `updated_at`（`str`）：健康检查文案中的更新时间。
+- `data_version`（`str`）：由市场事实快照指纹实时生成；市场 reader 必须携带该值，事实变更后旧值失效。
+- `openapi_url`（`str`）：公开 OpenAPI JSON 的相对路径。
+- `docs_url`（`str`）：公开 Swagger UI 的相对路径。""",
 )
 async def health() -> dict[str, str]:
     # 健康检查只做轻量存活探针，避免把索引构建耗时耦合进监控。
@@ -232,6 +244,9 @@ async def health() -> dict[str, str]:
         "status": "ok",
         "version": app.version,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "data_version": current_market_data_version(),
+        "openapi_url": "/api/openapi.json",
+        "docs_url": "/api/openapi",
     }
 
 

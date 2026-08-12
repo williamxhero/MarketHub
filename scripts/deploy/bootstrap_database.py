@@ -57,6 +57,20 @@ BASE_SCHEMA_SQL = (
     )
     """,
     "create index if not exists stock_daily_1d_trade_date_idx on fact.stock_daily_1d (trade_date, market, code)",
+    """
+    create table if not exists fact.stock_price_band_daily (
+        market text not null,
+        code text not null,
+        trade_date date not null,
+        upper_limit double precision,
+        lower_limit double precision,
+        source text not null,
+        loaded_at timestamp with time zone not null default now(),
+        primary key (market, code, trade_date),
+        foreign key (market, code) references ref.stock (market, code)
+    )
+    """,
+    "create index if not exists stock_price_band_daily_date_idx on fact.stock_price_band_daily (trade_date)",
 )
 
 
@@ -202,11 +216,13 @@ def _ensure_base_schema(database_config: dict[str, str]) -> None:
 
 def _ensure_quotemux_schema() -> None:
     from quotemux.runtime import QuoteMux
+    from quotemux.futures import ensure_future_schema
     from quotemux.store.timeout_admin import QuoteMuxTimeoutAdmin
 
     runtime = QuoteMux()
     runtime.cache.list_policies()
     runtime.capture.list_policies()
+    ensure_future_schema()
     QuoteMuxTimeoutAdmin().sync_defaults()
 
 

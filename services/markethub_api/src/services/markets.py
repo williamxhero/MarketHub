@@ -4,6 +4,7 @@ from core.config import DEFAULT_LIMIT
 from quotemux import NextTradingDaysRequest, PreviousTradingDaysRequest, QuoteMux, TradingCalendarRequest, YearlyTradingCalendarRequest
 from quotemux.models import AuctionItem, BlockTradeItem, ConnectActiveTop10Item, ConnectCapitalFlowItem, ConnectQuotaItem, DragonTigerInstitutionItem, DragonTigerItem, HotMoneyDetailItem, HotMoneyProfileItem, MarketCapitalFlowItem, TradingCalendarItem, TradingSessionItem
 from services.common import ensure_limit, require_exchange
+from services.market_data_version import require_market_data_version
 
 
 _QUOTEMUX = QuoteMux()
@@ -13,13 +14,14 @@ def get_main_capital_flow(trade_date: str, start_date: str, end_date: str) -> li
     return _QUOTEMUX.markets.get_main_capital_flow(trade_date, start_date, end_date)
 
 
-def get_trading_calendar(exchange: str, start_date: str, end_date: str, is_open: bool | None) -> list[TradingCalendarItem]:
+def get_trading_calendar(exchange: str, start_date: str, end_date: str, is_open: bool | None, data_version: str) -> list[TradingCalendarItem]:
     return _QUOTEMUX.markets.get_trading_calendar(
         TradingCalendarRequest(
             exchange=require_exchange(exchange),
             start_date=start_date,
             end_date=end_date,
             is_open=is_open,
+            data_version=require_market_data_version(data_version),
         )
     )
 

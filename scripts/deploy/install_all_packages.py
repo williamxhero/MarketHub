@@ -42,11 +42,10 @@ def _assert_layout(python_executable: Path) -> None:
 
 def _install_all_packages(python_executable: Path) -> None:
     env = os.environ.copy()
-    env.pop("QUOTEMUX_PACKAGE_REPO_SPEC", None)
-    env.pop("QUOTEMUX_ALLOW_LOCAL_PACKAGE_REPO", None)
     env["MARKETHUB_PROJECT_ROOT"] = str(MARKETHUB_ROOT)
-    env["QUOTEMUX_RUNTIME_ROOT"] = str(WORKSPACE_ROOT / "runtime")
-    env["DATALAKE_ROOT"] = str(WORKSPACE_ROOT / "datalake")
+    # 部署环境显式指定当前 release 包仓时必须保留，避免回退到远端 main 版本。
+    env.setdefault("QUOTEMUX_RUNTIME_ROOT", str(WORKSPACE_ROOT / "runtime"))
+    env.setdefault("DATALAKE_ROOT", str(WORKSPACE_ROOT / "datalake"))
     subprocess.run(
         [str(python_executable), "-c", "from quotemux import install_all_packages; print(install_all_packages())"],
         cwd=str(WORKSPACE_ROOT),

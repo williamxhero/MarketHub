@@ -4,7 +4,7 @@ import anyio.to_thread
 from fastapi import APIRouter, BackgroundTasks, Query, Request
 from pydantic import BaseModel, Field
 
-from services import admin_runtime, stocks
+from services import adj_factor_warmup, admin_runtime, stocks
 
 
 router = APIRouter()
@@ -55,6 +55,12 @@ class PublishProfilePayload(BaseModel):
 
 class WarmupTaskCreatePayload(BaseModel):
     capability_ids: list[str]
+
+
+class AdjFactorWarmupCreatePayload(BaseModel):
+    start_date: str
+    end_date: str
+    base_date: str
 
 
 class ContractPolicyPayload(BaseModel):
@@ -354,6 +360,26 @@ async def api_admin_warmups_create(payload: WarmupTaskCreatePayload, background_
     task = admin_runtime.create_warmup_task(tuple(payload.capability_ids))
     background_tasks.add_task(admin_runtime.run_warmup_task, str(task['task_id']))
     return task
+
+
+@router.get('/api/admin/adjustment-factor-warmups')
+async def api_admin_adjustment_factor_warmups(limit: int = Query(50, ge=1, le=200)) -> list[dict[str, object]]:
+    return adj_factor_warmup.list_tasks(limit)
+
+
+@router.get('/api/admin/adjustment-factor-warmups/{task_id}')
+async def api_admin_adjustment_factor_warmup_detail(task_id: str) -> dict[str, object]:
+    return adj_factor_warmup.get_task(task_id)
+
+
+@router.post('/api/admin/adjustment-factor-warmups')
+async def api_admin_adjustment_factor_warmups_create(payload: AdjFactorWarmupCreatePayload) -> dict[str, object]:
+    return adj_factor_warmup.create_task(payload.start_date, payload.end_date, payload.base_date)
+
+
+@router.post('/api/admin/adjustment-factor-warmups/{task_id}/cancel')
+async def api_admin_adjustment_factor_warmup_cancel(task_id: str) -> dict[str, object]:
+    return adj_factor_warmup.cancel_task(task_id)
 
 
 @router.get("/api/admin/runtime-health")

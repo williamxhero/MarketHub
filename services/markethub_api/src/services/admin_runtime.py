@@ -1155,7 +1155,7 @@ def save_capture_policy(capability_id: str, payload: dict[str, object]) -> dict[
             capability_id=normalized_capability_id,
             enabled=schedule["enabled"],
             cadence=schedule["cadence"],
-            run_time=_time_from_text("00:00:00"),
+            run_time=_time_from_text(str(payload.get("run_time", current["run_time"]))),
             timezone=str(payload.get("timezone", current["timezone"])),
             weekday=schedule["weekday"],
             month=schedule["month"],

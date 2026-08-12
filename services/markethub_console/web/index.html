@@ -2500,20 +2500,21 @@
       }
 
       try {
-        setSummary(`正在保存 ${activeCapabilityId} 设置...`);
+        const capabilityId = activeCapabilityId;
+        setSummary(`正在保存 ${capabilityId} 设置...`);
         saveManualPermanent();
-        await request(`/api/admin/capability-settings/${encodeURIComponent(activeCapabilityId)}`, {
+        await request(`/api/admin/capability-settings/${encodeURIComponent(capabilityId)}`, {
           method: "PUT",
           body: JSON.stringify({
             merge_strategy: capabilityMergeStrategy.value,
             ttl_days: ttlDaysValue(),
           }),
         });
-        await request(`/api/admin/capture-policies/${encodeURIComponent(activeCapabilityId)}`, {
+        await request(`/api/admin/capture-policies/${encodeURIComponent(capabilityId)}`, {
           method: "PUT",
           body: JSON.stringify({
             ...captureSchedulePayload(),
-            run_time: "00:00:00",
+            run_time: activeCapturePolicy.run_time || "00:00:00",
             timezone: activeCapturePolicy.timezone || "Asia/Shanghai",
             scope_profile: activeCapturePolicy.scope_profile || "",
             window_count: Number.parseInt(captureWindowCount.value, 10),
@@ -2525,7 +2526,7 @@
 
         await loadSourceWorkspace();
 
-        setSummary(`已保存 ${activeCapabilityId} 设置。`);
+        setSummary(`已保存 ${capabilityId} 设置。`);
 
       } catch (error) {
 

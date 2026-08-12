@@ -26,6 +26,8 @@ tests/
 !/services/markethub_api/tests/
 /services/markethub_api/tests/*
 !/services/markethub_api/tests/test_strategy_factor_window.py
+!/services/markethub_api/tests/test_p0_fundamentals.py
 /scripts/local/
 
 /services/markethub_api/notes/*.md
+!/services/markethub_api/notes/p0_fundamentals.md

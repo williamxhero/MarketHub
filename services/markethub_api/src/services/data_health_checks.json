@@ -778,6 +778,25 @@
           "object": "fact.concept_daily_1d",
           "column": "trade_date",
           "provider_earliest_date": "2026-06-01"
+        },
+        {
+          "type": "market_data_contract",
+          "index_code": "000001",
+          "metrics": [
+            "first_stage_concept_trade_date_count",
+            "first_stage_incomplete_concept_count",
+            "first_stage_concept_core_invalid_count",
+            "second_stage_trade_date_count",
+            "second_stage_incomplete_concept_count",
+            "second_stage_null_pct_chg_count",
+            "second_stage_invalid_amount_count",
+            "second_stage_missing_member_stock_count",
+            "second_stage_missing_member_pre_close_count",
+            "second_stage_invalid_market_code_count",
+            "second_stage_amount_mismatch_count",
+            "second_stage_pct_chg_mismatch_count",
+            "global_duplicate_concept_key_count"
+          ]
         }
       ]
     },
@@ -3896,7 +3915,16 @@
         },
         {
           "type": "market_data_contract",
-          "index_code": "000001"
+          "index_code": "000001",
+          "metrics": [
+            "global_duplicate_stock_key_count",
+            "global_stock_daily_core_null_count",
+            "global_stock_daily_without_ref_count",
+            "global_active_stock_without_daily_count",
+            "global_missing_board_type_column_count",
+            "global_blank_board_type_count",
+            "global_board_type_listing_board_mismatch_count"
+          ]
         }
       ]
     },

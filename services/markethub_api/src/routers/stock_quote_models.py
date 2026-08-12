@@ -15,6 +15,7 @@ class StockQuotesQueryPayload(BaseModel):
                     "trade_date": "2026-07-15",
                     "adjust": "none",
                     "meta_detail": "summary",
+                    "data_version": "mhf-v1-from-api-health",
                 }
             ]
         }
@@ -41,3 +42,4 @@ class StockQuotesQueryPayload(BaseModel):
         default="summary",
         description="summary 只返回缺失数量；full 额外展开 missing_trade_times。",
     )
+    data_version: str = Field(min_length=1, description="唯一版本字段；POST 请求体必须携带 /api/health 返回的市场数据版本。")

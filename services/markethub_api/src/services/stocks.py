@@ -7,11 +7,50 @@ from fastapi import HTTPException
 
 from core.config import DEFAULT_LIMIT
 from quotemux import QuoteMux, StockDailyLocalWindowRequest, StockDailySnapshotRequest, StockQuotesRequest
-from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialPitRawItem, StockFinancialStatementItem, StockManagerItem, StockMarginItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, StockStrategyFactorItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
+from quotemux.infra.db.client import query_dataframe
+from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, DividendPage, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, RightsIssuePage, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialPitRawItem, StockFinancialStatementItem, StockManagerItem, StockMarginItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, StockStrategyFactorItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
 from services.common import ensure_limit, require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
+from services.market_data_version import require_market_data_version
 
 
 _QUOTEMUX = QuoteMux()
+
+
+_STRATEGY_WINDOW_COVERAGE_QUERY = """
+with open_dates as (
+    select trade_date
+    from ref.trade_calendar
+    where exchange = 'SHSE'
+      and is_open = true
+      and trade_date between %s::date and %s::date
+), eligible_stocks as (
+    select market, code, listed_date, delisted_date
+    from ref.stock
+    where (
+        (market = 'SHSE' and left(code, 1) = '6')
+        or (market = 'SZSE' and left(code, 1) in ('0', '3'))
+        or (market = 'BJSE' and (left(code, 1) in ('4', '8') or left(code, 3) = '920'))
+    )
+      and (%s = '' or code = any(%s))
+), expected_rows as (
+    select stocks.market, stocks.code, open_dates.trade_date
+    from eligible_stocks stocks
+    cross join open_dates
+    where stocks.listed_date <= open_dates.trade_date
+      and (stocks.delisted_date is null or stocks.delisted_date >= open_dates.trade_date)
+), missing_rows as (
+    select expected_rows.market, expected_rows.code, expected_rows.trade_date
+    from expected_rows
+    left join fact.stock_daily_1d daily_rows
+      on daily_rows.market = expected_rows.market
+     and daily_rows.code = expected_rows.code
+     and daily_rows.trade_date = expected_rows.trade_date
+    where daily_rows.code is null
+)
+select
+    (select count(*)::int from expected_rows) as expected_count,
+    (select count(*)::int from missing_rows) as missing_count
+"""
 
 
 def get_quotes(
@@ -65,8 +104,9 @@ def get_quotes_query_result(
     skip_st: bool,
     fill_missing: bool,
     meta_detail: Literal["summary", "full"],
+    data_version: str,
 ) -> StockQuotesQueryResult:
-    return _QUOTEMUX.stocks.get_quotes_query_result(
+    result = _QUOTEMUX.stocks.get_quotes_query_result(
         StockQuotesRequest(
             codes=require_codes(code, codes),
             freq=require_quote_freq(freq),
@@ -82,8 +122,15 @@ def get_quotes_query_result(
             skip_st=skip_st,
             fill_missing=fill_missing,
             meta_detail=meta_detail,
+            data_version=require_market_data_version(data_version),
         )
     )
+    if not result.meta.complete:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "MARKET_DATA_INCOMPLETE", "message": "市场事实不完整，拒绝返回部分窗口", "details": result.meta.model_dump_json()},
+        )
+    return result
 
 
 def get_market_daily_snapshot(trade_date: str, limit: int, offset: int, skip_suspended: bool, skip_st: bool) -> list[StockQuoteItem]:
@@ -134,9 +181,9 @@ def get_finance_indicators(code: str, codes: str, report_period: str, start_peri
     return _QUOTEMUX.stocks.get_finance_indicators(code, codes, report_period, start_period, end_period)
 
 
-def get_catalog(codes: str, name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int) -> list[StockBasicInfo]:
+def get_catalog(codes: str, name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int, data_version: str) -> list[StockBasicInfo]:
     actual_codes = require_codes("", codes) if codes else []
-    return _QUOTEMUX.stocks.get_catalog(actual_codes, name, exchange, list_status, include_delisted, limit or DEFAULT_LIMIT, offset)
+    return _QUOTEMUX.stocks.get_catalog(actual_codes, name, exchange, list_status, include_delisted, limit or DEFAULT_LIMIT, offset, data_version=require_market_data_version(data_version))
 
 
 def get_archive(trade_date: str, code: str, name: str, industry: str, area: str, limit: int, offset: int) -> list[StockArchiveItem]:
@@ -262,11 +309,30 @@ def get_technical_factors(code: str, trade_date: str, start_date: str, end_date:
     ]
 
 
-def get_strategy_factor_window(start_date: str, end_date: str, codes: str = "") -> list[StockStrategyFactorItem]:
+def get_strategy_factor_window(start_date: str, end_date: str, codes: str, data_version: str) -> list[StockStrategyFactorItem]:
+    require_market_data_version(data_version)
+    actual_codes = require_codes("", codes) if codes else []
     try:
-        return _QUOTEMUX.stocks.get_strategy_factor_window(start_date, end_date, codes)
+        items = _QUOTEMUX.stocks.get_strategy_factor_window(start_date, end_date, codes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if items == []:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "MARKET_DATA_INCOMPLETE", "message": "策略因子窗口没有可用的本地市场事实", "details": f"{start_date}/{end_date}"},
+        )
+    coverage = query_dataframe(_STRATEGY_WINDOW_COVERAGE_QUERY, (start_date, end_date, ",".join(actual_codes), actual_codes))
+    if coverage.empty:
+        raise HTTPException(status_code=503, detail={"code": "MARKET_DATA_INTEGRITY_UNAVAILABLE", "message": "无法校验策略因子窗口的市场事实完整性"})
+    expected_count = int(coverage.iloc[0].get("expected_count", 0) or 0)
+    missing_count = int(coverage.iloc[0].get("missing_count", 0) or 0)
+    if expected_count != len(items) or missing_count != 0:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "MARKET_DATA_INCOMPLETE", "message": "策略因子窗口的日线市场事实不完整", "details": f"expected={expected_count}, returned={len(items)}, missing={missing_count}"},
+        )
+    require_market_data_version(data_version)
+    return items
 
 
 def get_financial_pit_period(report_period: str) -> list[StockFinancialPitRawItem]:
@@ -327,6 +393,28 @@ def get_repurchases(code: str, start_date: str, end_date: str) -> list[Repurchas
 
 def get_rights_issues(code: str, start_date: str, end_date: str) -> list[RightsIssueItem]:
     return _QUOTEMUX.stocks.get_rights_issues(code, start_date, end_date)
+
+
+def get_dividends_page(codes: str, start_date: str, end_date: str, offset: int, limit: int, data_version: str) -> DividendPage:
+    version = require_market_data_version(data_version)
+    page = _QUOTEMUX.stocks.get_dividends_page(codes, start_date, end_date, offset, limit)
+    return _require_complete_corporate_action_page(page, version)
+
+
+def get_rights_issues_page(codes: str, start_date: str, end_date: str, offset: int, limit: int, data_version: str) -> RightsIssuePage:
+    version = require_market_data_version(data_version)
+    page = _QUOTEMUX.stocks.get_rights_issues_page(codes, start_date, end_date, offset, limit)
+    return _require_complete_corporate_action_page(page, version)
+
+
+def _require_complete_corporate_action_page(page: DividendPage | RightsIssuePage, data_version: str) -> DividendPage | RightsIssuePage:
+    if not page.coverage.complete:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "MARKET_DATA_INCOMPLETE", "message": "公司行动覆盖不完整，拒绝返回部分窗口", "details": ",".join(page.coverage.missing_date_ranges)},
+        )
+    coverage = page.coverage.model_copy(update={"data_version": data_version})
+    return page.model_copy(update={"coverage": coverage})
 
 
 def get_share_changes(code: str, trade_date: str, start_date: str, end_date: str) -> list[ShareChangeItem]:
