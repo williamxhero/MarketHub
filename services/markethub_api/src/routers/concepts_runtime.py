@@ -40,7 +40,7 @@ def _filter_items(loader: Callable[..., list[object]], args: tuple[object, ...],
 
 @router.get("/api/concepts/quotes", summary="查询题材概念行情", response_model=list[ConceptQuoteItem] | ConceptDailyBarsEnvelope)
 async def api_concept_quotes(
-    pit_mode: Literal["strict", "approx-historical"] = Query("strict"),
+    pit_mode: Literal["strict", "approx-historical", "effective-date"] = Query("strict"),
     concept_id: str = Query("", description="系统 Concept ID，例如 C231。"),
     concept_ids: str = Query("", description="多个系统 Concept ID，逗号分隔。"),
     freq: str = Query("1d", description="行情频率。"),
@@ -77,7 +77,7 @@ async def api_concept_quotes(
 
 @router.get("/api/concepts/quotes/daily-snapshot", summary="查询题材概念日行情快照", response_model=list[ConceptQuoteItem] | ConceptDailyBarsEnvelope)
 async def api_concept_daily_snapshot(
-    pit_mode: Literal["strict", "approx-historical"] = Query("strict"),
+    pit_mode: Literal["strict", "approx-historical", "effective-date"] = Query("strict"),
     trade_date: str = Query(..., description="交易日。"),
     fields: str = Query("", description="返回字段白名单，逗号分隔。"),
     limit: int = Query(10000, ge=1, le=10000, description="返回记录上限。"),
@@ -122,7 +122,7 @@ async def api_concept_profile(concept_id: str) -> dict[str, object]:
 @router.get("/api/concepts/{concept_id}/members", summary="查询题材概念成分", response_model=list[ConceptMemberItem] | ConceptMembershipEnvelope)
 async def api_concept_members(
     concept_id: str,
-    pit_mode: Literal["strict", "approx-historical"] = Query("strict"),
+    pit_mode: Literal["strict", "approx-historical", "effective-date"] = Query("strict"),
     trade_date: str = Query("", description="交易日。"),
     limit: int = Query(10000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
@@ -138,7 +138,7 @@ async def api_concept_members(
 @router.get("/api/concepts/{concept_id}/members/history", summary="查询题材概念成分历史", response_model=list[ConceptMemberHistoryItem] | ConceptMemberHistoryEnvelope)
 async def api_concept_members_history(
     concept_id: str,
-    pit_mode: Literal["strict", "approx-historical"] = Query("strict"),
+    pit_mode: Literal["strict", "approx-historical", "effective-date"] = Query("strict"),
     start_date: str = Query("", description="开始日期。"),
     end_date: str = Query("", description="结束日期。"),
     limit: int = Query(10000, ge=1, le=10000),
@@ -157,7 +157,7 @@ async def api_concept_members_history(
 @router.get("/api/concepts/{concept_id}/indicators/money-flow", summary="查询题材概念资金流", response_model=list[ConceptMoneyFlowItem] | ConceptMoneyFlowEnvelope)
 async def api_concept_money_flow(
     concept_id: str,
-    pit_mode: Literal["strict", "approx-historical"] = Query("strict"),
+    pit_mode: Literal["strict", "approx-historical", "effective-date"] = Query("strict"),
     trade_date: str = Query("", description="交易日。"),
     start_date: str = Query("", description="开始日期。"),
     end_date: str = Query("", description="结束日期。"),
@@ -179,7 +179,7 @@ async def api_concept_money_flow(
 
 @router.get("/api/concepts/indicators/money-flow", summary="查询题材概念资金流快照", response_model=list[ConceptMoneyFlowItem] | ConceptMoneyFlowEnvelope)
 async def api_concept_money_flow_daily_snapshot(
-    pit_mode: Literal["strict", "approx-historical"] = Query("strict"),
+    pit_mode: Literal["strict", "approx-historical", "effective-date"] = Query("strict"),
     trade_date: str = Query(..., description="交易日。"),
     scope: str = Query("concept", description="资金流范围，当前仅支持 concept。"),
     fields: str = Query("", description="返回字段白名单，逗号分隔。"),

@@ -838,12 +838,24 @@ def _query_market_data_contract_metrics(index_code: str) -> dict[str, int]:
             where concept_rows.trade_date <= target.trade_date
             order by concept_rows.trade_date desc
             limit 8
+        ), concept_snapshot_dates as (
+            select
+                membership.concept_id,
+                coalesce(
+                    max(membership.valid_from) filter (where membership.valid_from <= target.trade_date),
+                    min(membership.valid_from)
+                ) as valid_from
+            from ref.concept_stock_membership membership
+            cross join target
+            group by membership.concept_id
         ), active_members as (
             select distinct membership.concept_id, membership.stock_market, membership.stock_code
             from ref.concept_stock_membership membership
+            join concept_snapshot_dates snapshot
+              on snapshot.concept_id = membership.concept_id
+             and snapshot.valid_from = membership.valid_from
             cross join target
-            where membership.valid_from <= target.trade_date
-              and (membership.valid_to is null or membership.valid_to >= target.trade_date)
+            where membership.valid_to is null or membership.valid_to >= target.trade_date
         ), member_counts as (
             select concept_id, count(*) as member_count
             from active_members
@@ -884,6 +896,8 @@ def _query_market_data_contract_metrics(index_code: str) -> dict[str, int]:
              and stock_ref.code = membership.stock_code
              and stock_ref.listed_date <= target.trade_date
              and (stock_ref.delisted_date is null or stock_ref.delisted_date >= target.trade_date)
+             and not (stock_ref.market = 'SHSE' and left(stock_ref.code, 3) = '900')
+             and not (stock_ref.market = 'SZSE' and left(stock_ref.code, 3) = '200')
         ), stock_history as (
             select
                 stock_rows.market,
@@ -983,9 +997,9 @@ def _query_market_data_contract_metrics(index_code: str) -> dict[str, int]:
             (select count(*) from (select board_code, trade_date, count(*) from fact.board_daily_1d group by board_code, trade_date having count(*) > 1) duplicated)::int as global_duplicate_board_key_count,
             (select count(*) from (select index_code, trade_date, count(*) from fact.index_bar_1d group by index_code, trade_date having count(*) > 1) duplicated)::int as global_duplicate_index_key_count,
             (select count(*) from fact.board_daily_1d board_rows cross join target where board_rows.trade_date = target.trade_date and (board_rows.open is null or board_rows.high is null or board_rows.low is null or board_rows.close is null or board_rows.pre_close is null or board_rows.change is null or board_rows.pct_chg is null or board_rows.amount is null or board_rows.volume is null))::int as global_board_daily_core_null_count,
-            (select count(*) from fact.stock_daily_1d stock_rows cross join target where stock_rows.trade_date = target.trade_date and (stock_rows.close is null or stock_rows.pre_close is null or stock_rows.pct_chg is null or stock_rows.amount is null))::int as global_stock_daily_core_null_count,
+            (select count(*) from fact.stock_daily_1d stock_rows cross join target where stock_rows.trade_date = target.trade_date and not coalesce(stock_rows.is_suspended, false) and (stock_rows.close is null or stock_rows.pre_close is null or stock_rows.pct_chg is null or stock_rows.amount is null))::int as global_stock_daily_core_null_count,
             (select count(*) from fact.stock_daily_1d stock_rows cross join target where stock_rows.trade_date = target.trade_date and not exists (select 1 from ref.stock stock_ref where stock_ref.market = stock_rows.market and stock_ref.code = stock_rows.code))::int as global_stock_daily_without_ref_count,
-            (select count(*) from ref.stock stock_ref cross join target where stock_ref.listed_date <= target.trade_date and (stock_ref.delisted_date is null or stock_ref.delisted_date >= target.trade_date) and not exists (select 1 from fact.stock_daily_1d stock_rows where stock_rows.market = stock_ref.market and stock_rows.code = stock_ref.code and stock_rows.trade_date = target.trade_date))::int as global_active_stock_without_daily_count,
+            (select count(*) from ref.stock stock_ref cross join target where stock_ref.listed_date <= target.trade_date and (stock_ref.delisted_date is null or stock_ref.delisted_date >= target.trade_date) and not (stock_ref.market = 'SHSE' and left(stock_ref.code, 3) = '900') and not (stock_ref.market = 'SZSE' and left(stock_ref.code, 3) = '200') and not exists (select 1 from fact.stock_daily_1d stock_rows where stock_rows.market = stock_ref.market and stock_rows.code = stock_ref.code and stock_rows.trade_date = target.trade_date))::int as global_active_stock_without_daily_count,
             (select case when exists (select 1 from information_schema.columns where table_schema = 'ref' and table_name = 'stock' and column_name = 'board_type') then 0 else 1 end)::int as global_missing_board_type_column_count,
             (select count(*) from ref.stock stock_ref where coalesce(to_jsonb(stock_ref)->>'board_type', '') = '')::int as global_blank_board_type_count,
             (select count(*) from ref.stock stock_ref where coalesce(to_jsonb(stock_ref)->>'board_type', '') <> coalesce(stock_ref.listing_board, ''))::int as global_board_type_listing_board_mismatch_count,

@@ -25,3 +25,5 @@ tests/
 /scripts/local/
 /services/markethub_api/notes/*.md
 
+/runtime
+/scripts

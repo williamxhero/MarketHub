@@ -34,7 +34,7 @@ preprocess() {
 
 core_execute() {
     curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-18000}" \
-        -X POST "$MARKETHUB_BASE_URL/api/admin/capture/run-due" \
+        -X POST "$MARKETHUB_BASE_URL/api/admin/capture/run-due-async" \
         -o "$RESULT_PATH"
 }
 
@@ -47,17 +47,9 @@ import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if not isinstance(payload, list):
-    raise SystemExit("到期采集接口返回值不是列表")
-failures = [
-    item
-    for item in payload
-    if isinstance(item, dict)
-    and (str(item.get("status", "")) == "failed" or str(item.get("error", item.get("error_message", ""))) != "")
-]
-print(f"due_capture_runs={len(payload)} failed={len(failures)}")
-if failures:
-    raise SystemExit("到期采集存在失败任务")
+if not isinstance(payload, dict) or payload.get("accepted") is not True:
+    raise SystemExit("到期采集异步请求未被接受")
+print("due_capture_accepted=true")
 PY
 }
 
