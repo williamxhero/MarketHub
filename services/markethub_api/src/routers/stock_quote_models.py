@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import date
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from quotemux.models import StockQuoteItem
 
 
 class StockQuotesQueryPayload(BaseModel):
@@ -43,3 +46,75 @@ class StockQuotesQueryPayload(BaseModel):
         description="summary 只返回缺失数量；full 额外展开 missing_trade_times。",
     )
     data_version: str = Field(min_length=1, description="唯一版本字段；POST 请求体必须携带 /api/health 返回的市场数据版本。")
+
+
+class StockDailyWindowQueryPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    data_version: str = Field(min_length=1, description="/api/health 返回的市场事实版本。")
+    freq: Literal["1d"] = Field(default="1d", description="固定为 1d。")
+    universe: Literal["codes", "all_a"] = Field(description="精确代码集合或正式全 A universe。")
+    codes: list[str] = Field(default_factory=list, description="universe=codes 时提交六位裸代码集合；不设代码数量上限。")
+    start_date: str = Field(description="起始交易日，YYYY-MM-DD，闭区间。")
+    end_date: str = Field(description="结束交易日，YYYY-MM-DD，闭区间。")
+    page_size: int = Field(default=50000, ge=1, le=100000, description="交付分页大小；不是结果裁剪上限。")
+    cursor: str | None = Field(default=None, description="上一页返回的 opaque continuation cursor。")
+
+    @field_validator("codes")
+    @classmethod
+    def validate_codes(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            code = value.strip()
+            if len(code) != 6 or not code.isdigit():
+                raise ValueError("codes 只接受六位裸股票代码")
+            if code not in seen:
+                normalized.append(code)
+                seen.add(code)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_contract(self) -> "StockDailyWindowQueryPayload":
+        try:
+            start = date.fromisoformat(self.start_date)
+            end = date.fromisoformat(self.end_date)
+        except ValueError as exc:
+            raise ValueError("start_date/end_date 必须是 YYYY-MM-DD") from exc
+        if start > end:
+            raise ValueError("start_date 不能晚于 end_date")
+        if self.universe == "codes" and not self.codes:
+            raise ValueError("universe=codes 时 codes 不能为空")
+        if self.universe == "all_a" and self.codes:
+            raise ValueError("universe=all_a 时 codes 必须为空")
+        return self
+
+
+class StockDailyWindowCoverage(BaseModel):
+    code: str
+    expected_rows: int
+    actual_rows: int
+    missing_rows: int
+    missing_trade_dates: list[str] = Field(default_factory=list)
+    complete: bool
+
+
+class StockDailyWindowMeta(BaseModel):
+    data_version: str
+    total_rows: int
+    returned_rows: int
+    complete: bool
+    truncated: Literal[False] = False
+    page_complete: bool
+    request_complete: bool
+    delivery_complete: bool
+    next_cursor: str | None = None
+    universe_kind: Literal["codes", "all_a"]
+    universe_size: int
+    page_size: int
+    coverage: list[StockDailyWindowCoverage] = Field(default_factory=list)
+
+
+class StockDailyWindowQueryResponse(BaseModel):
+    items: list[StockQuoteItem] = Field(default_factory=list)
+    meta: StockDailyWindowMeta

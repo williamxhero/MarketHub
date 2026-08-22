@@ -335,7 +335,12 @@ async def api_admin_run_due_captures() -> list[dict[str, object]]:
 
 
 @router.post("/api/admin/capture/run-due-async")
-async def api_admin_run_due_captures_async(background_tasks: BackgroundTasks) -> dict[str, object]:
+async def api_admin_run_due_captures_async(
+    background_tasks: BackgroundTasks,
+    dry_run: bool = Query(False, description="仅验证异步受理入口，不创建后台 capture；用于健康检查和基准。"),
+) -> dict[str, object]:
+    if dry_run:
+        return {"accepted": False, "dry_run": True}
     background_tasks.add_task(admin_runtime.run_due_captures)
     return {"accepted": True}
 

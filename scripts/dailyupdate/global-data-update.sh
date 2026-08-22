@@ -15,6 +15,7 @@ MARKETHUB_HOST="${MARKETHUB_HOST:-127.0.0.1}"
 MARKETHUB_PORT="${MARKETHUB_PORT:-8803}"
 MARKETHUB_BASE_URL="${MARKETHUB_BASE_URL:-http://${MARKETHUB_HOST/0.0.0.0/127.0.0.1}:$MARKETHUB_PORT}"
 MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
+MARKETHUB_CAPTURE_ENDPOINT="${MARKETHUB_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"
 RUN_ROOT="${MARKETHUB_DATA_UPDATE_ROOT:-$RUNTIME_ROOT/data-update}"
 LOG_ROOT="${MARKETHUB_LOG_ROOT:-$RUNTIME_ROOT/logs}"
 RUN_ID="$(date '+%Y%m%d_%H%M%S')"
@@ -34,7 +35,7 @@ preprocess() {
 
 core_execute() {
     curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-18000}" \
-        -X POST "$MARKETHUB_BASE_URL/api/admin/capture/run-due-async" \
+        -X POST "$MARKETHUB_BASE_URL$MARKETHUB_CAPTURE_ENDPOINT" \
         -o "$RESULT_PATH"
 }
 
@@ -47,9 +48,17 @@ import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if not isinstance(payload, dict) or payload.get("accepted") is not True:
-    raise SystemExit("到期采集异步请求未被接受")
-print("due_capture_accepted=true")
+if isinstance(payload, dict):
+    if payload.get("accepted") is not True:
+        raise SystemExit("到期采集异步请求未被接受")
+    print("due_capture_accepted=true")
+elif isinstance(payload, list):
+    failed = [str(item.get("capability_id", "")) for item in payload if isinstance(item, dict) and str(item.get("status", "")) == "failed"]
+    if failed:
+        raise SystemExit(f"到期采集失败: {','.join(failed)}")
+    print(f"due_capture_completed=true runs={len(payload)}")
+else:
+    raise SystemExit("到期采集接口返回值无效")
 PY
 }
 

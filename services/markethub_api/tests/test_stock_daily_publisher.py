@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import sys
+
+
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "publisher" / "publish_stock_daily_parquet.py"
+SPEC = importlib.util.spec_from_file_location("publish_stock_daily_parquet", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = MODULE
+SPEC.loader.exec_module(MODULE)
+
+
+def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
+    content = SCRIPT.read_text(encoding="utf-8")
+
+    assert MODULE.DATASET_ID == "stock_daily_1d"
+    assert MODULE.SCHEMA_VERSION == "markethub-stock-daily-parquet-v1"
+    assert "fetchmany(row_group_rows)" in content
+    assert "coverage incomplete" in content
+    assert "dataset changed during publish" in content
+    assert "os.replace(staging, final_root)" in content
+    assert "market version mapping conflict" in content
+    assert '"url": f"/api/exports/{DATASET_ID}/{dataset_version}/files/{relative_path}"' in content
+    assert "date '2021-11-15'" in content
+    assert "coalesce(b.is_suspended,false)=true" in content
+    assert "MARKETHUB_STOCK_DAILY_EXPORT_START" in content
+    assert "d.trade_date<u.delisted_date" in content
+    assert tuple(field.name for field in MODULE.BARS_SCHEMA) == (
+        "market", "code", "trade_date", "open", "high", "low", "close", "volume", "amount",
+        "is_suspended", "is_st", "pre_close", "change", "pct_chg", "adj_factor", "loaded_at",
+    )
+
+
+def test_dataset_version_matches_api_contract() -> None:
+    first = MODULE._version("stock_daily_1d", "baseline", 4)
+    second = MODULE._version("stock_daily_1d", "baseline", 5)
+    assert first.startswith("mhd-v1-") and len(first) == 71
+    assert first != second
+
+
+def test_months_preserve_partial_dataset_bounds() -> None:
+    from datetime import date
+
+    assert list(MODULE._months(date(2024, 1, 15), date(2024, 2, 10))) == [
+        (date(2024, 1, 15), date(2024, 2, 1)),
+        (date(2024, 2, 1), date(2024, 2, 11)),
+    ]
+
+
+def test_parquet_contract_counts_suspension_placeholders_as_covered_facts() -> None:
+    assert "or (b.open is not null" in MODULE._COVERAGE_SQL
+    assert "coalesce(b.is_suspended,false)=true" in MODULE._COVERAGE_SQL
+    assert "coalesce(b.is_suspended,false)=true" in MODULE._BARS_SQL
+    assert "stock_suspension_history x" in MODULE._BARS_SQL

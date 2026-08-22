@@ -31,24 +31,77 @@ with open_dates as (
         or (market = 'SZSE' and left(code, 1) in ('0', '3'))
         or (market = 'BJSE' and (left(code, 1) in ('4', '8') or left(code, 3) = '920'))
     )
-      and (%s = '' or code = any(%s))
-), expected_rows as (
+), strict_expected_rows as (
     select stocks.market, stocks.code, open_dates.trade_date
     from eligible_stocks stocks
     cross join open_dates
     where stocks.listed_date <= open_dates.trade_date
-      and (stocks.delisted_date is null or stocks.delisted_date >= open_dates.trade_date)
-), missing_rows as (
-    select expected_rows.market, expected_rows.code, expected_rows.trade_date
+      and (stocks.delisted_date is null or stocks.delisted_date > open_dates.trade_date)
+), migration_expected_rows as (
+    select migration.old_market as market, migration.old_code as code, open_dates.trade_date
+    from ref.stock_code_migration migration
+    join open_dates
+      on open_dates.trade_date = migration.trade_date
+    join ref.stock successor_rows
+      on successor_rows.market = migration.new_market
+     and successor_rows.code = migration.new_code
+     and successor_rows.listed_date <= open_dates.trade_date
+     and (successor_rows.delisted_date is null or successor_rows.delisted_date > open_dates.trade_date)
+    where migration.old_market = 'BJSE'
+      and migration.new_market = 'BJSE'
+      and (
+          migration.old_code like '4%%'
+          or migration.old_code like '8%%'
+          or migration.old_code like '920%%'
+      )
+      and not exists (
+          select 1
+          from ref.stock_code_migration competing_migration
+          where competing_migration.old_market = migration.old_market
+            and competing_migration.old_code = migration.old_code
+            and competing_migration.trade_date = migration.trade_date
+            and (competing_migration.new_market, competing_migration.new_code)
+                is distinct from (migration.new_market, migration.new_code)
+      )
+), expected_rows as (
+    select market, code, trade_date from strict_expected_rows
+    union
+    select market, code, trade_date from migration_expected_rows
+), filtered_expected_rows as (
+    select market, code, trade_date
     from expected_rows
+    where (%s = '' or code = any(%s))
+), covered_rows as (
+    select
+        expected_rows.market,
+        expected_rows.code,
+        expected_rows.trade_date,
+        daily_rows.code is not null as has_daily,
+        exists (
+            select 1
+            from fact.stock_suspension_history suspensions
+            where suspensions.market = expected_rows.market
+              and suspensions.code = expected_rows.code
+              and suspensions.status = 'suspended'
+              and suspensions.suspend_start_date <= expected_rows.trade_date
+              and suspensions.suspend_end_date >= expected_rows.trade_date
+        ) as has_authoritative_suspension
+    from filtered_expected_rows expected_rows
     left join fact.stock_daily_1d daily_rows
       on daily_rows.market = expected_rows.market
      and daily_rows.code = expected_rows.code
      and daily_rows.trade_date = expected_rows.trade_date
-    where daily_rows.code is null
+), strategy_expected_rows as (
+    select market, code, trade_date, has_daily
+    from covered_rows
+    where has_daily or not has_authoritative_suspension
+), missing_rows as (
+    select market, code, trade_date
+    from strategy_expected_rows
+    where not has_daily
 )
 select
-    (select count(*)::int from expected_rows) as expected_count,
+    (select count(*)::int from strategy_expected_rows) as expected_count,
     (select count(*)::int from missing_rows) as missing_count
 """
 
@@ -311,17 +364,13 @@ def get_technical_factors(code: str, trade_date: str, start_date: str, end_date:
 
 def get_strategy_factor_window(start_date: str, end_date: str, codes: str, data_version: str) -> list[StockStrategyFactorItem]:
     require_market_data_version(data_version)
-    actual_codes = require_codes("", codes) if codes else []
+    actual_codes = _require_strategy_factor_codes(codes) if codes else []
+    actual_codes_csv = ",".join(actual_codes)
     try:
-        items = _QUOTEMUX.stocks.get_strategy_factor_window(start_date, end_date, codes)
+        items = _QUOTEMUX.stocks.get_strategy_factor_window(start_date, end_date, actual_codes_csv)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if items == []:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "MARKET_DATA_INCOMPLETE", "message": "策略因子窗口没有可用的本地市场事实", "details": f"{start_date}/{end_date}"},
-        )
-    coverage = query_dataframe(_STRATEGY_WINDOW_COVERAGE_QUERY, (start_date, end_date, ",".join(actual_codes), actual_codes))
+    coverage = query_dataframe(_STRATEGY_WINDOW_COVERAGE_QUERY, (start_date, end_date, actual_codes_csv, actual_codes))
     if coverage.empty:
         raise HTTPException(status_code=503, detail={"code": "MARKET_DATA_INTEGRITY_UNAVAILABLE", "message": "无法校验策略因子窗口的市场事实完整性"})
     expected_count = int(coverage.iloc[0].get("expected_count", 0) or 0)
@@ -333,6 +382,22 @@ def get_strategy_factor_window(start_date: str, end_date: str, codes: str, data_
         )
     require_market_data_version(data_version)
     return items
+
+
+def _require_strategy_factor_codes(codes: str) -> list[str]:
+    """Normalize public BSE ``BJ.873690`` aliases before calling QuoteMux."""
+    normalized_codes = []
+    for item in codes.split(","):
+        text = item.strip().upper()
+        if not text:
+            continue
+        if text.startswith("BJ."):
+            text = text[3:]
+        normalized = require_codes("", text)[0]
+        normalized_codes.append(normalized)
+    if not normalized_codes:
+        return require_codes("", "")
+    return list(dict.fromkeys(normalized_codes))
 
 
 def get_financial_pit_period(report_period: str) -> list[StockFinancialPitRawItem]:

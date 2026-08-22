@@ -20,6 +20,43 @@ BASE_SCHEMA_SQL = (
     "create schema if not exists ref",
     "create schema if not exists fact",
     """
+    do $$
+    begin
+      if to_regclass('fact.stock_bar_1m') is null then
+        create table fact.stock_bar_1m (
+          market character varying not null,
+          code character(6) not null,
+          bar_time timestamp without time zone not null,
+          open double precision not null,
+          high double precision not null,
+          low double precision not null,
+          close double precision not null,
+          volume bigint not null,
+          amount double precision,
+          loaded_at timestamp with time zone not null default now(),
+          primary key (market,code,bar_time)
+        );
+        perform create_hypertable(
+          'fact.stock_bar_1m'::regclass,
+          by_range('bar_time',interval '14 days'),
+          create_default_indexes => false
+        );
+        create index stock_bar_1m_code_time_idx on fact.stock_bar_1m(code,bar_time);
+        create index stock_bar_1m_time_idx on fact.stock_bar_1m(bar_time desc);
+        alter table fact.stock_bar_1m set (
+          timescaledb.enable_columnstore=true,
+          timescaledb.segmentby='market,code',
+          timescaledb.orderby='bar_time ASC'
+        );
+        call add_columnstore_policy(
+          'fact.stock_bar_1m'::regclass,
+          after => interval '30 days',
+          if_not_exists => true
+        );
+      end if;
+    end $$
+    """,
+    """
     create table if not exists ref.stock (
         market character varying not null,
         code character varying not null,
@@ -34,6 +71,28 @@ BASE_SCHEMA_SQL = (
         primary key (market, code)
     )
     """,
+    """
+    create table if not exists ref.stock_code_migration (
+        old_market character varying not null,
+        old_code character varying not null,
+        new_market character varying not null,
+        new_code character varying not null,
+        trade_date date not null,
+        source text not null,
+        source_evidence_sha256 text not null,
+        loaded_at timestamp with time zone not null default now(),
+        primary key (old_market, old_code, trade_date),
+        unique (new_market, new_code, trade_date),
+        constraint stock_code_migration_bjse_only check (old_market = 'BJSE' and new_market = 'BJSE'),
+        constraint stock_code_migration_code_format check (
+            old_code ~ '^[0-9]{6}$' and new_code ~ '^[0-9]{6}$' and old_code <> new_code
+        ),
+        constraint stock_code_migration_evidence_sha256 check (
+            source_evidence_sha256 ~ '^[0-9a-f]{64}$'
+        )
+    )
+    """,
+    "create index if not exists stock_code_migration_trade_date_idx on ref.stock_code_migration (old_market, old_code, trade_date)",
     """
     create table if not exists fact.stock_daily_1d (
         market character varying not null,
@@ -64,6 +123,8 @@ BASE_SCHEMA_SQL = (
         trade_date date not null,
         upper_limit double precision,
         lower_limit double precision,
+        price_band_status text not null default 'price_limits',
+        source_evidence_sha256 text,
         source text not null,
         loaded_at timestamp with time zone not null default now(),
         primary key (market, code, trade_date),
@@ -71,6 +132,30 @@ BASE_SCHEMA_SQL = (
     )
     """,
     "create index if not exists stock_price_band_daily_date_idx on fact.stock_price_band_daily (trade_date)",
+)
+
+# This is deliberately separate from CREATE TABLE IF NOT EXISTS: production
+# deployments already have this table, so a restart must also upgrade it.
+PRICE_BAND_STATUS_MIGRATION_SQL = (
+    "alter table fact.stock_price_band_daily add column if not exists price_band_status text not null default 'price_limits'",
+    "alter table fact.stock_price_band_daily add column if not exists source_evidence_sha256 text",
+    """
+    do $$ begin
+      if not exists (
+        select 1 from pg_constraint
+        where conname = 'stock_price_band_daily_status_check'
+          and conrelid = 'fact.stock_price_band_daily'::regclass
+      ) then
+        alter table fact.stock_price_band_daily
+          add constraint stock_price_band_daily_status_check check (
+            price_band_status = 'price_limits'
+            or (price_band_status = 'no_price_limit'
+                and upper_limit is null and lower_limit is null
+                and source_evidence_sha256 ~ '^[0-9a-f]{64}$')
+          ) not valid;
+      end if;
+    end $$
+    """,
 )
 
 
@@ -211,6 +296,8 @@ def _ensure_base_schema(database_config: dict[str, str]) -> None:
     with _connect(database_config) as connection:
         with connection.cursor() as cursor:
             for statement in BASE_SCHEMA_SQL:
+                cursor.execute(statement)
+            for statement in PRICE_BAND_STATUS_MIGRATION_SQL:
                 cursor.execute(statement)
 
 

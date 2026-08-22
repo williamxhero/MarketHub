@@ -7,6 +7,7 @@ from fastapi.openapi.utils import get_openapi
 
 
 TAG_BY_PREFIX = {
+    "/api/futures": "期货",
     "/api/stocks": "股票",
     "/api/concepts": "题材概念",
     "/api/indexes": "指数",

@@ -4,12 +4,13 @@ from collections.abc import Callable
 import math
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from quotemux.models import DividendItem, DividendPage, RightsIssueItem, RightsIssuePage, StockQuotesQueryResult, StockStrategyFactorItem
 
 from data_threads import QuoteClientDisconnectedError, run_data_task, run_quote_task
-from routers.stock_quote_models import StockQuotesQueryPayload
-from services import stocks
+from routers.stock_quote_models import StockDailyWindowQueryPayload, StockDailyWindowQueryResponse, StockQuotesQueryPayload
+from services import daily_window, stocks
 from services.common import filter_response_fields
 from services.runtime_memory import run_with_memory_log
 
@@ -150,6 +151,54 @@ async def api_stock_quotes_query(payload: StockQuotesQueryPayload, request: Requ
         )
     except QuoteClientDisconnectedError as exc:
         raise HTTPException(status_code=499, detail={"code": "CLIENT_DISCONNECTED", "message": str(exc)}) from exc
+
+
+@router.post(
+    "/api/stocks/quotes/daily-window/query",
+    summary="只读、版本冻结、可恢复分页的批量日线窗口",
+    description=(
+        "ApexTrade 等远程只读调用方的正式日线批量入口。freq 固定为 1d；支持精确 codes 集合或 all_a universe。"
+        "服务只读本地 fact/ref 表，不触发 provider、capture、回填或缓存写入。"
+        "请求必须携带 /api/health 的 data_version；版本漂移、coverage 缺失、重复行或 cursor 不匹配均 fail-closed。"
+        "items 固定按 trade_time ASC, code ASC；分页通过 next_cursor 继续，不将 page_size 视为截断。"
+    ),
+    response_model=StockDailyWindowQueryResponse,
+    responses={
+        200: {
+            "content": {
+                "application/json": {},
+                "application/vnd.apache.arrow.stream": {"schema": {"type": "string", "format": "binary"}},
+            }
+        },
+        406: {"description": "Accept 不支持"},
+    },
+)
+async def api_stock_daily_window_query(payload: StockDailyWindowQueryPayload, request: Request) -> Response:
+    accept = request.headers.get("accept", "").lower()
+    wants_arrow = daily_window.ARROW_MEDIA_TYPE in accept
+    accepts_json = not accept or "*/*" in accept or "application/json" in accept
+    if not wants_arrow and not accepts_json:
+        raise HTTPException(
+            status_code=406,
+            detail={"code": "DAILY_WINDOW_MEDIA_TYPE_NOT_ACCEPTABLE", "message": "仅支持 application/json 或 Arrow IPC stream"},
+        )
+    try:
+        if wants_arrow:
+            prepared = await run_quote_task(
+                daily_window.prepare_arrow_response,
+                payload,
+                is_disconnected=request.is_disconnected,
+            )
+            return StreamingResponse(prepared.body, media_type=daily_window.ARROW_MEDIA_TYPE, headers=prepared.headers)
+        encoded = await run_quote_task(
+            daily_window.build_response,
+            payload,
+            "gzip" in request.headers.get("accept-encoding", "").lower(),
+            is_disconnected=request.is_disconnected,
+        )
+    except QuoteClientDisconnectedError as exc:
+        raise HTTPException(status_code=499, detail={"code": "CLIENT_DISCONNECTED", "message": str(exc)}) from exc
+    return Response(content=encoded.content, media_type="application/json", headers=encoded.headers)
 
 
 @router.get("/api/stocks/quotes/daily-snapshot", summary='返回指定交易日的全市场股票日线快照', description='`GET` 返回指定交易日的全市场股票日线快照。\n\n## 查询参数\n\n- `trade_date`（`str`）：交易日期，格式 `YYYY-MM-DD`。\n- `fields`（`str`）：按逗号指定返回字段。\n- `limit`（`int`）：返回记录上限。\n- `offset`（`int`）：结果偏移量。\n- `skip_suspended`（`bool`）：过滤停牌行。\n- `skip_st`（`bool`）：过滤 ST 股票。\n\n## 返回类型\n\n顶层返回 `list[StockQuoteItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `trade_time`（`str`）：交易日期。\n- `freq`（`str`）：固定返回 `1d`。\n- `open`（`float | None`）：开盘价。\n- `high`（`float | None`）：最高价。\n- `low`（`float | None`）：最低价。\n- `close`（`float | None`）：收盘价。\n- `pre_close`（`float | None`）：前收盘价。\n- `change`（`float | None`）：涨跌额。\n- `pct_chg`（`float | None`）：涨跌幅。\n- `volume`（`float | None`）：成交量。\n- `amount`（`float | None`）：成交额。\n- `adjust`（`str`）：固定返回 `none`。\n- `is_suspended`（`bool`）：是否停牌。\n- `is_st`（`bool`）：是否 ST。\n\n## 补充说明\n\n- 该接口直接读取本地 `fact.stock_daily_1d`，返回口径与 `/api/stocks/quotes?freq=1d&start_date=...&end_date=...` 的日线事实表保持一致。\n- 缺少指定交易日数据时快速返回空数组，不在请求线程内触发全市场外源补齐。\n- `pre_close`、`change`、`pct_chg` 会基于前一个已有交易日收盘价派生。')

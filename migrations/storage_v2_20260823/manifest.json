@@ -1,0 +1,18 @@
+{
+  "migration_id": "markethub-storage-v2-20260823",
+  "package_version": "1.0.0",
+  "source_application_release": "deploy_20260822_191100 or an earlier ordinary-bar-table deployment",
+  "source_storage_version": "storage-v1-postgresql-ordinary-bars",
+  "target_application_version": "MarketHub main with storage-v2 migration package",
+  "target_storage_version": "storage-v2.0.0-timescale-parquet-arrow",
+  "supported_postgresql_majors": [16, 18],
+  "minimum_timescaledb_version": "2.27.2",
+  "tables": [
+    "fact.stock_bar_1m",
+    "fact.stock_bar_5m",
+    "fact.stock_bar_30m",
+    "fact.future_bar_1m"
+  ],
+  "migration_mode": "resumable-shadow-copy-cutover",
+  "legacy_cleanup_requires_explicit_target_version": true
+}

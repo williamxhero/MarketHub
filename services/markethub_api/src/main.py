@@ -30,6 +30,7 @@ from routers.concepts_runtime import router as concepts_runtime_router
 from routers.data_health import router as data_health_router
 from routers.docs_search import router as docs_router
 from routers.etfs import router as etfs_router
+from routers.exports import router as exports_router
 from routers.futures import router as futures_router
 from routers.indexes import router as indexes_router
 from routers.markets import router as markets_router
@@ -39,6 +40,8 @@ from routers.rankings import router as rankings_router
 from routers.stocks import router as stocks_router
 from services import adj_factor_warmup, reader_packages
 from services.market_data_version import current_market_data_version
+from services.performance_metrics import PerformanceMetrics, PerformanceMetricsMiddleware
+from starlette.routing import Match
 
 
 SYNC_ROUTE_THREAD_TOKENS = 100
@@ -83,6 +86,7 @@ app.add_middleware(
 )
 app.include_router(stocks_router)
 app.include_router(etfs_router)
+app.include_router(exports_router)
 app.include_router(futures_router)
 app.include_router(concepts_runtime_router)
 app.include_router(concepts_router)
@@ -95,6 +99,24 @@ app.include_router(docs_router)
 app.include_router(admin_router)
 app.include_router(data_health_router)
 install_openapi_schema(app)
+
+
+performance_metrics = PerformanceMetrics()
+
+
+def _normalized_route(scope: dict[str, object]) -> str:
+    for route in app.router.routes:
+        match, _ = route.matches(scope)
+        if match == Match.FULL:
+            return str(getattr(route, "path", "__unmatched__"))
+    return "__unmatched__"
+
+
+app.add_middleware(
+    PerformanceMetricsMiddleware,
+    metrics=performance_metrics,
+    route_resolver=_normalized_route,
+)
 
 if (CONSOLE_DIST_ROOT / "assets").exists():
     app.mount("/admin/assets", StaticFiles(directory=str(CONSOLE_DIST_ROOT / "assets")), name="admin-assets")
@@ -265,6 +287,11 @@ async def connection_diagnostics() -> dict[str, object]:
 @app.get("/api/diagnostics/fact-ref")
 async def fact_ref_diagnostics() -> dict[str, object]:
     return get_fact_ref_availability()
+
+
+@app.get("/api/diagnostics/performance")
+async def performance_diagnostics() -> dict[str, object]:
+    return performance_metrics.snapshot()
 
 
 if __name__ == "__main__":
