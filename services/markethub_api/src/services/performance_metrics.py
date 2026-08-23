@@ -8,6 +8,7 @@ import time
 from typing import Awaitable, Callable, MutableMapping
 
 from services.runtime_memory import process_rss_mb
+from services.request_timing import begin_request_timing, end_request_timing
 
 
 _MAX_ROUTES = 512
@@ -21,8 +22,10 @@ class _RouteMetrics:
     in_flight: int = 0
     wire_bytes: int = 0
     streaming_count: int = 0
-    durations_ms: deque[float] = field(default_factory=lambda: deque(maxlen=_MAX_SAMPLES_PER_ROUTE))
+    response_complete_ms: deque[float] = field(default_factory=lambda: deque(maxlen=_MAX_SAMPLES_PER_ROUTE))
+    app_return_ms: deque[float] = field(default_factory=lambda: deque(maxlen=_MAX_SAMPLES_PER_ROUTE))
     first_body_ms: deque[float] = field(default_factory=lambda: deque(maxlen=_MAX_SAMPLES_PER_ROUTE))
+    stages_ms: dict[str, deque[float]] = field(default_factory=dict)
 
 
 class PerformanceMetrics:
@@ -44,21 +47,27 @@ class PerformanceMetrics:
         *,
         status_code: int,
         wire_bytes: int,
-        duration_ms: float,
+        response_complete_ms: float,
+        app_return_ms: float,
         first_body_ms: float | None,
         streaming: bool,
+        stages_ms: dict[str, float] | None = None,
     ) -> None:
         with self._lock:
             metrics = self._get_or_create(method, route)
             metrics.in_flight = max(0, metrics.in_flight - 1)
             metrics.wire_bytes += max(0, wire_bytes)
-            metrics.durations_ms.append(max(0.0, duration_ms))
+            metrics.response_complete_ms.append(max(0.0, response_complete_ms))
+            metrics.app_return_ms.append(max(0.0, app_return_ms))
             if first_body_ms is not None:
                 metrics.first_body_ms.append(max(0.0, first_body_ms))
             if status_code >= 400:
                 metrics.error_count += 1
             if streaming:
                 metrics.streaming_count += 1
+            for stage, duration in (stages_ms or {}).items():
+                samples = metrics.stages_ms.setdefault(stage, deque(maxlen=_MAX_SAMPLES_PER_ROUTE))
+                samples.append(max(0.0, duration))
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:
@@ -84,7 +93,8 @@ class PerformanceMetrics:
 
 
 def _route_snapshot(method: str, route: str, metrics: _RouteMetrics) -> dict[str, object]:
-    durations = sorted(metrics.durations_ms)
+    durations = sorted(metrics.response_complete_ms)
+    app_return = sorted(metrics.app_return_ms)
     first_body = sorted(metrics.first_body_ms)
     return {
         "method": method,
@@ -96,9 +106,28 @@ def _route_snapshot(method: str, route: str, metrics: _RouteMetrics) -> dict[str
         "streaming_count": metrics.streaming_count,
         "p50_ms": _percentile(durations, 0.50),
         "p95_ms": _percentile(durations, 0.95),
+        "p99_ms": _percentile(durations, 0.99),
         "max_ms": round(durations[-1], 3) if durations else 0.0,
+        "app_return_p50_ms": _percentile(app_return, 0.50),
+        "app_return_p95_ms": _percentile(app_return, 0.95),
+        "app_return_p99_ms": _percentile(app_return, 0.99),
         "first_body_p50_ms": _percentile(first_body, 0.50),
         "first_body_p95_ms": _percentile(first_body, 0.95),
+        "first_body_p99_ms": _percentile(first_body, 0.99),
+        "stages": {
+            stage: _sample_snapshot(samples)
+            for stage, samples in sorted(metrics.stages_ms.items())
+        },
+    }
+
+
+def _sample_snapshot(samples: deque[float]) -> dict[str, float]:
+    ordered = sorted(samples)
+    return {
+        "p50_ms": _percentile(ordered, 0.50),
+        "p95_ms": _percentile(ordered, 0.95),
+        "p99_ms": _percentile(ordered, 0.99),
+        "max_ms": round(ordered[-1], 3) if ordered else 0.0,
     }
 
 
@@ -134,16 +163,18 @@ class PerformanceMetricsMiddleware:
         first_body_ms: float | None = None
         streaming = False
         completed = False
+        response_completed_at: float | None = None
         self._metrics.start(method, route)
+        request_timing, timing_token = begin_request_timing()
 
         async def metrics_send(message: MutableMapping[str, object]) -> None:
-            nonlocal status_code, wire_bytes, first_body_ms, streaming, completed
+            nonlocal status_code, wire_bytes, first_body_ms, streaming, completed, response_completed_at
             message_type = message.get("type")
             if message_type == "http.response.start":
                 status_code = int(message.get("status", 500))
                 headers = list(message.get("headers", []))
                 app_duration_ms = (time.monotonic() - started_at) * 1_000
-                headers = _append_server_timing(headers, app_duration_ms)
+                headers = _append_server_timing(headers, app_duration_ms, request_timing.snapshot())
                 message["headers"] = headers
             elif message_type == "http.response.body":
                 body = message.get("body", b"")
@@ -155,25 +186,36 @@ class PerformanceMetricsMiddleware:
                 streaming = streaming or more_body
                 if not more_body:
                     completed = True
+                    response_completed_at = time.monotonic()
             await send(message)
 
         try:
             await self._app(scope, receive, metrics_send)
         finally:
-            duration_ms = (time.monotonic() - started_at) * 1_000
+            app_returned_at = time.monotonic()
+            response_complete_ms = ((response_completed_at or app_returned_at) - started_at) * 1_000
             self._metrics.finish(
                 method,
                 route,
                 status_code=status_code,
                 wire_bytes=wire_bytes,
-                duration_ms=duration_ms,
+                response_complete_ms=response_complete_ms,
+                app_return_ms=(app_returned_at - started_at) * 1_000,
                 first_body_ms=first_body_ms,
                 streaming=streaming or not completed,
+                stages_ms=request_timing.snapshot(),
             )
+            end_request_timing(timing_token)
 
 
-def _append_server_timing(headers: list[tuple[bytes, bytes]], duration_ms: float) -> list[tuple[bytes, bytes]]:
-    timing_value = f"app;dur={duration_ms:.3f}".encode("ascii")
+def _append_server_timing(
+    headers: list[tuple[bytes, bytes]],
+    duration_ms: float,
+    stages_ms: dict[str, float],
+) -> list[tuple[bytes, bytes]]:
+    values = [f"app;dur={duration_ms:.3f}"]
+    values.extend(f"{stage};dur={value:.3f}" for stage, value in sorted(stages_ms.items()))
+    timing_value = ", ".join(values).encode("ascii")
     for index, (name, value) in enumerate(headers):
         if name.lower() == b"server-timing":
             headers[index] = (name, value + b", " + timing_value)

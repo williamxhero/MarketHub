@@ -7,10 +7,23 @@ from typing import Awaitable, TypeVar
 
 import anyio
 import anyio.to_thread
+from fastapi import HTTPException
+from quotemux import StrictReadViolation, strict_public_read_boundary
+import time
+import os
+
+from services.request_timing import record_stage_ms
 
 
-DATA_ROUTE_THREAD_TOKENS = 64
-QUOTE_ROUTE_THREAD_TOKENS = 6
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+DATA_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_DATA_ROUTE_TOKENS", 64)
+QUOTE_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_QUOTE_ROUTE_TOKENS", 6)
 QUOTE_ROUTE_POLL_SECONDS = 0.2
 _RESULT = TypeVar("_RESULT")
 
@@ -25,8 +38,29 @@ class QuoteClientDisconnectedError(RuntimeError):
     """客户端已断开行情请求。"""
 
 
+def _strict_public_call(func: Callable[..., _RESULT], args: tuple[object, ...]) -> _RESULT:
+    try:
+        with strict_public_read_boundary():
+            return func(*args)
+    except StrictReadViolation as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DATA_INCOMPLETE",
+                "message": "本地数据不足；普通查询禁止调用 provider、安装依赖或写库",
+                "details": {"blocked_operation": exc.operation, "repair_endpoint": "/api/admin/data-repairs"},
+            },
+        ) from exc
+
+
 async def run_data_task(func: Callable[..., _RESULT], *args: object) -> _RESULT:
-    return await anyio.to_thread.run_sync(func, *args, limiter=DATA_ROUTE_LIMITER)
+    queued_at = time.monotonic()
+
+    def execute() -> _RESULT:
+        record_stage_ms("queue", (time.monotonic() - queued_at) * 1_000)
+        return _strict_public_call(func, args)
+
+    return await anyio.to_thread.run_sync(execute, limiter=DATA_ROUTE_LIMITER)
 
 
 async def run_quote_task(
@@ -39,8 +73,14 @@ async def run_quote_task(
     同步行情读取不能安全地强杀线程；断开后的底层读取仍占用原执行槽直到自然结束。
     新请求在执行槽上排队，避免批量调用方因瞬时满载收到 429；尚未开始的排队任务在客户端断开时取消。
     """
+    queued_at = time.monotonic()
+
     async def execute() -> _RESULT:
-        return await anyio.to_thread.run_sync(func, *args, limiter=QUOTE_ROUTE_LIMITER, abandon_on_cancel=True)
+        def invoke() -> _RESULT:
+            record_stage_ms("queue", (time.monotonic() - queued_at) * 1_000)
+            return _strict_public_call(func, args)
+
+        return await anyio.to_thread.run_sync(invoke, limiter=QUOTE_ROUTE_LIMITER, abandon_on_cancel=True)
 
     task: asyncio.Task[_RESULT] = asyncio.create_task(execute())
     _QUOTE_TASKS.add(task)

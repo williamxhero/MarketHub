@@ -1216,6 +1216,40 @@ def run_capture(capability_id: str) -> dict[str, object]:
     return run_with_memory_log("capture.run_one", {"capability_id": root_capability_id}, lambda: capture_admin.run_capture(root_capability_id))
 
 
+_REPAIR_DATASET_CAPABILITIES = {
+    "stock_daily_1d": "stocks.quotes.daily",
+    "stock_bar_1m": "stocks.quotes.intraday",
+    "future_bar_1m": "futures.quotes.main_continuous.1m",
+    "concept_daily_1d": "concepts.quotes.daily",
+}
+
+
+def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, object]) -> dict[str, object]:
+    capability_id = _REPAIR_DATASET_CAPABILITIES.get(dataset_id)
+    if capability_id is None:
+        raise ValueError(f"数据集不支持自动 repair: {dataset_id}")
+    result = run_with_memory_log(
+        "capture.run_repair",
+        {"dataset_id": dataset_id, "dataset_version": dataset_version},
+        lambda: _capture_admin().run_repair(capability_id, scope, dataset_version),
+    )
+    return {**result, "repair_task_id": int(result["id"]), "dataset_id": dataset_id, "dataset_version": dataset_version}
+
+
+def get_data_repair(repair_task_id: int) -> dict[str, object]:
+    result = _capture_admin().get_repair_run(repair_task_id)
+    detail = result.get("detail_json", {})
+    detail = detail if isinstance(detail, dict) else {}
+    capability_id = str(result.get("capability_id", ""))
+    dataset_id = next((dataset for dataset, capability in _REPAIR_DATASET_CAPABILITIES.items() if capability == capability_id), "")
+    return {
+        **result,
+        "repair_task_id": repair_task_id,
+        "dataset_id": dataset_id,
+        "dataset_version": str(detail.get("repair_dataset_version", "")),
+    }
+
+
 def run_due_captures() -> list[dict[str, object]]:
     capture_admin = _capture_admin()
     return list(run_with_memory_log("capture.run_due", {"source": "admin_runtime"}, capture_admin.run_due_captures))

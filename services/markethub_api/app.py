@@ -10,6 +10,8 @@ from main import app
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
-    uvicorn.run(app, host=HOST, port=PORT)
+    workers = max(1, int(os.getenv("MHK_UVICORN_WORKERS", "1")))
+    uvicorn.run(app if workers == 1 else "main:app", host=HOST, port=PORT, workers=workers)

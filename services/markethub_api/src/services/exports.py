@@ -8,7 +8,7 @@ import re
 from typing import Iterator
 
 from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from quotemux.infra.db.client import query_dataframe
 from services.market_data_version import current_market_data_version
 
@@ -110,6 +110,21 @@ def read_manifest(dataset_version: str) -> dict[str, object]:
     return payload
 
 
+def manifest_response(dataset_version: str, request: Request) -> Response:
+    path = _dataset_root(dataset_version) / "manifest.json"
+    read_manifest(dataset_version)
+    content = path.read_bytes()
+    etag = f'"{hashlib.sha256(content).hexdigest()}"'
+    headers = {
+        "ETag": etag,
+        "Cache-Control": "public,max-age=31536000,immutable",
+        "Vary": "Accept, Accept-Encoding",
+    }
+    if request.headers.get("if-none-match", "") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=content, media_type="application/json", headers=headers)
+
+
 def _allowed_file(dataset_version: str, relative_path: str) -> Path:
     manifest = read_manifest(dataset_version)
     allowed = {str(item.get("path", "")) for item in manifest.get("files", []) if isinstance(item, dict)}
@@ -134,8 +149,17 @@ def _chunks(path: Path, start: int, length: int) -> Iterator[bytes]:
             yield data
 
 
-def file_response(dataset_version: str, relative_path: str, request: Request) -> StreamingResponse:
+def file_response(dataset_version: str, relative_path: str, request: Request) -> Response:
     path = _allowed_file(dataset_version, relative_path)
+    manifest = read_manifest(dataset_version)
+    file_row = next((item for item in manifest.get("files", []) if isinstance(item, dict) and str(item.get("path", "")) == relative_path), {})
+    content_sha256 = str(file_row.get("sha256", ""))
+    if re.fullmatch(r"[0-9a-f]{64}", content_sha256) is None:
+        raise HTTPException(status_code=503, detail={"code": "EXPORT_MANIFEST_INVALID", "message": "文件校验和缺失"})
+    etag = f'"{content_sha256}"'
+    immutable_headers = {"ETag": etag, "Cache-Control": "public,max-age=31536000,immutable", "Vary": "Accept, Accept-Encoding"}
+    if request.headers.get("if-none-match", "") == etag and not request.headers.get("range", ""):
+        return Response(status_code=304, headers=immutable_headers)
     size = path.stat().st_size
     start, end, status = 0, size - 1, 200
     range_header = request.headers.get("range", "")
@@ -158,7 +182,7 @@ def file_response(dataset_version: str, relative_path: str, request: Request) ->
         end = min(end, size - 1)
         status = 206
     length = max(0, end - start + 1)
-    headers = {"Accept-Ranges": "bytes", "Content-Length": str(length), "ETag": f'"{path.name}-{size}"'}
+    headers = {"Accept-Ranges": "bytes", "Content-Length": str(length), **immutable_headers}
     if status == 206:
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
     return StreamingResponse(_chunks(path, start, length), status_code=status, media_type="application/vnd.apache.parquet", headers=headers)

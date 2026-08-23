@@ -6,14 +6,26 @@ import pandas as pd
 from fastapi import HTTPException
 
 from core.config import DEFAULT_LIMIT
-from quotemux import QuoteMux, StockDailyLocalWindowRequest, StockDailySnapshotRequest, StockQuotesRequest
+from quotemux import QuoteMux, QuoteMuxPublicReader, StockQuotesRequest
 from quotemux.infra.db.client import query_dataframe
 from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, DividendPage, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, RightsIssuePage, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialPitRawItem, StockFinancialStatementItem, StockManagerItem, StockMarginItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, StockStrategyFactorItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
 from services.common import ensure_limit, require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
 from services.market_data_version import require_market_data_version
+from services.dataset_versions import STOCK_DAILY_DATASET_ID, current_dataset_version, require_dataset_version
+from services.request_timing import record_stage_ms
+from services.versioned_object_cache import get_or_build as get_or_build_object
 
 
 _QUOTEMUX = QuoteMux()
+
+
+def _read_stage(stage: str, duration_seconds: float) -> None:
+    mapped = {"pool_wait": "db_pool", "sql_execute": "sql", "sql_fetch": "sql"}.get(stage)
+    if mapped is not None:
+        record_stage_ms(mapped, duration_seconds * 1_000)
+
+
+_PUBLIC_READER = QuoteMuxPublicReader(stage_callback=_read_stage)
 
 
 _STRATEGY_WINDOW_COVERAGE_QUERY = """
@@ -186,16 +198,60 @@ def get_quotes_query_result(
     return result
 
 
-def get_market_daily_snapshot(trade_date: str, limit: int, offset: int, skip_suspended: bool, skip_st: bool) -> list[StockQuoteItem]:
+def _daily_batch_rows(batch: object) -> list[dict[str, object]]:
+    rows = []
+    for row in batch.as_dicts():
+        rows.append({**row, "freq": "1d", "adjust": "none"})
+    return rows
+
+
+def get_market_daily_snapshot(
+    trade_date: str,
+    limit: int,
+    offset: int,
+    skip_suspended: bool,
+    skip_st: bool,
+    data_version: str = "",
+    dataset_version: str = "",
+) -> list[dict[str, object]]:
     try:
-        return _QUOTEMUX.stocks.get_daily_snapshot(StockDailySnapshotRequest(trade_date=trade_date, limit=limit, offset=offset, skip_suspended=skip_suspended, skip_st=skip_st))
+        actual_version = require_dataset_version(STOCK_DAILY_DATASET_ID, dataset_version, data_version)
+        key = f"daily-snapshot|{actual_version}|{trade_date}|{limit}|{offset}|{skip_suspended}|{skip_st}"
+        result, _ = get_or_build_object(
+            key,
+            lambda: _daily_batch_rows(
+                _PUBLIC_READER.get_stock_daily_snapshot_batch(
+                    trade_date, limit=limit, offset=offset, skip_suspended=skip_suspended, skip_st=skip_st,
+                )
+            ),
+        )
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def get_market_daily_local_window(start_date: str, end_date: str, limit: int, offset: int, skip_suspended: bool, skip_st: bool) -> list[StockQuoteItem]:
+def get_market_daily_local_window(
+    start_date: str,
+    end_date: str,
+    limit: int,
+    offset: int,
+    skip_suspended: bool,
+    skip_st: bool,
+    data_version: str = "",
+    dataset_version: str = "",
+) -> list[dict[str, object]]:
     try:
-        return _QUOTEMUX.stocks.get_daily_local_window(StockDailyLocalWindowRequest(start_date=start_date, end_date=end_date, limit=limit, offset=offset, skip_suspended=skip_suspended, skip_st=skip_st))
+        actual_version = require_dataset_version(STOCK_DAILY_DATASET_ID, dataset_version, data_version)
+        key = f"daily-local-window|{actual_version}|{start_date}|{end_date}|{limit}|{offset}|{skip_suspended}|{skip_st}"
+        result, _ = get_or_build_object(
+            key,
+            lambda: _daily_batch_rows(
+                _PUBLIC_READER.get_stock_daily_local_window_batch(
+                    start_date, end_date, limit=limit, offset=offset, skip_suspended=skip_suspended, skip_st=skip_st,
+                )
+            ),
+        )
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -236,19 +292,33 @@ def get_finance_indicators(code: str, codes: str, report_period: str, start_peri
 
 def get_catalog(codes: str, name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int, data_version: str) -> list[StockBasicInfo]:
     actual_codes = require_codes("", codes) if codes else []
-    return _QUOTEMUX.stocks.get_catalog(actual_codes, name, exchange, list_status, include_delisted, limit or DEFAULT_LIMIT, offset, data_version=require_market_data_version(data_version))
+    market_version = require_market_data_version(data_version)
+    dataset_version = current_dataset_version("stock_reference")
+    key = "|".join(("catalog", dataset_version, ",".join(sorted(actual_codes)), name, exchange, list_status, str(include_delisted), str(limit), str(offset)))
+    result, _ = get_or_build_object(
+        key,
+        lambda: _QUOTEMUX.stocks.get_catalog(actual_codes, name, exchange, list_status, include_delisted, limit or DEFAULT_LIMIT, offset, data_version=market_version),
+    )
+    return result
 
 
 def get_archive(trade_date: str, code: str, name: str, industry: str, area: str, limit: int, offset: int) -> list[StockArchiveItem]:
     return _QUOTEMUX.stocks.get_archive(trade_date, code, name, industry, area, limit or DEFAULT_LIMIT, offset)
 
 
-def get_basic(code: str) -> StockBasicInfo | None:
-    return _QUOTEMUX.stocks.get_basic(code)
+def get_basic(code: str, data_version: str = "", dataset_version: str = "") -> StockBasicInfo | None:
+    actual_version = require_dataset_version("stock_reference", dataset_version, data_version)
+    result, _ = get_or_build_object(
+        f"profile-basic|{actual_version}|{code}",
+        lambda: next(iter(_QUOTEMUX.stocks.get_catalog([code], "", "", "", True, 1, 0, data_version=actual_version)), None),
+    )
+    return result
 
 
-def get_profile(code: str) -> StockProfileItem | None:
-    return _QUOTEMUX.stocks.get_profile(code)
+def get_profile(code: str, data_version: str = "", dataset_version: str = "") -> StockProfileItem | None:
+    actual_version = require_dataset_version("stock_reference", dataset_version, data_version)
+    result, _ = get_or_build_object(f"profile-company|{actual_version}|{code}", lambda: _QUOTEMUX.stocks.get_profile(code))
+    return result
 
 
 def get_name_history(code: str, start_date: str, end_date: str) -> list[NameHistoryItem]:

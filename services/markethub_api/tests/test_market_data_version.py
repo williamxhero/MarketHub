@@ -111,7 +111,8 @@ def test_quote_post_contract_uses_body_version_and_openapi_discovery() -> None:
     payload_schema = schema["components"]["schemas"]["StockQuotesQueryPayload"]
 
     assert operation.get("parameters", []) == []
-    assert "data_version" in payload_schema["required"]
+    assert payload_schema["required"] == ["codes"]
+    assert "dataset_version" in payload_schema["properties"]
     assert payload_schema["examples"][0]["data_version"] == "mhf-v1-from-api-health"
 
 

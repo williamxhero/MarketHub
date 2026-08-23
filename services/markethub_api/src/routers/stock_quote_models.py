@@ -45,13 +45,15 @@ class StockQuotesQueryPayload(BaseModel):
         default="summary",
         description="summary 只返回缺失数量；full 额外展开 missing_trade_times。",
     )
-    data_version: str = Field(min_length=1, description="唯一版本字段；POST 请求体必须携带 /api/health 返回的市场数据版本。")
+    data_version: str = Field(default="", description="兼容字段：/api/health 返回的全局市场事实版本。")
+    dataset_version: str = Field(default="", description="推荐字段：对应频率的数据集版本；1m 使用 stock_bar_1m。")
 
 
 class StockDailyWindowQueryPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    data_version: str = Field(min_length=1, description="/api/health 返回的市场事实版本。")
+    data_version: str = Field(default="", description="兼容字段：/api/health 返回的全局市场事实版本。")
+    dataset_version: str = Field(default="", description="推荐字段：/api/health.dataset_versions.stock_daily_1d。")
     freq: Literal["1d"] = Field(default="1d", description="固定为 1d。")
     universe: Literal["codes", "all_a"] = Field(description="精确代码集合或正式全 A universe。")
     codes: list[str] = Field(default_factory=list, description="universe=codes 时提交六位裸代码集合；不设代码数量上限。")
@@ -59,6 +61,7 @@ class StockDailyWindowQueryPayload(BaseModel):
     end_date: str = Field(description="结束交易日，YYYY-MM-DD，闭区间。")
     page_size: int = Field(default=50000, ge=1, le=100000, description="交付分页大小；不是结果裁剪上限。")
     cursor: str | None = Field(default=None, description="上一页返回的 opaque continuation cursor。")
+    meta_detail: Literal["summary", "full"] = Field(default="full", description="full 保留逐代码 coverage；summary 仅返回汇总。")
 
     @field_validator("codes")
     @classmethod
@@ -101,6 +104,7 @@ class StockDailyWindowCoverage(BaseModel):
 
 class StockDailyWindowMeta(BaseModel):
     data_version: str
+    dataset_version: str = ""
     total_rows: int
     returned_rows: int
     complete: bool

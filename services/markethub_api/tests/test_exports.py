@@ -32,7 +32,13 @@ def _app(tmp_path: Path, monkeypatch) -> tuple[TestClient, str, bytes]:
 
 def test_manifest_and_single_range(monkeypatch, tmp_path: Path) -> None:
     client, version, content = _app(tmp_path, monkeypatch)
-    assert client.get(f"/api/exports/stock_daily_1d/{version}/manifest").status_code == 200
+    manifest = client.get(f"/api/exports/stock_daily_1d/{version}/manifest")
+    assert manifest.status_code == 200
+    assert manifest.headers["cache-control"] == "public,max-age=31536000,immutable"
+    assert client.get(
+        f"/api/exports/stock_daily_1d/{version}/manifest",
+        headers={"If-None-Match": manifest.headers["etag"]},
+    ).status_code == 304
     response = client.get(
         f"/api/exports/stock_daily_1d/{version}/files/year=2021/month=01/bars.parquet",
         headers={"Range": "bytes=2-5"},
@@ -48,6 +54,12 @@ def test_manifest_and_single_range(monkeypatch, tmp_path: Path) -> None:
     assert suffix.status_code == 206
     assert suffix.content == content[-4:]
     assert suffix.headers["content-range"] == "bytes 6-9/10"
+    full = client.get(f"/api/exports/stock_daily_1d/{version}/files/year=2021/month=01/bars.parquet")
+    assert full.headers["etag"] == f'"{hashlib.sha256(content).hexdigest()}"'
+    assert client.get(
+        f"/api/exports/stock_daily_1d/{version}/files/year=2021/month=01/bars.parquet",
+        headers={"If-None-Match": full.headers["etag"]},
+    ).status_code == 304
 
 
 def test_manifest_allowlist_rejects_traversal(monkeypatch, tmp_path: Path) -> None:

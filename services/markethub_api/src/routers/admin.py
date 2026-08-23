@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import anyio.to_thread
-from fastapi import APIRouter, BackgroundTasks, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from services import adj_factor_warmup, admin_runtime, stocks
@@ -99,6 +99,12 @@ class CapturePolicyPayload(BaseModel):
     window_count: int
     batch_size: int
     notes: str = ""
+
+
+class DataRepairPayload(BaseModel):
+    dataset_id: str
+    dataset_version: str = ""
+    scope: dict[str, object]
 
 
 @router.get("/api/admin/source-packages")
@@ -327,6 +333,27 @@ async def api_admin_retry_capture_gaps(window_count: int = Query(30, ge=1, le=25
 @router.post("/api/admin/capture-runs/{capability_id}")
 async def api_admin_run_capture(capability_id: str) -> dict[str, object]:
     return await anyio.to_thread.run_sync(admin_runtime.run_capture, capability_id)
+
+
+@router.post("/api/admin/data-repairs")
+async def api_admin_run_data_repair(payload: DataRepairPayload) -> dict[str, object]:
+    try:
+        return await anyio.to_thread.run_sync(
+            admin_runtime.run_data_repair,
+            payload.dataset_id,
+            payload.dataset_version,
+            payload.scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "DATA_REPAIR_INVALID", "message": str(exc)}) from exc
+
+
+@router.get("/api/admin/data-repairs/{repair_task_id}")
+async def api_admin_get_data_repair(repair_task_id: int) -> dict[str, object]:
+    try:
+        return await anyio.to_thread.run_sync(admin_runtime.get_data_repair, repair_task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail={"code": "DATA_REPAIR_NOT_FOUND", "message": str(exc)}) from exc
 
 
 @router.post("/api/admin/capture/run-due")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from services import exports
 
@@ -15,10 +15,10 @@ async def resolve_stock_daily_export(market_data_version: str) -> dict[str, str]
 
 
 @router.get("/api/exports/stock_daily_1d/{dataset_version}/manifest")
-async def stock_daily_export_manifest(dataset_version: str) -> dict[str, object]:
-    return exports.read_manifest(dataset_version)
+async def stock_daily_export_manifest(dataset_version: str, request: Request) -> Response:
+    return exports.manifest_response(dataset_version, request)
 
 
 @router.get("/api/exports/stock_daily_1d/{dataset_version}/files/{relative_path:path}")
-async def stock_daily_export_file(dataset_version: str, relative_path: str, request: Request) -> StreamingResponse:
+async def stock_daily_export_file(dataset_version: str, relative_path: str, request: Request) -> Response:
     return exports.file_response(dataset_version, relative_path, request)

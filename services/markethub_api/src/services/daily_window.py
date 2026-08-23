@@ -19,8 +19,11 @@ from fastapi import HTTPException
 
 from quotemux.infra.db.client import query_dataframe, stream_query_batches
 from routers.stock_quote_models import StockDailyWindowQueryPayload
-from services.market_data_version import require_market_data_version
+from services.daily_coverage_read_model import load_stock_daily_coverage_summary
+from services.dataset_versions import STOCK_DAILY_DATASET_ID, require_dataset_version
+from services.request_timing import record_stage_ms
 from services.runtime_memory import process_rss_mb
+from services.versioned_response_cache import CacheValue, VersionedResponseCache
 
 
 _LOGGER = logging.getLogger("uvicorn.error")
@@ -279,6 +282,18 @@ where catalog.code is null order by requested_codes.code
 """
 
 
+_REFERENCE_COVERAGE_ROWS_QUERY = _UNIVERSE_CTE + """
+select universe.code,count(expected.trade_date)::int as expected_rows
+from universe left join expected on expected.code=universe.code and expected.market=universe.market
+group by universe.code order by universe.code
+"""
+
+
+_UNIVERSE_SIZE_QUERY = _BASE_CTE + """
+select count(*)::int as universe_size from universe
+"""
+
+
 _PAGE_ROWS_CTE = _BASE_CTE + """
 , page_candidates as materialized (
     select daily_rows.code,daily_rows.trade_date,daily_rows.open,daily_rows.high,daily_rows.low,
@@ -329,6 +344,7 @@ ARROW_RECORD_BATCH_ROWS = 8_192
 COVERAGE_CACHE_MAX_ENTRIES = 32
 _COVERAGE_CACHE: OrderedDict[str, tuple[dict[str, object], list[dict[str, object]]]] = OrderedDict()
 _COVERAGE_CACHE_LOCK = RLock()
+_RESPONSE_CACHE: VersionedResponseCache[EncodedDailyWindowResponse] | None = None
 ARROW_SCHEMA = pa.schema(
     [
         ("code", pa.string()), ("trade_time", pa.string()), ("freq", pa.string()),
@@ -352,6 +368,13 @@ class PreparedDailyWindowArrowResponse:
     headers: dict[str, str]
 
 
+def _response_cache() -> VersionedResponseCache[EncodedDailyWindowResponse]:
+    global _RESPONSE_CACHE
+    if _RESPONSE_CACHE is None:
+        _RESPONSE_CACHE = VersionedResponseCache()
+    return _RESPONSE_CACHE
+
+
 def _elapsed_ms(started: float) -> float:
     return round((time.perf_counter() - started) * 1000, 3)
 
@@ -373,14 +396,22 @@ def clear_coverage_cache() -> None:
         _COVERAGE_CACHE.clear()
 
 
+def clear_response_cache() -> None:
+    _response_cache().clear()
+
+
+def response_cache_metrics() -> dict[str, int]:
+    return _response_cache().snapshot()
+
+
 def _coverage_cache_key(payload: StockDailyWindowQueryPayload) -> str:
-    return f"{payload.data_version}:{_request_fingerprint(payload)}"
+    return f"{payload.dataset_version}:{payload.meta_detail}:{_request_fingerprint(payload)}"
 
 
 def _encode_cursor(payload: StockDailyWindowQueryPayload, trade_time: str, code: str) -> str:
     value = {
         "v": 1,
-        "data_version": payload.data_version,
+        "dataset_version": payload.dataset_version,
         "fingerprint": _request_fingerprint(payload),
         "trade_time": trade_time,
         "code": code,
@@ -400,7 +431,7 @@ def _decode_cursor(payload: StockDailyWindowQueryPayload) -> tuple[str | None, s
         raise HTTPException(status_code=400, detail={"code": "DAILY_WINDOW_CURSOR_INVALID", "message": "cursor 无法解析"}) from exc
     if (
         value.get("v") != 1
-        or value.get("data_version") != payload.data_version
+        or value.get("dataset_version") != payload.dataset_version
         or value.get("fingerprint") != _request_fingerprint(payload)
     ):
         raise HTTPException(status_code=409, detail={"code": "DAILY_WINDOW_CURSOR_MISMATCH", "message": "cursor 不属于当前版本或查询窗口"})
@@ -475,17 +506,70 @@ def _raise_incomplete(coverage_row: dict[str, object], coverage: list[dict[str, 
 
 
 def _load_coverage_uncached(payload: StockDailyWindowQueryPayload) -> tuple[dict[str, object], list[dict[str, object]]]:
-    coverage_row = _single_row(query_dataframe(_COVERAGE_QUERY, _universe_params(payload)), "coverage")
-    coverage = _parse_json_text(coverage_row.get("coverage_json", "[]"), "coverage")
-    unknown_codes = _parse_json_text(coverage_row.get("unknown_codes_json", "[]"), "unknown_codes")
-    normalized_coverage = [dict(item) for item in coverage if isinstance(item, dict)]
-    if len(normalized_coverage) != len(coverage):
+    params = _universe_params(payload)
+    unknown_frame = query_dataframe(_UNKNOWN_CODES_QUERY, params)
+    unknown_codes = [str(value) for value in unknown_frame.get("code", pd.Series(dtype=str)).tolist()]
+    if unknown_codes:
         raise HTTPException(
-            status_code=503,
-            detail={"code": "DAILY_WINDOW_INTEGRITY_UNAVAILABLE", "message": "coverage 行结构无效"},
+            status_code=409,
+            detail={
+                "code": "DATA_INCOMPLETE",
+                "message": "请求包含未知股票代码",
+                "details": {
+                    "dataset_id": STOCK_DAILY_DATASET_ID,
+                    "dataset_version": payload.dataset_version,
+                    "unknown_codes": unknown_codes[:20],
+                    "repair_endpoint": "/api/admin/data-repairs",
+                },
+            },
         )
-    _raise_incomplete(coverage_row, normalized_coverage, [str(code) for code in unknown_codes])
-    return coverage_row, normalized_coverage
+    summary, _ = load_stock_daily_coverage_summary(
+        payload.dataset_version,
+        payload.start_date,
+        payload.end_date,
+        codes=payload.codes if payload.universe == "codes" else None,
+    )
+    coverage: list[dict[str, object]] = []
+    if payload.meta_detail == "full" or payload.universe == "codes":
+        reference_frame = query_dataframe(_REFERENCE_COVERAGE_ROWS_QUERY, params)
+        reference_rows = reference_frame.to_dict(orient="records")
+        coverage = [
+            {
+                "code": str(row["code"]),
+                "expected_rows": int(row["expected_rows"]),
+                "actual_rows": int(row["expected_rows"]),
+                "missing_rows": 0,
+                "missing_trade_dates": [],
+                "complete": True,
+            }
+            for row in reference_rows
+        ]
+        reference_total = sum(int(row["expected_rows"]) for row in reference_rows)
+        if payload.universe == "codes":
+            summary.update(
+                {
+                    "expected_total": reference_total,
+                    "actual_total": reference_total,
+                    "missing_total": 0,
+                    "duplicate_total": 0,
+                    "universe_size": len(reference_rows),
+                }
+            )
+        elif reference_total != int(summary.get("expected_total", 0) or 0):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "READ_MODEL_MISMATCH",
+                    "message": "日线 coverage read model 与当前 universe 不一致",
+                    "details": {"readmodel": int(summary.get("expected_total", 0) or 0), "reference": reference_total},
+                },
+            )
+        else:
+            summary["universe_size"] = len(reference_rows)
+    else:
+        universe_row = _single_row(query_dataframe(_UNIVERSE_SIZE_QUERY, params), "universe")
+        summary["universe_size"] = int(universe_row.get("universe_size", 0) or 0)
+    return summary, coverage
 
 
 def _cached_coverage(payload: StockDailyWindowQueryPayload) -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -495,7 +579,12 @@ def _cached_coverage(payload: StockDailyWindowQueryPayload) -> tuple[dict[str, o
         if cached is not None:
             _COVERAGE_CACHE.move_to_end(key)
             return cached
-        loaded = _load_coverage_uncached(payload)
+    loaded = _load_coverage_uncached(payload)
+    with _COVERAGE_CACHE_LOCK:
+        cached = _COVERAGE_CACHE.get(key)
+        if cached is not None:
+            _COVERAGE_CACHE.move_to_end(key)
+            return cached
         _COVERAGE_CACHE[key] = loaded
         _COVERAGE_CACHE.move_to_end(key)
         while len(_COVERAGE_CACHE) > COVERAGE_CACHE_MAX_ENTRIES:
@@ -503,22 +592,47 @@ def _cached_coverage(payload: StockDailyWindowQueryPayload) -> tuple[dict[str, o
         return loaded
 
 
+def _pin_dataset_version(payload: StockDailyWindowQueryPayload) -> StockDailyWindowQueryPayload:
+    actual = require_dataset_version(
+        STOCK_DAILY_DATASET_ID,
+        requested_dataset_version=payload.dataset_version,
+        requested_market_version=payload.data_version,
+    )
+    if payload.dataset_version == actual:
+        return payload
+    return payload.model_copy(update={"dataset_version": actual})
+
+
 def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> EncodedDailyWindowResponse:
+    payload = _pin_dataset_version(payload)
+    key_payload = {
+        "dataset_version": payload.dataset_version,
+        "fingerprint": _request_fingerprint(payload),
+        "page_size": payload.page_size,
+        "cursor": payload.cursor or "",
+        "meta_detail": payload.meta_detail,
+        "encoding": "gzip" if accept_gzip else "identity",
+    }
+    key = hashlib.sha256(json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def build() -> CacheValue[EncodedDailyWindowResponse]:
+        response = _build_response_uncached(payload, accept_gzip)
+        return CacheValue(response, len(response.content))
+
+    response, hit = _response_cache().get_or_build(key, build)
+    headers = dict(response.headers)
+    headers["X-MarketHub-Cache"] = "hit" if hit else "miss"
+    return EncodedDailyWindowResponse(response.content, headers)
+
+
+def _build_response_uncached(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> EncodedDailyWindowResponse:
     request_started = time.perf_counter()
     start_rss_mb = process_rss_mb()
     cursor_trade_time, cursor_code = _decode_cursor(payload)
 
-    version_pre_started = time.perf_counter()
-    require_market_data_version(payload.data_version)
-    version_pre_ms = _elapsed_ms(version_pre_started)
-
     coverage_started = time.perf_counter()
     coverage_row, coverage = _cached_coverage(payload)
     coverage_db_ms = _elapsed_ms(coverage_started)
-
-    version_coverage_started = time.perf_counter()
-    require_market_data_version(payload.data_version)
-    version_coverage_ms = _elapsed_ms(version_coverage_started)
 
     page_started = time.perf_counter()
     page_params = _universe_params(payload) + (
@@ -531,10 +645,9 @@ def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> 
     )
     page_row = _single_row(query_dataframe(_PAGE_QUERY, page_params), "page")
     page_db_ms = _elapsed_ms(page_started)
+    record_stage_ms("sql", page_db_ms)
 
-    version_post_started = time.perf_counter()
-    require_market_data_version(payload.data_version)
-    version_post_ms = _elapsed_ms(version_post_started)
+    require_dataset_version(STOCK_DAILY_DATASET_ID, payload.dataset_version)
 
     returned_rows = int(page_row.get("returned_rows", 0) or 0)
     has_more = bool(page_row.get("has_more", False))
@@ -551,6 +664,7 @@ def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> 
     total_rows = int(coverage_row.get("actual_total", 0) or 0)
     meta = {
         "data_version": payload.data_version,
+        "dataset_version": payload.dataset_version,
         "total_rows": total_rows,
         "returned_rows": returned_rows,
         "complete": True,
@@ -572,6 +686,7 @@ def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> 
     meta_json = json.dumps(meta, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     raw_content = b'{"items":' + items_json.encode("utf-8") + b',"meta":' + meta_json + b"}"
     serialization_ms = _elapsed_ms(serialization_started)
+    record_stage_ms("serialize", serialization_ms)
 
     compression_started = time.perf_counter()
     if accept_gzip:
@@ -581,13 +696,11 @@ def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> 
         content = raw_content
         content_encoding = "identity"
     compression_ms = _elapsed_ms(compression_started)
+    record_stage_ms("compress", compression_ms)
 
     server_timing = (
-        f"version_pre;dur={version_pre_ms:.3f}, "
         f"coverage_db;dur={coverage_db_ms:.3f}, "
-        f"version_coverage;dur={version_coverage_ms:.3f}, "
         f"page_db;dur={page_db_ms:.3f}, "
-        f"version_post;dur={version_post_ms:.3f}, "
         f"serialize;dur={serialization_ms:.3f}, "
         f"compress;dur={compression_ms:.3f}"
     )
@@ -610,10 +723,13 @@ def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> 
     headers = {
         "Content-Encoding": content_encoding,
         "Content-Length": str(len(content)),
-        "Vary": "Accept-Encoding",
+        "Vary": "Accept, Accept-Encoding",
         "Server-Timing": server_timing,
         "X-MarketHub-Decoded-Bytes": str(len(raw_content)),
         "X-MarketHub-Data-Version": payload.data_version,
+        "X-MarketHub-Dataset-Version": payload.dataset_version,
+        "ETag": f'"{hashlib.sha256(content).hexdigest()}"',
+        "Cache-Control": "private,max-age=0,must-revalidate",
     }
     return EncodedDailyWindowResponse(content=content, headers=headers)
 
@@ -735,13 +851,13 @@ def _arrow_body(
 def prepare_arrow_response(payload: StockDailyWindowQueryPayload) -> PreparedDailyWindowArrowResponse:
     request_started = time.perf_counter()
     start_rss_mb = process_rss_mb()
+    payload = _pin_dataset_version(payload)
     cursor_trade_time, cursor_code = _decode_cursor(payload)
-    require_market_data_version(payload.data_version)
 
     coverage_started = time.perf_counter()
     coverage_row, coverage = _cached_coverage(payload)
     coverage_db_ms = _elapsed_ms(coverage_started)
-    require_market_data_version(payload.data_version)
+    require_dataset_version(STOCK_DAILY_DATASET_ID, payload.dataset_version)
 
     page_params = _page_params(payload, cursor_trade_time, cursor_code)
     page_meta_started = time.perf_counter()
@@ -759,6 +875,7 @@ def prepare_arrow_response(payload: StockDailyWindowQueryPayload) -> PreparedDai
     next_cursor = _encode_cursor(payload, last_trade_time, last_code) if has_more else None
     meta = {
         "data_version": payload.data_version,
+        "dataset_version": payload.dataset_version,
         "total_rows": int(coverage_row["actual_total"]),
         "returned_rows": returned_rows,
         "complete": True,
@@ -776,12 +893,13 @@ def prepare_arrow_response(payload: StockDailyWindowQueryPayload) -> PreparedDai
         b"markethub.meta": json.dumps(meta, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(),
         b"markethub.schema_version": ARROW_SCHEMA_VERSION.encode(),
         b"markethub.data_version": payload.data_version.encode(),
+        b"markethub.dataset_version": payload.dataset_version.encode(),
     }
     schema = ARROW_SCHEMA.with_metadata(metadata)
     database_batches = stream_query_batches(_PAGE_ROWS_QUERY, page_params[:-1], batch_size=ARROW_RECORD_BATCH_ROWS)
     try:
         first_batch = next(database_batches, [])
-        require_market_data_version(payload.data_version)
+        require_dataset_version(STOCK_DAILY_DATASET_ID, payload.dataset_version)
     except BaseException:
         database_batches.close()
         raise
@@ -792,6 +910,7 @@ def prepare_arrow_response(payload: StockDailyWindowQueryPayload) -> PreparedDai
         "Vary": "Accept, Accept-Encoding",
         "Server-Timing": f"coverage_db;dur={coverage_db_ms:.3f}, page_meta_db;dur={page_meta_db_ms:.3f}",
         "X-MarketHub-Data-Version": payload.data_version,
+        "X-MarketHub-Dataset-Version": payload.dataset_version,
         "X-MarketHub-Returned-Rows": str(returned_rows),
         "X-MarketHub-Delivery-Complete": str(not has_more).lower(),
         "X-MarketHub-Next-Cursor": next_cursor or "",

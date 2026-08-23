@@ -13,7 +13,7 @@ if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
 from app import app
-from services import stock_quotes_arrow, stocks
+from services import stock_1m_delivery, stock_quotes_arrow, stocks
 
 
 def _result() -> dict[str, object]:
@@ -53,6 +53,12 @@ def test_stock_quote_arrow_keeps_items_and_meta_equivalent() -> None:
 
 def test_stock_quote_query_negotiates_arrow_and_rejects_unknown_media(monkeypatch) -> None:
     monkeypatch.setattr(stocks, "get_quotes_query_result", lambda *_args: type("Result", (), {"model_dump": lambda self: _result(), "items": []})())
+    encoded = stock_quotes_arrow.encode(_result())
+    monkeypatch.setattr(
+        stock_1m_delivery,
+        "prepare_arrow",
+        lambda _payload: stock_1m_delivery.PreparedStock1mArrow(iter((encoded.content,)), encoded.headers),
+    )
     client = TestClient(app)
     payload = {"codes": ["600000"], "freq": "1m", "trade_date": "2026-08-14", "data_version": "mhf-v1-test"}
 

@@ -1,0 +1,11 @@
+{
+  "migration_id": "markethub-query-read-v3-20260823",
+  "source_versions": ["storage-v2.0.0-timescale-parquet-arrow"],
+  "target_version": "query-read-v3.0.0",
+  "kind": "performance-read-model",
+  "requires_environment_discovery": true,
+  "requires_capture_freeze": true,
+  "idempotent": true,
+  "rollback": "code rollback is supported; readmodel and audit tables are retained because they are additive",
+  "steps": ["preflight", "deploy", "apply", "verify", "release-freeze"]
+}

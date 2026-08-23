@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from services.performance_metrics import PerformanceMetrics, PerformanceMetricsMiddleware
+from services.request_timing import record_stage_ms
 
 
 def _build_app(*, max_routes: int = 512) -> tuple[FastAPI, PerformanceMetrics]:
@@ -16,6 +17,7 @@ def _build_app(*, max_routes: int = 512) -> tuple[FastAPI, PerformanceMetrics]:
 
     @app.get("/items/{item_id}")
     async def item(item_id: str) -> dict[str, str]:
+        record_stage_ms("sql", 1.25)
         return {"item_id": item_id}
 
     @app.get("/failure")
@@ -56,6 +58,10 @@ def test_metrics_normalize_routes_and_append_server_timing() -> None:
     assert route["in_flight"] == 0
     assert route["wire_bytes"] > 0
     assert route["p95_ms"] >= route["p50_ms"]
+    assert route["p99_ms"] >= route["p95_ms"]
+    assert route["app_return_p95_ms"] >= route["p95_ms"]
+    assert route["stages"]["sql"]["p50_ms"] == 1.25
+    assert "sql;dur=1.250" in first.headers["Server-Timing"]
 
 
 def test_metrics_count_error_and_stream_completion() -> None:
@@ -70,6 +76,7 @@ def test_metrics_count_error_and_stream_completion() -> None:
     assert snapshot["/stream"]["streaming_count"] == 1
     assert snapshot["/stream"]["wire_bytes"] == len(b"firstsecond")
     assert snapshot["/stream"]["first_body_p50_ms"] > 0
+    assert snapshot["/stream"]["p99_ms"] >= snapshot["/stream"]["first_body_p99_ms"]
     assert "app;dur=" in streamed.headers["Server-Timing"]
 
 

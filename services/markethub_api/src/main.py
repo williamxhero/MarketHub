@@ -22,6 +22,7 @@ from quotemux.config_runtime.validation import ConfigValidationError
 from quotemux.models import ApiError
 from quotemux.infra.db.availability import get_fact_ref_availability
 from quotemux.infra.db.client import close_pool, get_pool_metrics
+from quotemux.infra.db.read_client import close_read_pool, get_read_pool_metrics
 from quotemux.runtime_core.audit import read_fallback_summary
 from quotemux.runtime_core.health import get_provider_metrics
 from routers.admin import router as admin_router
@@ -38,7 +39,9 @@ from routers.news import router as news_router
 from routers.p0_fundamentals import router as p0_fundamentals_router
 from routers.rankings import router as rankings_router
 from routers.stocks import router as stocks_router
-from services import adj_factor_warmup, reader_packages
+from services import adj_factor_warmup, daily_window, reader_packages
+from services.dataset_versions import VERSION_CONTRACT, current_dataset_publications, current_dataset_versions
+from services.versioned_object_cache import snapshot as object_cache_metrics
 from services.market_data_version import current_market_data_version
 from services.performance_metrics import PerformanceMetrics, PerformanceMetricsMiddleware
 from starlette.routing import Match
@@ -159,6 +162,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     adj_factor_warmup.stop_tasks()
     close_pool()
+    close_read_pool()
 
 
 @app.exception_handler(HTTPException)
@@ -259,14 +263,18 @@ async def console_config() -> dict[str, str]:
 - `openapi_url`（`str`）：公开 OpenAPI JSON 的相对路径。
 - `docs_url`（`str`）：公开 Swagger UI 的相对路径。""",
 )
-async def health() -> dict[str, str]:
+async def health() -> dict[str, object]:
     # 健康检查只做轻量存活探针，避免把索引构建耗时耦合进监控。
+    dataset_versions = current_dataset_versions()
     return {
         "service": "integration_api",
         "status": "ok",
         "version": app.version,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "data_version": current_market_data_version(),
+        "version_contract": VERSION_CONTRACT,
+        "dataset_versions": dataset_versions,
+        "dataset_publications": current_dataset_publications(dataset_versions),
         "openapi_url": "/api/openapi.json",
         "docs_url": "/api/openapi",
     }
@@ -278,9 +286,12 @@ async def connection_diagnostics() -> dict[str, object]:
         "provider_runtime": get_provider_metrics(),
         "fallback_runtime": read_fallback_summary(),
         "store_db_pool": get_pool_metrics(),
+        "read_db_pool": get_read_pool_metrics(),
         "data_thread_pool": get_data_thread_pool_metrics(),
         "quote_thread_pool": get_quote_thread_pool_metrics(),
         "sync_thread_pool": get_sync_thread_pool_metrics(),
+        "daily_window_response_cache": daily_window.response_cache_metrics(),
+        "versioned_object_cache": object_cache_metrics(),
     }
 
 

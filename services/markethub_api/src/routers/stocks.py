@@ -10,7 +10,7 @@ from quotemux.models import DividendItem, DividendPage, RightsIssueItem, RightsI
 
 from data_threads import QuoteClientDisconnectedError, run_data_task, run_quote_task
 from routers.stock_quote_models import StockDailyWindowQueryPayload, StockDailyWindowQueryResponse, StockQuotesQueryPayload
-from services import daily_window, stock_quotes_arrow, stocks
+from services import daily_window, stock_1m_delivery, stock_quotes_arrow, stocks
 from services.common import filter_response_fields
 from services.runtime_memory import run_with_memory_log
 
@@ -149,6 +149,22 @@ async def api_stock_quotes_query(payload: StockQuotesQueryPayload, request: Requ
             status_code=406,
             detail={"code": "STOCK_QUOTES_MEDIA_TYPE_NOT_ACCEPTABLE", "message": "仅支持 application/json 或 Arrow IPC stream"},
         )
+    if payload.freq == "1m" and payload.count is None:
+        try:
+            if wants_arrow:
+                prepared = await run_quote_task(
+                    stock_1m_delivery.prepare_arrow,
+                    payload,
+                    is_disconnected=request.is_disconnected,
+                )
+                return StreamingResponse(prepared.body, media_type=stock_1m_delivery.ARROW_MEDIA_TYPE, headers=prepared.headers)
+            return await run_quote_task(
+                stock_1m_delivery.build_json,
+                payload,
+                is_disconnected=request.is_disconnected,
+            )
+        except QuoteClientDisconnectedError as exc:
+            raise HTTPException(status_code=499, detail={"code": "CLIENT_DISCONNECTED", "message": str(exc)}) from exc
     codes = ",".join(payload.codes)
     detail = _quote_request_detail(codes, payload.freq, payload.start_date, payload.end_date, payload.limit)
     args = (
@@ -219,6 +235,9 @@ async def api_stock_daily_window_query(payload: StockDailyWindowQueryPayload, re
         )
     except QuoteClientDisconnectedError as exc:
         raise HTTPException(status_code=499, detail={"code": "CLIENT_DISCONNECTED", "message": str(exc)}) from exc
+    response_etag = encoded.headers.get("ETag", "")
+    if response_etag and request.headers.get("if-none-match", "") == response_etag:
+        return Response(status_code=304, headers=encoded.headers)
     return Response(content=encoded.content, media_type="application/json", headers=encoded.headers)
 
 
@@ -230,8 +249,10 @@ async def api_stock_daily_snapshot(
     offset: int = Query(0, ge=0, description='结果偏移量。'),
     skip_suspended: bool = Query(True, description='过滤停牌行。'),
     skip_st: bool = Query(False, description='过滤 ST 股票。'),
+    data_version: str = Query("", description="兼容字段：全局市场数据版本。"),
+    dataset_version: str = Query("", description="推荐字段：stock_daily_1d 数据集版本。"),
 ) -> list[dict[str, object]]:
-    args = (trade_date, limit, offset, skip_suspended, skip_st)
+    args = (trade_date, limit, offset, skip_suspended, skip_st, data_version, dataset_version)
     return await run_quote_task(_filter_items, stocks.get_market_daily_snapshot, args, fields, STOCK_QUOTE_FIELDS)
 
 
@@ -244,8 +265,10 @@ async def api_stock_daily_local_window(
     offset: int = Query(0, ge=0, description='结果偏移量。'),
     skip_suspended: bool = Query(True, description='过滤停牌行。'),
     skip_st: bool = Query(False, description='如果某只股票在请求窗口内任一行 `is_st=true`，则整只股票过滤。'),
+    data_version: str = Query("", description="兼容字段：全局市场数据版本。"),
+    dataset_version: str = Query("", description="推荐字段：stock_daily_1d 数据集版本。"),
 ) -> list[dict[str, object]]:
-    args = (start_date, end_date, limit, offset, skip_suspended, skip_st)
+    args = (start_date, end_date, limit, offset, skip_suspended, skip_st, data_version, dataset_version)
     return await run_quote_task(_filter_items, stocks.get_market_daily_local_window, args, fields, STOCK_QUOTE_FIELDS)
 
 
@@ -283,13 +306,21 @@ async def api_stock_catalog_archive(
 
 
 @router.get("/api/stocks/{code}/profile/basic", summary='返回单只股票的基础资料', description='`GET` 返回单只股票的基础资料。\n\n## 路径参数\n\n- `code`（类型：`str`）：股票代码。\n\n## 返回类型\n\n顶层返回 `StockBasicInfo`；查不到对应记录时返回空对象 `{}`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `name`（`str`）：名称。\n- `exchange`（`str`）：交易所。\n- `market`（`str`）：所属市场板块，如主板、创业板或北交所等口径值。\n- `list_status`（`str`）：上市状态。\n- `list_date`（`str`）：上市日期。\n- `delist_date`（`str`）：退市日期；未退市时为空字符串。\n- `industry`（`str`）：所属行业。\n- `area`（`str`）：所属地域。\n\n## 补充说明\n\n- 查不到对应记录时返回空对象 `{}`。')
-async def api_stock_profile_basic(code: str) -> dict[str, object]:
-    return await run_data_task(_dump_optional_item, stocks.get_basic, (code,))
+async def api_stock_profile_basic(
+    code: str,
+    data_version: str = Query("", description="兼容字段：全局市场数据版本。"),
+    dataset_version: str = Query("", description="推荐字段：stock_reference 数据集版本。"),
+) -> dict[str, object]:
+    return await run_data_task(_dump_optional_item, stocks.get_basic, (code, data_version, dataset_version))
 
 
 @router.get("/api/stocks/{code}/profile", summary='返回单只股票的公司概况', description='`GET` 返回单只股票的公司概况。\n\n## 路径参数\n\n- `code`（类型：`str`）：股票代码。\n\n## 返回类型\n\n顶层返回 `StockProfileItem`；查不到对应记录时返回空对象 `{}`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `company_name`（`str`）：公司简称或工商登记简称。\n- `full_name`（`str`）：公司全称。\n- `chairman`（`str`）：董事长。\n- `manager`（`str`）：总经理或经营负责人。\n- `website`（`str`）：公司网站。\n- `employee_count`（`int | None`）：员工人数。\n- `main_business`（`str`）：主营业务描述。\n- `office`（`str`）：办公地址。\n\n## 补充说明\n\n- 查不到对应记录时返回空对象 `{}`。')
-async def api_stock_profile(code: str) -> dict[str, object]:
-    return await run_data_task(_dump_optional_item, stocks.get_profile, (code,))
+async def api_stock_profile(
+    code: str,
+    data_version: str = Query("", description="兼容字段：全局市场数据版本。"),
+    dataset_version: str = Query("", description="推荐字段：stock_reference 数据集版本。"),
+) -> dict[str, object]:
+    return await run_data_task(_dump_optional_item, stocks.get_profile, (code, data_version, dataset_version))
 
 
 @router.get("/api/stocks/{code}/profile/name-history", summary='返回单只股票的名称变更记录', description='`GET` 返回单只股票的名称变更记录。\n\n## 路径参数\n\n- `code`（类型：`str`）：股票代码。\n\n## 查询参数\n\n- `start_date`（类型：`str`）：起始日期，格式 `YYYY-MM-DD`。\n- `end_date`（类型：`str`）：结束日期，格式 `YYYY-MM-DD`。\n\n## 返回类型\n\n顶层返回 `list[NameHistoryItem]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `name`（`str`）：名称。\n- `start_date`（`str`）：start日期。\n- `end_date`（`str`）：END日期。\n- `ann_date`（`str`）：公告日期。')

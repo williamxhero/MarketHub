@@ -122,3 +122,19 @@ pwsh -File MarketHub/migrations/storage_v2_20260823/deploy_and_migrate_remote.ps
 ## 7. 停止条件
 
 缺少用户参数或 secret、TimescaleDB 不可用、PackageInstallResult 失败、API 非 2xx、调度器退出码丢失或数据健康检查失败时，停止并报告需要补充的参数与证据。
+
+## 8. 已有 storage-v2 部署升级到 query-read-v3
+
+本节适用于已经完成 storage-v2、现在升级查询性能架构的部署。它不是普通覆盖发布：首次升级必须构建 coverage read model，因而必须完整阅读 `migrations/query_read_v3_20260823/README.md` 和 `manifest.json`。
+
+其他人的 AI task 在 pull 后必须先检查三个同级仓库干净并分别 `git pull --ff-only`，然后对用户真正的目标机器运行通用 preflight。不得套用本开发机或 yosef-server 的路径、用户、端口、数据库和服务名：
+
+```powershell
+pwsh -File MarketHub/migrations/query_read_v3_20260823/deploy_and_migrate_remote.ps1 `
+  -HostName <TARGET_HOST> -PreflightOnly
+
+pwsh -File MarketHub/migrations/query_read_v3_20260823/deploy_and_migrate_remote.ps1 `
+  -HostName <TARGET_HOST>
+```
+
+入口先读取真实 systemd/env/current release/数据库，再通过正式 freeze 工具、正式 release 部署器和版本化 migration 脚本执行。迁移中出现问题时，先修复本目录脚本和测试并 commit/push，再从同一入口幂等重跑；禁止手工创建 coverage 表、跳过 verify 或降低完整性门。只有 apply、verify、API health 和 freeze restore 都成功，才算迁移完成。后续版本恢复普通覆盖部署，不重复全量回填。

@@ -25,7 +25,8 @@ def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
     assert "market version mapping conflict" in content
     assert '"url": f"/api/exports/{DATASET_ID}/{dataset_version}/files/{relative_path}"' in content
     assert "date '2021-11-15'" in content
-    assert "coalesce(b.is_suspended,false)=true" in content
+    assert "ensure_current_stock_daily_coverage" in content
+    assert "mark_stock_daily_publication_ready" in content
     assert "MARKETHUB_STOCK_DAILY_EXPORT_START" in content
     assert "d.trade_date<u.delisted_date" in content
     assert tuple(field.name for field in MODULE.BARS_SCHEMA) == (
@@ -50,8 +51,8 @@ def test_months_preserve_partial_dataset_bounds() -> None:
     ]
 
 
-def test_parquet_contract_counts_suspension_placeholders_as_covered_facts() -> None:
-    assert "or (b.open is not null" in MODULE._COVERAGE_SQL
-    assert "coalesce(b.is_suspended,false)=true" in MODULE._COVERAGE_SQL
+def test_parquet_contract_reuses_precomputed_coverage_and_still_filters_fact_rows() -> None:
+    assert "fact.stock_daily_1d" not in MODULE._COVERAGE_SQL
+    assert "0::int as missing_rows" in MODULE._COVERAGE_SQL
     assert "coalesce(b.is_suspended,false)=true" in MODULE._BARS_SQL
     assert "stock_suspension_history x" in MODULE._BARS_SQL

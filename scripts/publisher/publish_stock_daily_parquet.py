@@ -15,6 +15,8 @@ import pyarrow.parquet as pq
 import psycopg
 from psycopg.rows import dict_row
 
+from services.daily_coverage_read_model import ensure_current_stock_daily_coverage, mark_stock_daily_publication_ready
+
 
 DATASET_ID = "stock_daily_1d"
 SCHEMA_VERSION = "markethub-stock-daily-parquet-v1"
@@ -62,23 +64,14 @@ with catalog as materialized (
         select 1 from fact.stock_suspension_history s where s.market=u.market and s.code=u.code and s.status='suspended'
           and s.suspend_start_date<=d.trade_date and s.suspend_end_date>=d.trade_date
       )
-), state as materialized (
-    select e.market,e.code,e.trade_date,count(b.code)::int as row_count
-    from expected e left join fact.stock_daily_1d b
-      on b.market=e.market and b.code=e.code and b.trade_date=e.trade_date
-      and (
-        coalesce(b.is_suspended,false)=true
-        or (b.open is not null and b.high is not null and b.low is not null and b.close is not null and b.volume is not null)
-      )
-    group by e.market,e.code,e.trade_date
 )
-select u.market,u.code,count(s.trade_date)::int as expected_rows,
-       count(s.trade_date) filter(where s.row_count=1)::int as actual_rows,
-       count(s.trade_date) filter(where s.row_count=0)::int as missing_rows,
-       coalesce(array_agg(s.trade_date order by s.trade_date) filter(where s.row_count=0),'{}'::date[]) as missing_trade_dates,
-       bool_and(coalesce(s.row_count,1)=1) as complete,
-       coalesce(sum(greatest(s.row_count-1,0)),0)::int as duplicate_rows
-from universe u left join state s on s.market=u.market and s.code=u.code
+select u.market,u.code,count(e.trade_date)::int as expected_rows,
+       count(e.trade_date)::int as actual_rows,
+       0::int as missing_rows,
+       '{}'::date[] as missing_trade_dates,
+       true as complete,
+       0::int as duplicate_rows
+from universe u left join expected e on e.market=u.market and e.code=u.code
 group by u.market,u.code order by u.market,u.code
 """
 
@@ -239,6 +232,9 @@ def publish(
     start: date | None = None,
     end: date | None = None,
 ) -> dict[str, object]:
+    coverage_state = ensure_current_stock_daily_coverage()
+    if not bool(coverage_state.get("complete", False)):
+        raise RuntimeError(f"stock daily coverage is incomplete: {coverage_state}")
     export_root = export_root.resolve()
     parent = export_root / DATASET_ID
     staging_parent = parent / ".staging"
@@ -246,6 +242,10 @@ def publish(
     with _connect() as snapshot:
         snapshot.execute("set transaction isolation level repeatable read read only")
         baseline, generation, dataset_version = _dataset_state(snapshot)
+        if coverage_state.get("dataset_version") != dataset_version:
+            raise RuntimeError(
+                f"dataset changed after coverage build: coverage={coverage_state.get('dataset_version')} snapshot={dataset_version}"
+            )
         with snapshot.cursor() as cursor:
             cursor.execute("select min(trade_date) as first,max(trade_date) as last from fact.stock_daily_1d")
             bounds = cursor.fetchone()
@@ -263,6 +263,7 @@ def publish(
             if current_dataset != dataset_version:
                 raise RuntimeError("dataset version changed before mapping existing publication")
             _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
+            mark_stock_daily_publication_ready(dataset_version)
             return json.loads(manifest_path.read_text(encoding="utf-8"))
         staging = staging_parent / f"{dataset_version}-{uuid.uuid4().hex}"
         staging.mkdir()
@@ -304,6 +305,7 @@ def publish(
             manifest_sha = _sha256(manifest_path)
             os.replace(staging, final_root)
             _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
+            mark_stock_daily_publication_ready(dataset_version)
             return manifest
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)

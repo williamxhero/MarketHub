@@ -249,6 +249,7 @@ def main() -> None:
     _ensure_base_schema(database_config)
     _ensure_daily_snapshot_index(database_config)
     _ensure_quotemux_schema()
+    _ensure_dataset_version_vector(database_config)
     print("数据库初始化完成")
 
 
@@ -487,6 +488,12 @@ def _ensure_quotemux_schema() -> None:
     runtime.capture.list_policies()
     ensure_future_schema()
     QuoteMuxTimeoutAdmin().sync_defaults()
+
+
+def _ensure_dataset_version_vector(database_config: dict[str, str]) -> None:
+    migration_sql = (SCRIPT_ROOT / "dataset-version-vector.sql").read_text(encoding="utf-8")
+    with _connect(database_config) as connection:
+        connection.execute(migration_sql)
 
 
 if __name__ == "__main__":

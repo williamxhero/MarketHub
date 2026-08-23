@@ -17,13 +17,20 @@ from services import daily_window
 
 
 @pytest.fixture(autouse=True)
-def _reset_coverage_cache() -> None:
+def _reset_coverage_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     daily_window.clear_coverage_cache()
+    daily_window.clear_response_cache()
+    monkeypatch.setattr(
+        daily_window,
+        "require_dataset_version",
+        lambda _dataset_id, requested_dataset_version="", requested_market_version="": requested_dataset_version or "mhd-v1-current",
+    )
 
 
 def _payload(**updates: object) -> StockDailyWindowQueryPayload:
     values: dict[str, object] = {
         "data_version": "mhf-v1-test",
+        "dataset_version": "mhd-v1-daily-test",
         "freq": "1d",
         "universe": "codes",
         "codes": ["600000", "000001"],
@@ -107,8 +114,7 @@ def _page_row(code: str, trade_time: str, *, has_more: bool) -> pd.DataFrame:
 
 def test_payload_enforces_daily_universe_and_dates() -> None:
     assert _payload(codes=["600000", "600000"]).codes == ["600000"]
-    with pytest.raises(ValidationError):
-        _payload(data_version="")
+    assert _payload(data_version="", dataset_version="").data_version == ""
     with pytest.raises(ValidationError):
         _payload(freq="1m")
     with pytest.raises(ValidationError):
@@ -124,11 +130,9 @@ def test_payload_enforces_daily_universe_and_dates() -> None:
 
 
 def test_build_response_uses_keyset_cursor_and_gzip_without_changing_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(daily_window, "require_market_data_version", lambda value: value)
+    monkeypatch.setattr(daily_window, "_load_coverage_uncached", lambda _payload: (_coverage_row().iloc[0].to_dict(), json.loads(_coverage_row().iloc[0]["coverage_json"])))
 
     def query(query_text: str, params: tuple[object, ...]) -> pd.DataFrame:
-        if "expected_state as materialized" in query_text:
-            return _coverage_row()
         cursor_trade_time = params[7]
         if cursor_trade_time is None:
             return _page_row("000001", "2021-01-04", has_more=True)
@@ -170,16 +174,14 @@ def test_cursor_is_bound_to_query_fingerprint() -> None:
 
 
 def test_missing_coverage_fails_before_page_query(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(daily_window, "require_market_data_version", lambda value: value)
     calls: list[str] = []
 
-    def query(query_text: str, _: tuple[object, ...]) -> pd.DataFrame:
-        calls.append(query_text)
-        if "expected_state as materialized" in query_text:
-            return _coverage_row(missing_rows=1)
-        raise AssertionError("page query must not run after incomplete coverage")
+    def incomplete(_payload: StockDailyWindowQueryPayload):
+        calls.append("coverage")
+        raise HTTPException(status_code=409, detail={"code": "DATA_INCOMPLETE"})
 
-    monkeypatch.setattr(daily_window, "query_dataframe", query)
+    monkeypatch.setattr(daily_window, "_load_coverage_uncached", incomplete)
+    monkeypatch.setattr(daily_window, "query_dataframe", lambda *_: (_ for _ in ()).throw(AssertionError("page query must not run")))
     with pytest.raises(HTTPException) as error:
         daily_window.build_response(_payload(), False)
     assert error.value.status_code == 409
@@ -187,12 +189,10 @@ def test_missing_coverage_fails_before_page_query(monkeypatch: pytest.MonkeyPatc
 
 
 def test_unknown_code_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(daily_window, "require_market_data_version", lambda value: value)
-    monkeypatch.setattr(
-        daily_window,
-        "query_dataframe",
-        lambda *_: _coverage_row(unknown_codes=["999999"]),
-    )
+    def unknown(_payload: StockDailyWindowQueryPayload):
+        raise HTTPException(status_code=409, detail={"code": "DATA_INCOMPLETE", "details": {"unknown_codes": ["999999"]}})
+
+    monkeypatch.setattr(daily_window, "_load_coverage_uncached", unknown)
     with pytest.raises(HTTPException) as error:
         daily_window.build_response(_payload(), False)
     assert error.value.status_code == 409
@@ -200,38 +200,41 @@ def test_unknown_code_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_duplicate_daily_key_fails_before_page_query(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(daily_window, "require_market_data_version", lambda value: value)
-    monkeypatch.setattr(daily_window, "query_dataframe", lambda *_: _coverage_row(duplicate_rows=1))
+    def duplicate(_payload: StockDailyWindowQueryPayload):
+        raise HTTPException(status_code=409, detail={"code": "DATA_INCOMPLETE", "details": {"duplicate_rows": 1}})
+
+    monkeypatch.setattr(daily_window, "_load_coverage_uncached", duplicate)
     with pytest.raises(HTTPException) as error:
         daily_window.build_response(_payload(), False)
     assert error.value.status_code == 409
     assert error.value.detail["details"]["duplicate_rows"] == 1
 
 
-def test_data_version_drift_after_page_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dataset_version_drift_after_page_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     version_checks = 0
 
-    def require(value: str) -> str:
+    def require(_dataset_id: str, requested_dataset_version: str = "", requested_market_version: str = "") -> str:
         nonlocal version_checks
         version_checks += 1
-        if version_checks == 3:
-            raise HTTPException(status_code=409, detail={"code": "MARKET_DATA_VERSION_MISMATCH"})
-        return value
+        if version_checks == 2:
+            raise HTTPException(status_code=409, detail={"code": "DATASET_VERSION_STALE"})
+        return requested_dataset_version
 
-    monkeypatch.setattr(daily_window, "require_market_data_version", require)
+    monkeypatch.setattr(daily_window, "require_dataset_version", require)
+    monkeypatch.setattr(daily_window, "_load_coverage_uncached", lambda _payload: (_coverage_row().iloc[0].to_dict(), []))
     monkeypatch.setattr(
         daily_window,
         "query_dataframe",
-        lambda query_text, _: _coverage_row() if "expected_state as materialized" in query_text else _page_row("000001", "2021-01-04", has_more=False),
+        lambda *_: _page_row("000001", "2021-01-04", has_more=False),
     )
     with pytest.raises(HTTPException) as error:
         daily_window.build_response(_payload(), False)
     assert error.value.status_code == 409
-    assert version_checks == 3
+    assert version_checks == 2
 
 
 def test_v2_sql_is_read_only_and_deterministically_sorted() -> None:
-    combined = f"{daily_window._COVERAGE_QUERY}\n{daily_window._PAGE_QUERY}".lower()
+    combined = f"{daily_window._REFERENCE_COVERAGE_ROWS_QUERY}\n{daily_window._PAGE_QUERY}".lower()
     for forbidden in ("insert into", "update ", "delete from", "capture", "provider"):
         assert forbidden not in combined
     assert "order by daily_rows.trade_date, daily_rows.code" in daily_window._PAGE_QUERY
@@ -291,19 +294,35 @@ def test_v2_route_is_discoverable_and_returns_items_meta(monkeypatch: pytest.Mon
     assert "application/vnd.apache.arrow.stream" in operation["responses"]["200"]["content"]
 
 
+def test_daily_window_honors_if_none_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        daily_window,
+        "build_response",
+        lambda *_: daily_window.EncodedDailyWindowResponse(
+            content=b'\x7b"items":[],"meta":{}\x7d',
+            headers={"ETag": '"content-sha"', "Cache-Control": "private,max-age=0,must-revalidate"},
+        ),
+    )
+    response = TestClient(app).post(
+        "/api/stocks/quotes/daily-window/query",
+        json={
+            "dataset_version": "mhd-v1-test",
+            "universe": "codes",
+            "codes": ["600000"],
+            "start_date": "2021-01-01",
+            "end_date": "2021-01-31",
+        },
+        headers={"If-None-Match": '"content-sha"'},
+    )
+    assert response.status_code == 304
+    assert response.headers["ETag"] == '"content-sha"'
+
+
 def test_arrow_response_streams_fixed_schema_and_equivalent_meta(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(daily_window, "require_market_data_version", lambda value: value)
-    monkeypatch.setattr(daily_window, "query_dataframe", lambda *_: _coverage_row())
+    monkeypatch.setattr(daily_window, "_load_coverage_uncached", lambda _payload: (_coverage_row().iloc[0].to_dict(), json.loads(_coverage_row().iloc[0]["coverage_json"])))
 
     def stream(query: str, params: tuple[object, ...], *, batch_size: int):
-        if "duplicate_rows" in query:
-            rows = [
-                {"code": "000001", "expected_rows": 1, "actual_rows": 1, "missing_rows": 0, "missing_trade_dates": [], "complete": True, "duplicate_rows": 0},
-                {"code": "600000", "expected_rows": 1, "actual_rows": 1, "missing_rows": 0, "missing_trade_dates": [], "complete": True, "duplicate_rows": 0},
-            ]
-        elif "left join catalog" in query:
-            rows = []
-        elif "count(delivered.code)" in query:
+        if "count(delivered.code)" in query:
             rows = [{"returned_rows": 1, "has_more": True, "last_trade_time": date(2021, 1, 4), "last_code": "000001"}]
         else:
             assert batch_size == daily_window.ARROW_RECORD_BATCH_ROWS
@@ -328,18 +347,13 @@ def test_arrow_response_streams_fixed_schema_and_equivalent_meta(monkeypatch: py
 
 
 def test_arrow_body_close_closes_database_stream(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(daily_window, "require_market_data_version", lambda value: value)
-    monkeypatch.setattr(daily_window, "query_dataframe", lambda *_: _coverage_row())
+    monkeypatch.setattr(daily_window, "_load_coverage_uncached", lambda _payload: (_coverage_row().iloc[0].to_dict(), json.loads(_coverage_row().iloc[0]["coverage_json"])))
     page_stream_closed = False
 
     def stream(query: str, params: tuple[object, ...], *, batch_size: int):
         nonlocal page_stream_closed
         try:
-            if "duplicate_rows" in query:
-                yield [{"code": "600000", "expected_rows": 2, "actual_rows": 2, "missing_rows": 0, "missing_trade_dates": [], "complete": True, "duplicate_rows": 0}]
-            elif "left join catalog" in query:
-                return
-            elif "count(delivered.code)" in query:
+            if "count(delivered.code)" in query:
                 yield [{"returned_rows": 2, "has_more": False, "last_trade_time": date(2021, 1, 5), "last_code": "600000"}]
             else:
                 yield [{"code": "600000", "trade_date": date(2021, 1, 4), "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "pre_close": 1.0, "change": 0.5, "pct_chg": 50.0, "volume": 100.0, "amount": 150.0, "is_st": False}]
@@ -357,7 +371,7 @@ def test_arrow_body_close_closes_database_stream(monkeypatch: pytest.MonkeyPatch
 
 def test_arrow_sql_has_no_json_aggregation_or_pandas_materialization() -> None:
     combined = "\n".join(
-        (daily_window._COVERAGE_ROWS_QUERY, daily_window._UNKNOWN_CODES_QUERY, daily_window._PAGE_META_QUERY, daily_window._PAGE_ROWS_QUERY)
+        (daily_window._REFERENCE_COVERAGE_ROWS_QUERY, daily_window._UNKNOWN_CODES_QUERY, daily_window._PAGE_META_QUERY, daily_window._PAGE_ROWS_QUERY)
     ).lower()
     assert "json_agg" not in combined
     assert "order by trade_date,code" in daily_window._PAGE_ROWS_QUERY
@@ -382,7 +396,7 @@ def test_daily_window_rejects_unknown_accept_before_query() -> None:
     assert response.json()["code"] == "DAILY_WINDOW_MEDIA_TYPE_NOT_ACCEPTABLE"
 
 
-def test_coverage_cache_is_keyed_by_immutable_data_version_and_window(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_coverage_cache_is_keyed_by_immutable_dataset_version_and_window(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
 
     def load(payload: StockDailyWindowQueryPayload):
@@ -392,9 +406,9 @@ def test_coverage_cache_is_keyed_by_immutable_data_version_and_window(monkeypatc
 
     monkeypatch.setattr(daily_window, "_load_coverage_uncached", load)
     daily_window.clear_coverage_cache()
-    first = _payload(data_version="mhf-v1-a", codes=["600000"], start_date="2021-01-01", end_date="2021-01-31")
+    first = _payload(dataset_version="mhd-v1-a", codes=["600000"], start_date="2021-01-01", end_date="2021-01-31")
     equivalent = first.model_copy(update={"page_size": 99, "cursor": None})
-    next_version = first.model_copy(update={"data_version": "mhf-v1-b"})
+    next_version = first.model_copy(update={"dataset_version": "mhd-v1-b"})
 
     assert daily_window._cached_coverage(first) == daily_window._cached_coverage(equivalent)
     assert calls == 1
@@ -410,5 +424,5 @@ def test_coverage_cache_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     daily_window.clear_coverage_cache()
     for index in range(daily_window.COVERAGE_CACHE_MAX_ENTRIES + 3):
-        daily_window._cached_coverage(_payload(data_version=f"mhf-v1-{index}"))
+        daily_window._cached_coverage(_payload(dataset_version=f"mhd-v1-{index}"))
     assert len(daily_window._COVERAGE_CACHE) == daily_window.COVERAGE_CACHE_MAX_ENTRIES

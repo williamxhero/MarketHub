@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -207,12 +207,18 @@ def has_enough_stock_quote_rows(items: list[StockQuoteItem], codes: list[str], c
     return all(value >= count for value in counter.values())
 
 
-def filter_response_fields[T: BaseModel](items: Sequence[T], fields: str, allowed_fields: set[str]) -> list[dict[str, object]]:
+def filter_response_fields(items: Sequence[BaseModel | Mapping[str, object]], fields: str, allowed_fields: set[str]) -> list[dict[str, object]]:
     selected = split_csv(fields)
     if not selected:
-        return [item.model_dump() for item in items]
+        return [dict(item) if isinstance(item, Mapping) else item.model_dump() for item in items]
     invalid_fields = [field for field in selected if field not in allowed_fields]
     if invalid_fields:
         raise HTTPException(status_code=400, detail=f"fields 含有不支持的字段: {', '.join(invalid_fields)}")
-    return [{field: format_api_dump_value(field, getattr(item, field)) for field in selected} for item in items]
+    return [
+        {
+            field: format_api_dump_value(field, item.get(field) if isinstance(item, Mapping) else getattr(item, field))
+            for field in selected
+        }
+        for item in items
+    ]
 
