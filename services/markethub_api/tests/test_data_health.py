@@ -499,4 +499,3 @@ def _empty_frame():
     import pandas as pd
 
     return pd.DataFrame()
-
