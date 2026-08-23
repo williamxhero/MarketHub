@@ -24,8 +24,8 @@ with catalog as materialized (
            delisted_date
     from catalog
     where (case when market='BJSE' then greatest(listed_date,date '2021-11-15') else listed_date end) <= %(end)s::date
-      and (delisted_date is null or delisted_date >= %(start)s::date)
-      and (case when market='BJSE' then greatest(listed_date,date '2021-11-15') else listed_date end) <= coalesce(delisted_date,date 'infinity')
+      and (delisted_date is null or delisted_date > %(start)s::date)
+      and (case when market='BJSE' then greatest(listed_date,date '2021-11-15') else listed_date end) < coalesce(delisted_date,date 'infinity')
       and ((market='SHSE' and left(code,1)='6')
         or (market='SZSE' and left(code,1) in ('0','3'))
         or (market='BJSE' and left(code,1) in ('4','8','9')))
@@ -38,7 +38,7 @@ with catalog as materialized (
     select u.market,u.code,u.listed_date,u.delisted_date,d.trade_date
     from universe u cross join open_dates d
     where (u.listed_date is null or u.listed_date<=d.trade_date)
-      and (u.delisted_date is null or d.trade_date<=u.delisted_date)
+      and (u.delisted_date is null or d.trade_date<u.delisted_date)
       and not exists (
         select 1 from fact.stock_suspension_history s
         where s.market=u.market and s.code=u.code and s.status='suspended'
