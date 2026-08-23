@@ -375,7 +375,21 @@ def _ensure_extension(database_config: dict[str, str]) -> None:
         with _connect(database_config) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("create extension if not exists timescaledb")
-                cursor.execute("alter extension timescaledb update")
+        with _connect(database_config) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "select e.extversion, a.default_version "
+                    "from pg_extension e join pg_available_extensions a on a.name = e.extname "
+                    "where e.extname = 'timescaledb'"
+                )
+                versions = cursor.fetchone()
+        if versions is not None and versions[0] != versions[1]:
+            # TimescaleDB rejects ALTER EXTENSION when its old library was already
+            # loaded in the session. Keep the upgrade as the first statement of a
+            # fresh connection, as required by the extension itself.
+            with _connect(database_config) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("alter extension timescaledb update")
     except psycopg.Error as exc:
         if _ensure_extension_with_local_postgres_user(database_config):
             return
@@ -389,9 +403,10 @@ def _ensure_extension_with_local_postgres_user(database_config: dict[str, str]) 
     sudo = shutil.which("sudo")
     if os.name == "nt" or psql is None or sudo is None:
         return False
-    return _run_as_postgres(
+    if _run_as_postgres(
         psql,
         (
+            "-X",
             "-p",
             database_config["port"],
             "-v",
@@ -399,7 +414,22 @@ def _ensure_extension_with_local_postgres_user(database_config: dict[str, str]) 
             "-d",
             database_config["dbname"],
             "-c",
-            "create extension if not exists timescaledb; alter extension timescaledb update",
+            "create extension if not exists timescaledb",
+        ),
+    ) != 0:
+        return False
+    return _run_as_postgres(
+        psql,
+        (
+            "-X",
+            "-p",
+            database_config["port"],
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-d",
+            database_config["dbname"],
+            "-c",
+            "alter extension timescaledb update",
         ),
     ) == 0
 

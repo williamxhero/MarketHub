@@ -35,3 +35,44 @@ def test_local_database_repair_cannot_touch_a_remote_postgres(monkeypatch) -> No
     assert MODULE._create_database_with_local_postgres_user(
         {"host": "db.example.invalid", "port": "5432", "dbname": "markethub", "user": "markethub", "password": "secret"}
     ) is False
+
+
+def test_timescaledb_update_runs_as_first_statement_of_a_fresh_connection(monkeypatch) -> None:
+    statements: list[list[str]] = []
+
+    class Cursor:
+        def __init__(self, connection_statements: list[str]) -> None:
+            self._statements = connection_statements
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def execute(self, statement: str) -> None:
+            self._statements.append(statement)
+
+        def fetchone(self):
+            return ("2.27.2", "2.29.2")
+
+    class Connection:
+        def __init__(self) -> None:
+            self._statements: list[str] = []
+            statements.append(self._statements)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def cursor(self) -> Cursor:
+            return Cursor(self._statements)
+
+    monkeypatch.setattr(MODULE, "_connect", lambda _config: Connection())
+
+    MODULE._ensure_extension({"host": "127.0.0.1", "port": "5432", "dbname": "markethub", "user": "markethub", "password": "secret"})
+
+    assert len(statements) == 3
+    assert statements[2] == ["alter extension timescaledb update"]
