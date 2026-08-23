@@ -110,6 +110,7 @@ def test_remote_migration_discovers_environment_before_deploying() -> None:
     governance = (SCRIPT.parents[2] / "scripts" / "maintenance" / "storage-governance.sh").read_text(encoding="utf-8")
     assert 'systemctl show "$SERVICE_NAME.service"' in governance
     assert 'for venv in "$package_venv_root"/*' in governance
+    assert '[[ -L "$venv" && ! -e "$venv" ]]' in governance
     assert "不是 package_venvs 的直接子目录" in governance
 
 

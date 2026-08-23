@@ -81,6 +81,10 @@ current_venv="$(readlink -f "$current_venv")"
 }
 
 for venv in "$package_venv_root"/*; do
+    if [[ -L "$venv" && ! -e "$venv" ]]; then
+        remove_path "$venv"
+        continue
+    fi
     [[ -d "$venv" ]] || continue
     [[ "$(readlink -f "$venv")" == "$current_venv" ]] || remove_path "$venv"
 done
