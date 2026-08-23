@@ -588,76 +588,66 @@ def _recent_minute_session_check(
         return CheckSpec(check_id, title, "unknown", "未执行", f"缺少依赖表 {object_name}")
     if expected_minutes <= 0 or lookback_days <= 0:
         return CheckSpec(check_id, title, "unknown", "未执行", "分钟完整性检查配置非法")
-    frame = query_dataframe(
-        f"""
+    expected_frame = query_dataframe(
+        """
         with clock as (
             select
                 (now() at time zone 'Asia/Shanghai')::date as today,
                 (now() at time zone 'Asia/Shanghai')::time as now_time
-        ),
-        expected_days as (
-            select ref.trade_calendar.trade_date
-            from ref.trade_calendar
-            cross join clock
-            where ref.trade_calendar.is_open
-              and ref.trade_calendar.trade_date >= clock.today - %s::int
-              and (
-                  ref.trade_calendar.trade_date < clock.today
-                  or (ref.trade_calendar.trade_date = clock.today and clock.now_time >= time '15:10')
-              )
-        ),
-        expected_minutes as (
-            select expected_days.trade_date, expected_days.trade_date + minute_series.minute_time as bar_time
-            from expected_days
-            cross join (
-                select time '09:31' + minute_offset * interval '1 minute' as minute_time
-                from generate_series(0, 119) as minute_offset
-                union all
-                select time '13:01' + minute_offset * interval '1 minute' as minute_time
-                from generate_series(0, 119) as minute_offset
-            ) minute_series
-        ),
-        minute_counts as (
-            select
-                expected_minutes.trade_date as trade_date,
-                expected_minutes.bar_time::time as minute_time,
-                count(bars.*)::int as row_count
-            from expected_minutes
-            left join {object_name} bars
-              on bars.{OBJECT_TIME_COLUMNS[object_name]} = expected_minutes.bar_time
-            group by 1, 2
-        ),
-        day_stats as (
-            select
-                trade_date,
-                count(*) filter (where row_count > 0)::int as minute_count,
-                sum(row_count)::bigint as total_rows,
-                min(minute_time) filter (where row_count > 0)::text as first_minute,
-                max(minute_time) filter (where row_count > 0)::text as last_minute,
-                min(row_count) filter (where row_count > 0)::int as min_rows_per_minute,
-                max(row_count)::int as max_rows_per_minute
-            from minute_counts
-            group by trade_date
         )
-        select
-            expected_days.trade_date::text as trade_date,
-            coalesce(day_stats.minute_count, 0)::int as minute_count,
-            coalesce(day_stats.total_rows, 0)::bigint as total_rows,
-            coalesce(day_stats.first_minute, '') as first_minute,
-            coalesce(day_stats.last_minute, '') as last_minute,
-            coalesce(day_stats.min_rows_per_minute, 0)::int as min_rows_per_minute,
-            coalesce(day_stats.max_rows_per_minute, 0)::int as max_rows_per_minute
-        from expected_days
-        left join day_stats on day_stats.trade_date = expected_days.trade_date
-        order by expected_days.trade_date desc
+        select ref.trade_calendar.trade_date::text as trade_date
+        from ref.trade_calendar
+        cross join clock
+        where ref.trade_calendar.is_open
+          and ref.trade_calendar.trade_date >= clock.today - %s::int
+          and (
+              ref.trade_calendar.trade_date < clock.today
+              or (ref.trade_calendar.trade_date = clock.today and clock.now_time >= time '15:10')
+          )
+        order by ref.trade_calendar.trade_date desc
         """,
         (lookback_days,),
     )
-    if frame.empty:
+    if expected_frame.empty:
         return CheckSpec(check_id, title, "unknown", "未执行", "最近窗口没有已完成交易日")
+    expected_days = [str(value) for value in expected_frame["trade_date"].tolist()]
+    first_day = min(expected_days)
+    last_day = max(expected_days)
+    frame = query_dataframe(
+        f"""
+        with minute_counts as (
+            select
+                bars.{OBJECT_TIME_COLUMNS[object_name]}::date as trade_date,
+                bars.{OBJECT_TIME_COLUMNS[object_name]}::time as minute_time,
+                count(*)::int as row_count
+            from {object_name} bars
+            where bars.{OBJECT_TIME_COLUMNS[object_name]} >= %s::timestamp
+              and bars.{OBJECT_TIME_COLUMNS[object_name]} <= %s::timestamp
+              and bars.{OBJECT_TIME_COLUMNS[object_name]}::date = any(%s::date[])
+              and (
+                  bars.{OBJECT_TIME_COLUMNS[object_name]}::time between time '09:31' and time '11:30'
+                  or bars.{OBJECT_TIME_COLUMNS[object_name]}::time between time '13:01' and time '15:00'
+              )
+            group by 1, 2
+        )
+        select
+            trade_date::text as trade_date,
+            count(*)::int as minute_count,
+            sum(row_count)::bigint as total_rows,
+            min(minute_time)::text as first_minute,
+            max(minute_time)::text as last_minute,
+            min(row_count)::int as min_rows_per_minute,
+            max(row_count)::int as max_rows_per_minute
+        from minute_counts
+        group by trade_date
+        order by trade_date desc
+        """,
+        (f"{first_day} 09:31:00", f"{last_day} 15:00:00", expected_days),
+    )
+    rows_by_day = {str(row["trade_date"]): row for row in frame.to_dict("records")}
     issues: list[str] = []
-    for _, row in frame.iterrows():
-        trade_date = str(row.get("trade_date", ""))
+    for trade_date in expected_days:
+        row = rows_by_day.get(trade_date, {})
         minute_count = int(row.get("minute_count", 0) or 0)
         min_rows = int(row.get("min_rows_per_minute", 0) or 0)
         max_rows = int(row.get("max_rows_per_minute", 0) or 0)
@@ -677,7 +667,7 @@ def _recent_minute_session_check(
             issues.append(f"{trade_date} " + "，".join(day_issues))
     if issues != []:
         return CheckSpec(check_id, title, "warning", "警告", "；".join(issues[:8]))
-    return CheckSpec(check_id, title, "healthy", f"最近 {len(frame.index)} 个已完成交易日完整")
+    return CheckSpec(check_id, title, "healthy", f"最近 {len(expected_days)} 个已完成交易日完整")
 
 
 def _calendar_continuity_check(calendar: dict[str, object], db_available: bool) -> CheckSpec:
