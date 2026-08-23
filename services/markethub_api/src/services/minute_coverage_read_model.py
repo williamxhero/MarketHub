@@ -28,6 +28,43 @@ def _next_month(value: date) -> date:
     return date(value.year + (value.month == 12), 1 if value.month == 12 else value.month + 1, 1)
 
 
+def finalize_stock_1m_daily_coverage_state() -> dict[str, object]:
+    """Publish the already-maintained coverage summary for the current generation."""
+    with _connect() as connection:
+        state = connection.execute(
+            "select baseline_id,generation from audit.dataset_version_state where dataset_id=%s",
+            (DATASET_ID,),
+        ).fetchone()
+        if state is None:
+            raise RuntimeError("stock_bar_1m dataset state unavailable")
+        generation = int(state["generation"])
+        dataset_version = dataset_version_from_state(DATASET_ID, str(state["baseline_id"]), generation)
+        totals = connection.execute(
+            "select count(*)::bigint groups,coalesce(sum(row_count),0)::bigint rows,"
+            "min(trade_date) first,max(trade_date) last from readmodel.stock_bar_1m_daily_coverage"
+        ).fetchone()
+        summary = dict(totals or {})
+        digest = hashlib.sha256(json.dumps(summary, sort_keys=True, default=str).encode()).hexdigest()
+        connection.execute(
+            "insert into readmodel.dataset_build_state(dataset_id,dataset_version,status,source_generation,coverage_ready,complete,row_count,checksum_sha256,built_at_utc,updated_at_utc) "
+            "values(%s,%s,'ready',%s,true,true,%s,%s,clock_timestamp(),clock_timestamp()) on conflict(dataset_id,dataset_version) do update set "
+            "status='ready',source_generation=excluded.source_generation,coverage_ready=true,complete=true,row_count=excluded.row_count,"
+            "checksum_sha256=excluded.checksum_sha256,built_at_utc=clock_timestamp(),error_message='',updated_at_utc=clock_timestamp()",
+            (DATASET_ID, dataset_version, generation, int(summary.get("groups", 0)), digest),
+        )
+    return {
+        "dataset_id": DATASET_ID,
+        "dataset_version": dataset_version,
+        "generation": generation,
+        "groups": int(summary.get("groups", 0)),
+        "rows": int(summary.get("rows", 0)),
+        "first": str(summary.get("first") or ""),
+        "last": str(summary.get("last") or ""),
+        "checksum_sha256": digest,
+        "complete": True,
+    }
+
+
 def build_stock_1m_daily_coverage(start: date | None = None, end: date | None = None) -> dict[str, object]:
     with _connect() as connection:
         state = connection.execute("select baseline_id,generation from audit.dataset_version_state where dataset_id=%s", (DATASET_ID,)).fetchone()
@@ -65,20 +102,8 @@ def build_stock_1m_daily_coverage(start: date | None = None, end: date | None = 
                 ).rowcount
             month_results.append({"start": chunk_start.isoformat(), "end_exclusive": chunk_end.isoformat(), "groups": inserted})
             current = next_month
-        with _connect() as connection:
-            totals = connection.execute(
-                "select count(*)::bigint groups,coalesce(sum(row_count),0)::bigint rows,min(trade_date) first,max(trade_date) last "
-                "from readmodel.stock_bar_1m_daily_coverage where trade_date between %s and %s", (first, last),
-            ).fetchone()
-            digest = hashlib.sha256(json.dumps(dict(totals or {}), sort_keys=True, default=str).encode()).hexdigest()
-            connection.execute(
-                "insert into readmodel.dataset_build_state(dataset_id,dataset_version,status,source_generation,coverage_ready,complete,row_count,checksum_sha256,built_at_utc,updated_at_utc) "
-                "values(%s,%s,'ready',%s,true,true,%s,%s,clock_timestamp(),clock_timestamp()) on conflict(dataset_id,dataset_version) do update set "
-                "status='ready',source_generation=excluded.source_generation,coverage_ready=true,complete=true,row_count=excluded.row_count,"
-                "checksum_sha256=excluded.checksum_sha256,built_at_utc=clock_timestamp(),error_message='',updated_at_utc=clock_timestamp()",
-                (DATASET_ID, dataset_version, generation, int((totals or {}).get("groups", 0)), digest),
-            )
-        return {"dataset_id": DATASET_ID, "dataset_version": dataset_version, "generation": generation, "start": first.isoformat(), "end": last.isoformat(), "months": month_results, "groups": int((totals or {}).get("groups", 0)), "rows": int((totals or {}).get("rows", 0)), "checksum_sha256": digest, "complete": True}
+        finalized = finalize_stock_1m_daily_coverage_state()
+        return {**finalized, "start": first.isoformat(), "end": last.isoformat(), "months": month_results}
     except BaseException as exc:
         with _connect() as connection:
             connection.execute(

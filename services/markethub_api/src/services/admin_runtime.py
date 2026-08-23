@@ -32,6 +32,7 @@ from quotemux.store.admin import CachePolicyUpdate, CapturePolicyPayload, QuoteM
 from quotemux.store.default_update_policy import cache_enabled_from_ttl_days as default_cache_enabled_from_ttl_days, get_capability_update_policy_default, ttl_seconds_from_days as default_ttl_seconds_from_days
 from quotemux.store.postgres import CACHE_NEVER_EXPIRE_TTL_SECONDS, _coverage_mode_for_capability, _key_fields_for_capability, _request_scope_fields_for_capability, _time_field_for_capability
 from quotemux.store.timeout_admin import QuoteMuxTimeoutAdmin
+from services.minute_coverage_read_model import finalize_stock_1m_daily_coverage_state
 from services.runtime_memory import run_with_memory_log
 
 
@@ -1213,7 +1214,9 @@ def retry_intraday_capture_gaps(window_count: int = 30) -> dict[str, object]:
 def run_capture(capability_id: str) -> dict[str, object]:
     capture_admin = _capture_admin()
     root_capability_id = get_capability_config_root(capability_id)
-    return run_with_memory_log("capture.run_one", {"capability_id": root_capability_id}, lambda: capture_admin.run_capture(root_capability_id))
+    result = run_with_memory_log("capture.run_one", {"capability_id": root_capability_id}, lambda: capture_admin.run_capture(root_capability_id))
+    _finalize_capture_read_models((result,))
+    return result
 
 
 _REPAIR_DATASET_CAPABILITIES = {
@@ -1233,6 +1236,7 @@ def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, obje
         {"dataset_id": dataset_id, "dataset_version": dataset_version},
         lambda: _capture_admin().run_repair(capability_id, scope, dataset_version),
     )
+    _finalize_capture_read_models((result,))
     return {**result, "repair_task_id": int(result["id"]), "dataset_id": dataset_id, "dataset_version": dataset_version}
 
 
@@ -1252,7 +1256,19 @@ def get_data_repair(repair_task_id: int) -> dict[str, object]:
 
 def run_due_captures() -> list[dict[str, object]]:
     capture_admin = _capture_admin()
-    return list(run_with_memory_log("capture.run_due", {"source": "admin_runtime"}, capture_admin.run_due_captures))
+    results = list(run_with_memory_log("capture.run_due", {"source": "admin_runtime"}, capture_admin.run_due_captures))
+    _finalize_capture_read_models(results)
+    return results
+
+
+def _finalize_capture_read_models(results: tuple[dict[str, object], ...] | list[dict[str, object]]) -> None:
+    for result in results:
+        if str(result.get("status", "")) != "success":
+            continue
+        capability_id = get_capability_config_root(str(result.get("capability_id", "")))
+        if capability_id == "stocks.quotes.intraday":
+            finalize_stock_1m_daily_coverage_state()
+            return
 
 
 def _time_from_text(value: str):
