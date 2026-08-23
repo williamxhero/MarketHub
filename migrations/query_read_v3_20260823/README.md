@@ -22,7 +22,7 @@ pwsh -File MarketHub/migrations/query_read_v3_20260823/deploy_and_migrate_remote
 5. 执行 `verify`，检查 build state、版本向量、分钟汇总抽样和 API health。
 6. 只有全部通过才 restore freeze。
 
-迁移失败时不要手工补 SQL 或绕过脚本。保留 evidence，先在本目录修复脚本并补测试、commit/push，再用同一入口重跑。回填按月提交，已完成月份可安全覆盖重建。
+迁移失败时不要手工补 SQL 或绕过脚本。保留 evidence，先在本目录修复脚本并补测试、commit/push，再用同一入口加 `-ResumeFreezeOwner <失败输出中的 lease>` 重跑。入口会精确校验目标机当前 lease，禁止自动接管其他任务的 freeze。回填按月提交，已完成月份可安全覆盖重建。
 
 ## 单机已部署后的直接入口
 

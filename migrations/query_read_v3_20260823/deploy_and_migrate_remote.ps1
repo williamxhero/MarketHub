@@ -5,6 +5,7 @@ param(
     [string]$RemoteEnvPath = "",
     [string]$ServiceName = "",
     [string]$HealthUrl = "",
+    [string]$ResumeFreezeOwner = "",
     [switch]$PreflightOnly
 )
 
@@ -33,10 +34,17 @@ $deployment = $discovery.deployment
 foreach ($name in @("app_root", "runtime_root", "env_path", "service_name", "health_url", "service_user")) {
     if ([string]::IsNullOrWhiteSpace([string]$deployment.$name)) { throw "发现结果缺少 $name" }
 }
-$freezeOwner = "query-read-v3-$stamp"
+$freezeOwner = if ($ResumeFreezeOwner) { $ResumeFreezeOwner } else { "query-read-v3-$stamp" }
 $freezeTool = "$($deployment.runtime_root)/scripts/manage-formal-export-freeze.sh"
-& ssh $HostName "test -x '$freezeTool' && '$freezeTool' freeze '$freezeOwner'"
-if ($LASTEXITCODE -ne 0) { throw "无法通过正式工具获取更新 freeze" }
+if ($ResumeFreezeOwner) {
+    $freezeStatus = & ssh $HostName "test -x '$freezeTool' && '$freezeTool' status"
+    if ($LASTEXITCODE -ne 0 -or $freezeStatus -notmatch "(?m)^lease=$([regex]::Escape($freezeOwner))$") {
+        throw "目标机现有 freeze 与 -ResumeFreezeOwner 不匹配，拒绝接管"
+    }
+} else {
+    & ssh $HostName "test -x '$freezeTool' && '$freezeTool' freeze '$freezeOwner'"
+    if ($LASTEXITCODE -ne 0) { throw "无法通过正式工具获取更新 freeze" }
+}
 $migrationSucceeded = $false
 try {
     & (Join-Path $marketHubRoot "scripts\local\deploy_yosef_server.ps1") `

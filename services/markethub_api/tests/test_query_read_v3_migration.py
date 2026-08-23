@@ -20,6 +20,8 @@ def test_query_read_v3_migration_is_versioned_generic_and_reuses_formal_tools() 
     assert "manage-formal-export-freeze.sh" in deploy
     assert "freeze '$freezeOwner'" in deploy
     assert "acquire '$freezeOwner'" not in deploy
+    assert "ResumeFreezeOwner" in deploy
+    assert "拒绝接管" in deploy
     assert "deploy_yosef_server.ps1" in deploy
     assert "if ($migrationSucceeded)" in deploy
     assert "保持启用" in deploy
