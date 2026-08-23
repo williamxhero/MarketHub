@@ -20,5 +20,6 @@ def test_restore_rearms_task_center_reconcile_after_removing_freeze_marker() -> 
     assert "restore_reconcile_schedule" in content
     assert "systemctl --user start xdn-task-center-reconcile.service" in content
     assert "systemctl --user restart xdn-task-center-reconcile.timer" in content
-    assert "NextElapseUSecRealtime" in content
+    assert "NextElapseUSecMonotonic" in content
+    assert "NextElapseUSecRealtime" not in content
     assert content.index('rm -f "$ACTIVE_FILE"') < content.index('restore_reconcile_schedule "$lease_dir"')

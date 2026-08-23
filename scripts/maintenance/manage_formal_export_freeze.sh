@@ -121,7 +121,7 @@ restore_reconcile_schedule() {
     systemctl --user start xdn-task-center-reconcile.service
     systemctl --user restart xdn-task-center-reconcile.timer
     test "$(unit_property user xdn-task-center-reconcile.timer ActiveState)" = active
-    test -n "$(unit_property user xdn-task-center-reconcile.timer NextElapseUSecRealtime)"
+    test -n "$(unit_property user xdn-task-center-reconcile.timer NextElapseUSecMonotonic)"
 }
 
 assert_services_idle() {
