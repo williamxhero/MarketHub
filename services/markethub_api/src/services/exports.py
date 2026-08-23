@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Iterator
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from quotemux.infra.db.client import query_dataframe
+from services.market_data_version import current_market_data_version
 
 
 DATASET_ID = "stock_daily_1d"
@@ -31,6 +33,50 @@ def _dataset_root(dataset_version: str) -> Path:
     return resolved
 
 
+def _current_dataset_version() -> str:
+    frame = query_dataframe(
+        "select baseline_id,generation from audit.dataset_version_state where dataset_id=%s",
+        (DATASET_ID,),
+    )
+    if len(frame.index) != 1:
+        return ""
+    baseline_id = str(frame.iloc[0].get("baseline_id", "") or "")
+    generation = int(frame.iloc[0].get("generation", 0) or 0)
+    if baseline_id == "" or generation < 1:
+        return ""
+    payload = {
+        "contract": "markethub-dataset-v1",
+        "dataset_id": DATASET_ID,
+        "baseline_id": baseline_id,
+        "generation": generation,
+    }
+    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
+    return f"mhd-v1-{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _current_published_mapping(market_data_version: str) -> dict[str, str] | None:
+    if current_market_data_version() != market_data_version:
+        return None
+    dataset_version = _current_dataset_version()
+    if dataset_version == "":
+        return None
+    try:
+        manifest_path = _dataset_root(dataset_version) / "manifest.json"
+        read_manifest(dataset_version)
+        manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    except HTTPException:
+        return None
+    if current_market_data_version() != market_data_version or _current_dataset_version() != dataset_version:
+        return None
+    return {
+        "dataset_id": DATASET_ID,
+        "market_data_version": market_data_version,
+        "dataset_version": dataset_version,
+        "manifest_sha256": manifest_sha256,
+        "manifest_url": f"/api/exports/{DATASET_ID}/{dataset_version}/manifest",
+    }
+
+
 def resolve_market_version(market_data_version: str) -> dict[str, str]:
     if MARKET_VERSION_RE.fullmatch(market_data_version) is None:
         raise HTTPException(status_code=404, detail={"code": "EXPORT_NOT_FOUND", "message": "市场版本没有发布映射"})
@@ -39,6 +85,9 @@ def resolve_market_version(market_data_version: str) -> dict[str, str]:
         (DATASET_ID, market_data_version),
     )
     if len(frame.index) != 1:
+        current_mapping = _current_published_mapping(market_data_version)
+        if current_mapping is not None:
+            return current_mapping
         raise HTTPException(status_code=404, detail={"code": "EXPORT_NOT_FOUND", "message": "市场版本没有发布映射"})
     row = frame.iloc[0]
     return {
