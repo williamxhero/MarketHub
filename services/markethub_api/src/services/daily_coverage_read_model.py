@@ -61,6 +61,12 @@ with catalog as materialized (
           and suspension.suspend_start_date<=open_dates.trade_date
           and suspension.suspend_end_date>=open_dates.trade_date
       )
+      and not exists (
+        select 1 from fact.stock_daily_1d suspended_daily
+        where suspended_daily.market=catalog.market and suspended_daily.code=catalog.code
+          and suspended_daily.trade_date=open_dates.trade_date
+          and coalesce(suspended_daily.is_suspended,false)=true
+      )
 )
 select expected.market,expected.code,expected.trade_date,
        count(daily.code)::int as actual_rows,
@@ -164,7 +170,11 @@ def _set_build_state(
 def build_current_stock_daily_coverage(start: date | None = None, end: date | None = None) -> dict[str, object]:
     with _connect() as probe:
         _, generation, dataset_version = _dataset_state(probe)
-        bounds = probe.execute("select min(trade_date) first,max(trade_date) last from fact.stock_daily_1d").fetchone()
+        bounds = probe.execute(
+            "select max(first) first,max(last) last from ("
+            "select market,min(trade_date) first,max(trade_date) last from fact.stock_daily_1d "
+            "where market in ('SHSE','SZSE','BJSE') group by market) market_bounds"
+        ).fetchone()
     if bounds is None or bounds["first"] is None or bounds["last"] is None:
         raise RuntimeError("stock_daily_1d is empty")
     first = max(start, bounds["first"]) if start else bounds["first"]

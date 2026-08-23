@@ -13,6 +13,13 @@ def test_daily_read_model_builder_materializes_sparse_gaps_and_day_summaries() -
     assert "readmodel.stock_daily_coverage_day" in read_model._INSERT_DAY_SQL
     assert "readmodel.stock_daily_coverage_gap" in read_model._INSERT_GAP_SQL
     assert "for each row" not in read_model._CREATE_STATE_SQL.lower()
+    assert "suspended_daily.is_suspended" in read_model._CREATE_STATE_SQL
+
+
+def test_daily_read_model_uses_common_market_fact_horizon() -> None:
+    source = __import__("inspect").getsource(read_model.build_current_stock_daily_coverage)
+    assert "select max(first) first,max(last) last" in source
+    assert "group by market" in source
 
 
 def test_request_coverage_reads_only_readmodel_and_returns_complete_summary(monkeypatch: pytest.MonkeyPatch) -> None:
