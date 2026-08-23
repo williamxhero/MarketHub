@@ -151,7 +151,8 @@ sudo -n systemctl restart "$service_name.service"
 trap - EXIT
 rm -f "$remote_archive" /tmp/markethub-service
 '@
-$remoteScript.Replace("`r", "") | ssh $HostName bash -s -- $RemoteRoot $releaseName $remoteArchive $RemoteRuntimeRoot $RemoteEnvPath $ServiceName $ServiceUser
+$encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }

@@ -18,6 +18,17 @@ $packageRoot = Split-Path $MyInvocation.MyCommand.Path -Parent
 $marketHubRoot = (Resolve-Path (Join-Path $packageRoot "..\..")).Path
 $manifest = Get-Content -LiteralPath (Join-Path $packageRoot "manifest.json") -Raw | ConvertFrom-Json
 
+function Invoke-RemoteBash {
+    param(
+        [Parameter(Mandatory = $true)][string]$Script,
+        [string]$RemoteCommand = "bash -s"
+    )
+    # PowerShell adds CRLF when it serializes a string to native stdin. Keep
+    # that transport newline outside the decoded Bash program.
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Script.Replace("`r", "")))
+    $encoded | ssh $HostName "base64 --decode --ignore-garbage | $RemoteCommand"
+}
+
 if ($ExpectedSourceStorageVersion -ne $manifest.source_storage_version) {
     throw "源版本不匹配。脚本要求 $($manifest.source_storage_version)，收到 $ExpectedSourceStorageVersion"
 }
@@ -54,7 +65,9 @@ if ($InstallOrUpgradePrerequisites -and $environment.database.local_cluster -and
     -not $installedTimescale -or [version]$installedTimescale -lt [version]$manifest.minimum_timescaledb_version
 )) {
     $prerequisiteScript = Join-Path $packageRoot "ensure_prerequisites_linux.sh"
-    Get-Content -Raw $prerequisiteScript | ssh $HostName sudo -n bash -s -- --apply $environment.database.local_cluster.major $manifest.minimum_timescaledb_version
+    Invoke-RemoteBash `
+        -Script (Get-Content -Raw $prerequisiteScript) `
+        -RemoteCommand "sudo -n bash -s -- --apply $($environment.database.local_cluster.major) $($manifest.minimum_timescaledb_version)"
     if ($LASTEXITCODE -ne 0) { throw "远端 PostgreSQL/TimescaleDB 前置依赖升级失败" }
     & scp $discoveryScript ($HostName + ':' + $remoteDiscovery)
     if ($LASTEXITCODE -ne 0) { throw "无法重新上传环境发现脚本" }
@@ -119,7 +132,8 @@ service_group=`$(id -gn '$ServiceUser')
 sudo -n install -d -o '$ServiceUser' -g "`$service_group" '$evidenceRoot'
 sudo -n -u '$ServiceUser' tee '$evidenceRoot/preflight.json' >/dev/null
 "@
-$preflightJson | ssh $HostName $savePreflight
+$encodedPreflight = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($preflightJson))
+$encodedPreflight | ssh $HostName "base64 --decode --ignore-garbage | $savePreflight"
 if ($LASTEXITCODE -ne 0) { throw "无法保存迁移前环境证据；尚未开始部署或迁移" }
 
 $deployScript = Join-Path $marketHubRoot "scripts\local\deploy_yosef_server.ps1"
@@ -144,7 +158,7 @@ mkdir -p '$evidenceRoot'
 '$RemoteRuntimeRoot/.venv/bin/python' '$migrationRoot/release_migration.py' --env-file '$RemoteEnvPath' --output '$evidenceRoot/verify.json' verify
 curl -fsS --retry 20 --retry-delay 2 --retry-connrefused '$HealthUrl'
 "@
-$remoteApply.Replace("`r", "") | ssh $HostName bash -s
+Invoke-RemoteBash -Script $remoteApply
 if ($LASTEXITCODE -ne 0) {
     throw "版本化迁移失败；修复迁移包后重新运行本脚本，禁止手工绕过"
 }
@@ -156,7 +170,7 @@ MARKETHUB_ROOT='$RemoteRoot' MARKETHUB_RUNTIME_ROOT='$RemoteRuntimeRoot' MARKETH
   '$migrationRoot/cleanup_after_migration.sh' --apply --confirm-target-version '$TargetStorageVersion'
 curl -fsS '$HealthUrl'
 "@
-    $remoteCleanup.Replace("`r", "") | ssh $HostName bash -s
+    Invoke-RemoteBash -Script $remoteCleanup
     if ($LASTEXITCODE -ne 0) {
         throw "迁移后清理失败；数据库迁移仍保留成功状态，可修复脚本后安全重跑"
     }
