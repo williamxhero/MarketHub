@@ -57,3 +57,29 @@ def test_exact_daily_export_rejects_partial_audit_scope(tmp_path: Path) -> None:
         assert "not exhaustive" in str(exc)
     else:
         raise AssertionError("partial audit must not be accepted")
+
+
+def test_exact_daily_import_allows_existing_suspended_placeholders() -> None:
+    MODULE._assert_import_preconditions(
+        {
+            "traded_daily_rows": 0,
+            "suspension_rows": 0,
+            "conflicting_suspended_daily_rows": 0,
+            "daily_rows": 146,
+        }
+    )
+
+
+def test_exact_daily_import_rejects_conflicting_suspended_fact() -> None:
+    try:
+        MODULE._assert_import_preconditions(
+            {
+                "traded_daily_rows": 0,
+                "suspension_rows": 0,
+                "conflicting_suspended_daily_rows": 1,
+            }
+        )
+    except RuntimeError as exc:
+        assert "target facts changed" in str(exc)
+    else:
+        raise AssertionError("a traded fact must not be accepted as a suspended placeholder")

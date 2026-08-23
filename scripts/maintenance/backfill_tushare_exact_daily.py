@@ -563,6 +563,11 @@ def _coverage(cursor, data_version: str) -> dict[str, int]:
           (select count(*) from qm_tushare_exact_daily_stage where classification='traded_daily')::int as traded_targets,
           (select count(*) from qm_tushare_exact_daily_stage where classification='suspended')::int as suspended_targets,
           (select count(*) from qm_tushare_exact_daily_stage s join fact.stock_daily_1d d using (market,code,trade_date))::int as daily_rows,
+          (select count(*) from qm_tushare_exact_daily_stage s join fact.stock_daily_1d d using (market,code,trade_date)
+           where s.classification='traded_daily')::int as traded_daily_rows,
+          (select count(*) from qm_tushare_exact_daily_stage s join fact.stock_daily_1d d using (market,code,trade_date)
+           where s.classification='suspended'
+             and (not coalesce(d.is_suspended,false) or coalesce(d.volume,0)<>0))::int as conflicting_suspended_daily_rows,
           (select count(*) from qm_tushare_exact_daily_stage s where s.classification='suspended' and exists (
              select 1 from fact.stock_suspension_history h
              where h.market=s.market and h.code=s.code and h.status='suspended'
@@ -593,6 +598,26 @@ def _coverage(cursor, data_version: str) -> dict[str, int]:
     return dict(cursor.fetchone())
 
 
+def _assert_import_preconditions(coverage: dict[str, int]) -> None:
+    if (
+        coverage["traded_daily_rows"] != 0
+        or coverage["suspension_rows"] != 0
+        or coverage["conflicting_suspended_daily_rows"] != 0
+    ):
+        raise RuntimeError(f"target facts changed since baseline: {coverage}")
+
+
+def _assert_import_postconditions(coverage: dict[str, int]) -> None:
+    if (
+        coverage["traded_daily_rows"] != coverage["traded_targets"]
+        or coverage["suspension_rows"] != coverage["suspended_targets"]
+        or coverage["daily_value_mismatches"] != 0
+        or coverage["suspension_lineage_mismatches"] != 0
+        or coverage["conflicting_suspended_daily_rows"] != 0
+    ):
+        raise RuntimeError(f"post-insert exact coverage mismatch: {coverage}")
+
+
 def import_artifact(root: Path, env_path: Path, audit_path: Path, health_url: str, apply: bool) -> dict[str, Any]:
     import psycopg
 
@@ -607,8 +632,7 @@ def import_artifact(root: Path, env_path: Path, audit_path: Path, health_url: st
         _create_stage(cursor)
         _copy_stage(cursor, rows)
         before = _coverage(cursor, str(manifest["target_data_version"]))
-        if before["daily_rows"] != 0 or before["suspension_rows"] != 0:
-            raise RuntimeError(f"target facts changed since baseline: {before}")
+        _assert_import_preconditions(before)
         inserted_daily = 0
         inserted_suspensions = 0
         if apply:
@@ -640,13 +664,7 @@ def import_artifact(root: Path, env_path: Path, audit_path: Path, health_url: st
             )
             inserted_suspensions = cursor.rowcount
             after = _coverage(cursor, str(manifest["target_data_version"]))
-            if (
-                after["daily_rows"] != before["traded_targets"]
-                or after["suspension_rows"] != before["suspended_targets"]
-                or after["daily_value_mismatches"] != 0
-                or after["suspension_lineage_mismatches"] != 0
-            ):
-                raise RuntimeError(f"post-insert exact coverage mismatch: {after}")
+            _assert_import_postconditions(after)
             connection.commit()
         else:
             after = before
@@ -686,10 +704,11 @@ def verify_import(root: Path, env_path: Path, audit_path: Path, health_url: str)
         connection.rollback()
     if (
         coverage["qualified_rows"] != int(manifest["qualified_count"])
-        or coverage["daily_rows"] != int(manifest["traded_daily_count"])
+        or coverage["traded_daily_rows"] != int(manifest["traded_daily_count"])
         or coverage["suspension_rows"] != int(manifest["suspended_count"])
         or coverage["daily_value_mismatches"] != 0
         or coverage["suspension_lineage_mismatches"] != 0
+        or coverage["conflicting_suspended_daily_rows"] != 0
     ):
         raise RuntimeError(f"exact imported values/lineage are incomplete: {coverage}")
     report = {
