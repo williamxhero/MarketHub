@@ -14,3 +14,12 @@ def test_deploy_installs_health_gated_parquet_publisher() -> None:
         'install -m 0755 "$remote_root/current/MarketHub/scripts/publisher/publish_stock_daily_parquet.py" '
         '"$runtime_root/publisher/publish_stock_daily_parquet.py"'
     ) in source
+
+
+def test_deploy_refreshes_root_owned_storage_governance_entrypoint() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert (
+        'sudo -n install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/storage-governance.sh" '
+        "/usr/local/sbin/markethub-storage-governance"
+    ) in source

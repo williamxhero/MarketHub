@@ -127,6 +127,7 @@ install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/update-futur
 install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/manage_formal_export_freeze.sh" "$runtime_root/scripts/manage-formal-export-freeze.sh"
 install -m 0755 "$remote_root/current/MarketHub/migrations/storage_v2_20260823/cleanup_after_migration.sh" "$runtime_root/scripts/storage-v2-cleanup-after-migration.sh"
 install -m 0755 "$remote_root/current/MarketHub/scripts/publisher/publish_stock_daily_parquet.py" "$runtime_root/publisher/publish_stock_daily_parquet.py"
+sudo -n install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/storage-governance.sh" /usr/local/sbin/markethub-storage-governance
 cat >/tmp/markethub-service <<UNIT
 [Unit]
 Description=MarketHub API
