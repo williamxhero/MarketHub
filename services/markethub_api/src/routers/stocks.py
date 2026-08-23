@@ -10,7 +10,7 @@ from quotemux.models import DividendItem, DividendPage, RightsIssueItem, RightsI
 
 from data_threads import QuoteClientDisconnectedError, run_data_task, run_quote_task
 from routers.stock_quote_models import StockDailyWindowQueryPayload, StockDailyWindowQueryResponse, StockQuotesQueryPayload
-from services import daily_window, stocks
+from services import daily_window, stock_quotes_arrow, stocks
 from services.common import filter_response_fields
 from services.runtime_memory import run_with_memory_log
 
@@ -130,8 +130,25 @@ async def api_stock_quotes(
         "返回合同固定为 StockQuotesQueryResult，GET 和 POST 对相同查询条件返回相同 items 与 meta。"
     ),
     response_model=StockQuotesQueryResult,
+    responses={
+        200: {
+            "content": {
+                "application/json": {},
+                "application/vnd.apache.arrow.stream": {"schema": {"type": "string", "format": "binary"}},
+            }
+        },
+        406: {"description": "Accept 不支持"},
+    },
 )
-async def api_stock_quotes_query(payload: StockQuotesQueryPayload, request: Request) -> dict[str, object]:
+async def api_stock_quotes_query(payload: StockQuotesQueryPayload, request: Request) -> dict[str, object] | Response:
+    accept = request.headers.get("accept", "").lower()
+    wants_arrow = stock_quotes_arrow.ARROW_MEDIA_TYPE in accept
+    accepts_json = not accept or "*/*" in accept or "application/json" in accept
+    if not wants_arrow and not accepts_json:
+        raise HTTPException(
+            status_code=406,
+            detail={"code": "STOCK_QUOTES_MEDIA_TYPE_NOT_ACCEPTABLE", "message": "仅支持 application/json 或 Arrow IPC stream"},
+        )
     codes = ",".join(payload.codes)
     detail = _quote_request_detail(codes, payload.freq, payload.start_date, payload.end_date, payload.limit)
     args = (
@@ -140,7 +157,7 @@ async def api_stock_quotes_query(payload: StockQuotesQueryPayload, request: Requ
         payload.skip_suspended, payload.skip_st, payload.fill_missing, payload.meta_detail, payload.data_version,
     )
     try:
-        return await run_quote_task(
+        result = await run_quote_task(
             _filter_stock_quote_query_result,
             stocks.get_quotes_query_result,
             args,
@@ -149,6 +166,10 @@ async def api_stock_quotes_query(payload: StockQuotesQueryPayload, request: Requ
             detail,
             is_disconnected=request.is_disconnected,
         )
+        if wants_arrow:
+            encoded = stock_quotes_arrow.encode(result)
+            return Response(content=encoded.content, media_type=stock_quotes_arrow.ARROW_MEDIA_TYPE, headers=encoded.headers)
+        return result
     except QuoteClientDisconnectedError as exc:
         raise HTTPException(status_code=499, detail={"code": "CLIENT_DISCONNECTED", "message": str(exc)}) from exc
 

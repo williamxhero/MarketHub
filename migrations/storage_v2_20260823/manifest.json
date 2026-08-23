@@ -1,6 +1,6 @@
 {
   "migration_id": "markethub-storage-v2-20260823",
-  "package_version": "1.1.0",
+  "package_version": "1.2.0",
   "source_application_release": "deploy_20260822_191100 or an earlier ordinary-bar-table deployment",
   "source_storage_version": "storage-v1-postgresql-ordinary-bars",
   "target_application_version": "MarketHub main with storage-v2 migration package",

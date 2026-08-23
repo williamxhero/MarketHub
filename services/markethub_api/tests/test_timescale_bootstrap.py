@@ -76,3 +76,71 @@ def test_timescaledb_update_runs_as_first_statement_of_a_fresh_connection(monkey
 
     assert len(statements) == 3
     assert statements[2] == ["alter extension timescaledb update"]
+
+
+def test_daily_snapshot_index_reuses_equivalent_existing_index(monkeypatch) -> None:
+    statements: list[str] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def execute(self, statement: str) -> None:
+            statements.append(statement)
+
+        def fetchone(self):
+            return (True,)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def cursor(self) -> Cursor:
+            return Cursor()
+
+    monkeypatch.setattr(MODULE, "_connect", lambda _config: Connection())
+
+    MODULE._ensure_daily_snapshot_index({})
+
+    assert len(statements) == 1
+    assert "pg_index" in statements[0]
+
+
+def test_daily_snapshot_index_is_created_concurrently_when_missing(monkeypatch) -> None:
+    statements: list[str] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def execute(self, statement: str) -> None:
+            statements.append(statement)
+
+        def fetchone(self):
+            return (False,)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def cursor(self) -> Cursor:
+            return Cursor()
+
+    monkeypatch.setattr(MODULE, "_connect", lambda _config: Connection())
+
+    MODULE._ensure_daily_snapshot_index({})
+
+    assert len(statements) == 2
+    assert "create index concurrently if not exists stock_daily_1d_trade_date_code_idx" in statements[1].lower()

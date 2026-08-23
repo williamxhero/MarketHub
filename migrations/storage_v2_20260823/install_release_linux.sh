@@ -96,9 +96,20 @@ QUOTEMUX_PACKAGE_REPO_SPEC=$release_root/QuoteMux_Packages
 QUOTEMUX_PACKAGE_VENV_ROOT=$package_venv_root
 QUOTEMUX_ALLOW_LOCAL_PACKAGE_REPO=true
 ENV
-  chmod 0600 "$env_path"
-  chown "$service_user:$service_group" "$env_path"
 fi
+
+# Existing deployments keep database credentials and site-specific settings,
+# but every release-scoped path must move atomically to the release being
+# installed.  Otherwise maintenance processes that source this file can
+# recreate a retired provider environment even when the systemd unit is new.
+python3 "$release_root/MarketHub/migrations/storage_v2_20260823/sync_runtime_env.py" \
+  --env-file "$env_path" \
+  --app-root "$app_root" \
+  --runtime-root "$runtime_root" \
+  --release-root "$release_root" \
+  --package-venv-root "$package_venv_root"
+chmod 0600 "$env_path"
+chown "$service_user:$service_group" "$env_path"
 
 systemctl stop "$service_name.service" >/dev/null 2>&1 || true
 

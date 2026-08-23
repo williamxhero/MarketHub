@@ -247,6 +247,7 @@ def main() -> None:
     _ensure_database(database_config)
     _ensure_extension(database_config)
     _ensure_base_schema(database_config)
+    _ensure_daily_snapshot_index(database_config)
     _ensure_quotemux_schema()
     print("数据库初始化完成")
 
@@ -441,6 +442,39 @@ def _ensure_base_schema(database_config: dict[str, str]) -> None:
                 cursor.execute(statement)
             for statement in PRICE_BAND_STATUS_MIGRATION_SQL:
                 cursor.execute(statement)
+
+
+def _ensure_daily_snapshot_index(database_config: dict[str, str]) -> None:
+    """Create the date/code access path without duplicating an equivalent index."""
+    equivalent_index_sql = """
+        select exists (
+            select 1
+            from pg_index index_rows
+            join pg_class tables on tables.oid = index_rows.indrelid
+            join pg_namespace schemas on schemas.oid = tables.relnamespace
+            where schemas.nspname = 'fact'
+              and tables.relname = 'stock_daily_1d'
+              and index_rows.indisvalid
+              and index_rows.indisready
+              and (
+                  select array_agg(attributes.attname order by keys.ordinality)
+                  from unnest(index_rows.indkey) with ordinality keys(attnum, ordinality)
+                  join pg_attribute attributes
+                    on attributes.attrelid = index_rows.indrelid
+                   and attributes.attnum = keys.attnum
+                  where keys.ordinality <= 2
+              ) = array['trade_date', 'code']::name[]
+        )
+    """
+    with _connect(database_config) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(equivalent_index_sql)
+            if cursor.fetchone()[0]:
+                return
+            cursor.execute(
+                "create index concurrently if not exists stock_daily_1d_trade_date_code_idx "
+                "on fact.stock_daily_1d (trade_date, code)"
+            )
 
 
 def _ensure_quotemux_schema() -> None:

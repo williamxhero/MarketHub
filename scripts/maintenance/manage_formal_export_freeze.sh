@@ -10,6 +10,8 @@ USER_TIMERS=(
     xdn-task-markethub_global_data_update.timer
     xdn-task-markethub_global_data_update_0030.timer
     xdn-task-markethub_global_data_update_0400.timer
+    xdn-task-markethub_futures_1m_daily.timer
+    xdn-task-markethub_storage_governance_weekly.timer
     xdn-task-crawler_provider_daily_close_sync.timer
     xdn-task-crawler_provider_weekly_concept_members_sync.timer
 )
@@ -20,6 +22,8 @@ USER_SERVICES=(
     xdn-task-markethub_global_data_update.service
     xdn-task-markethub_global_data_update_0030.service
     xdn-task-markethub_global_data_update_0400.service
+    xdn-task-markethub_futures_1m_daily.service
+    xdn-task-markethub_storage_governance_weekly.service
     xdn-task-crawler_provider_daily_close_sync.service
     xdn-task-crawler_provider_weekly_concept_members_sync.service
 )
@@ -54,6 +58,14 @@ unit_property() {
     fi
 }
 
+system_systemctl() {
+    sudo -n systemctl "$@"
+}
+
+require_systemctl_privilege() {
+    system_systemctl show --property=Version --value >/dev/null
+}
+
 capture_unit_state() {
     local lease_dir="$1" scope="$2" unit="$3"
     printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -86,10 +98,10 @@ restore_units() {
             fi
         else
             if [ "$unit_file_state" = enabled ]; then
-                sudo systemctl enable "$unit" >/dev/null
+                system_systemctl enable "$unit" >/dev/null
             fi
             if [ "$active_state" = active ]; then
-                sudo systemctl start "$unit"
+                system_systemctl start "$unit"
             fi
         fi
     done <"$lease_dir/unit-state.tsv"
@@ -120,7 +132,7 @@ freeze() {
         exit 4
     fi
 
-    sudo -v
+    require_systemctl_privilege
     mkdir -p "$lease_dir"
     : >"$lease_dir/unit-state.tsv"
     for unit in "${USER_TIMERS[@]}" "${USER_SERVICES[@]}"; do
@@ -154,7 +166,7 @@ freeze() {
         systemctl --user disable --now "$unit"
     done
     for unit in "${SYSTEM_TIMERS[@]}"; do
-        sudo systemctl disable --now "$unit"
+        system_systemctl disable --now "$unit"
     done
 
     for unit in "${USER_TIMERS[@]}"; do
@@ -180,7 +192,7 @@ reconcile() {
     test "$active_id" = "$lease_id" || { printf 'active lease mismatch: expected=%s actual=%s\n' "$lease_id" "$active_id" >&2; exit 6; }
     test -f "$lease_dir/unit-state.tsv"
 
-    sudo -v
+    require_systemctl_privilege
     assert_services_idle user "${USER_SERVICES[@]}"
     assert_services_idle system "${SYSTEM_SERVICES[@]}"
 
@@ -195,7 +207,7 @@ reconcile() {
         systemctl --user disable --now "$unit"
     done
     for unit in "${SYSTEM_TIMERS[@]}"; do
-        sudo systemctl disable --now "$unit"
+        system_systemctl disable --now "$unit"
     done
 
     for unit in "${USER_TIMERS[@]}"; do
@@ -216,7 +228,7 @@ restore() {
     active_id="$(cat "$ACTIVE_FILE")"
     test "$active_id" = "$lease_id" || { printf 'active lease mismatch: expected=%s actual=%s\n' "$lease_id" "$active_id" >&2; exit 6; }
     test -f "$lease_dir/unit-state.tsv"
-    sudo -v
+    require_systemctl_privilege
     restore_units "$lease_dir"
     date -Ins >"$lease_dir/restored_at"
     rm -f "$ACTIVE_FILE"

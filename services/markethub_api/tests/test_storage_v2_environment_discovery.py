@@ -11,6 +11,12 @@ assert SPEC and SPEC.loader
 discovery = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(discovery)
 
+ENV_SYNC_SCRIPT = SCRIPT.parent / "sync_runtime_env.py"
+ENV_SYNC_SPEC = importlib.util.spec_from_file_location("storage_v2_sync_runtime_env", ENV_SYNC_SCRIPT)
+assert ENV_SYNC_SPEC and ENV_SYNC_SPEC.loader
+env_sync = importlib.util.module_from_spec(ENV_SYNC_SPEC)
+ENV_SYNC_SPEC.loader.exec_module(env_sync)
+
 
 def test_storage_state_recognizes_all_supported_transitions() -> None:
     ordinary = [{"present": True, "hypertable": False} for _ in discovery.TABLES]
@@ -98,6 +104,8 @@ def test_remote_migration_discovers_environment_before_deploying() -> None:
     assert "User=$service_user" in generic_deploy
     assert "base64 --decode" in generic_deploy
     assert "find \"$release_root/MarketHub\" -type f -name '*.sh' -exec chmod 0755 {} +" in generic_deploy
+    assert "sync_runtime_env.py" in generic_deploy
+    assert generic_deploy.index("sync_runtime_env.py") < generic_deploy.index(". \"$env_path\"")
     assert "'$HealthUrl'" in generic_deploy
     governance = (SCRIPT.parents[2] / "scripts" / "maintenance" / "storage-governance.sh").read_text(encoding="utf-8")
     assert 'systemctl show "$SERVICE_NAME.service"' in governance
@@ -109,3 +117,34 @@ def test_package_installer_uses_the_discovered_runtime_root() -> None:
     installer = (SCRIPT.parents[2] / "scripts" / "deploy" / "install_all_packages.py").read_text(encoding="utf-8")
     assert 'os.getenv("QUOTEMUX_PACKAGE_VENV_ROOT"' in installer
     assert "find_spec('playwright')" in installer
+
+
+def test_release_installer_rewrites_release_scoped_env_without_losing_secrets(tmp_path: Path) -> None:
+    env_path = tmp_path / "markethub.env"
+    env_path.write_text(
+        "# keep this comment\n"
+        "MARKETHUB_DB_PASSWORD=top-secret\n"
+        "QUOTEMUX_PACKAGE_REPO_SPEC=/old/release/QuoteMux_Packages\n"
+        "QUOTEMUX_PACKAGE_VENV_ROOT=/old/runtime/package_venvs/old-release\n"
+        "CUSTOM_SETTING=preserved\n",
+        encoding="utf-8",
+    )
+
+    env_sync.sync_runtime_env(
+        env_path=env_path,
+        app_root=tmp_path / "app",
+        runtime_root=tmp_path / "runtime",
+        release_root=tmp_path / "app" / "releases" / "new-release",
+        package_venv_root=tmp_path / "runtime" / "package_venvs" / "new-release",
+    )
+
+    content = env_path.read_text(encoding="utf-8")
+    assert "MARKETHUB_DB_PASSWORD=top-secret" in content
+    assert "CUSTOM_SETTING=preserved" in content
+    assert "# keep this comment" in content
+    assert "QUOTEMUX_PACKAGE_REPO_SPEC=" + str(tmp_path / "app" / "releases" / "new-release" / "QuoteMux_Packages") in content
+    assert "QUOTEMUX_PACKAGE_VENV_ROOT=" + str(tmp_path / "runtime" / "package_venvs" / "new-release") in content
+    assert "/old/" not in content
+
+    installer = (SCRIPT.parent / "install_release_linux.sh").read_text(encoding="utf-8")
+    assert "sync_runtime_env.py" in installer

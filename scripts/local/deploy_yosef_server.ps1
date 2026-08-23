@@ -81,6 +81,14 @@ test -x "$runtime_root/.venv/bin/python" || python3 -m venv "$runtime_root/.venv
 "$runtime_root/.venv/bin/python" -m pip install -e "$release_root/QuoteMux"
 export QUOTEMUX_PACKAGE_REPO_SPEC="$release_root/QuoteMux_Packages"
 "$runtime_root/.venv/bin/python" -m pip install -r "$release_root/MarketHub/requirements.txt"
+python3 "$release_root/MarketHub/migrations/storage_v2_20260823/sync_runtime_env.py" \
+  --env-file "$env_path" \
+  --app-root "$remote_root" \
+  --runtime-root "$runtime_root" \
+  --release-root "$release_root" \
+  --package-venv-root "$runtime_root/package_venvs/$release_name"
+sudo -n chmod 0600 "$env_path"
+sudo -n chown "$service_user:$service_group" "$env_path"
 set -a
 . "$env_path"
 set +a

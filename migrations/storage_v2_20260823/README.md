@@ -122,3 +122,5 @@ python release_migration.py --env-file /data/markethub/env/markethub.env cleanup
 ## 普通后续发布
 
 storage-v2 完成后，普通代码升级只运行 `scripts/local/deploy_yosef_server.ps1`。只有目标数据库仍处于本 manifest 支持的源/中间状态，或需要幂等核验本次迁移时，才再次调用本目录。
+
+从迁移包 1.2.0 起，storage-v2 发布入口和普通后续发布入口都会在安装每个 release 时调用 `sync_runtime_env.py`。它保留目标机器已有的数据库凭据、provider 凭据和自定义配置，只原子更新应用、运行时、导出、QuoteMux 包仓库及 provider venv 等 release-scoped 路径。这样张三、李四或 yosef-server 使用各自被发现的目录，不会因为遗留 env 值重新创建旧 release 的 provider venv。数据库 bootstrap 还会复用已经存在的等价 `(trade_date, code)` 索引；仅在缺失时并发创建日线快照查询索引。

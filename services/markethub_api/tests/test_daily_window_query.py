@@ -16,6 +16,11 @@ from main import app
 from services import daily_window
 
 
+@pytest.fixture(autouse=True)
+def _reset_coverage_cache() -> None:
+    daily_window.clear_coverage_cache()
+
+
 def _payload(**updates: object) -> StockDailyWindowQueryPayload:
     values: dict[str, object] = {
         "data_version": "mhf-v1-test",
@@ -288,6 +293,7 @@ def test_v2_route_is_discoverable_and_returns_items_meta(monkeypatch: pytest.Mon
 
 def test_arrow_response_streams_fixed_schema_and_equivalent_meta(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(daily_window, "require_market_data_version", lambda value: value)
+    monkeypatch.setattr(daily_window, "query_dataframe", lambda *_: _coverage_row())
 
     def stream(query: str, params: tuple[object, ...], *, batch_size: int):
         if "duplicate_rows" in query:
@@ -323,6 +329,7 @@ def test_arrow_response_streams_fixed_schema_and_equivalent_meta(monkeypatch: py
 
 def test_arrow_body_close_closes_database_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(daily_window, "require_market_data_version", lambda value: value)
+    monkeypatch.setattr(daily_window, "query_dataframe", lambda *_: _coverage_row())
     page_stream_closed = False
 
     def stream(query: str, params: tuple[object, ...], *, batch_size: int):
@@ -373,3 +380,35 @@ def test_daily_window_rejects_unknown_accept_before_query() -> None:
     )
     assert response.status_code == 406
     assert response.json()["code"] == "DAILY_WINDOW_MEDIA_TYPE_NOT_ACCEPTABLE"
+
+
+def test_coverage_cache_is_keyed_by_immutable_data_version_and_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def load(payload: StockDailyWindowQueryPayload):
+        nonlocal calls
+        calls += 1
+        return ({"universe_size": 1, "expected_total": 1, "actual_total": 1, "missing_total": 0, "duplicate_total": 0}, [{"code": "600000", "expected_rows": 1, "actual_rows": 1, "missing_rows": 0, "missing_trade_dates": [], "complete": True}])
+
+    monkeypatch.setattr(daily_window, "_load_coverage_uncached", load)
+    daily_window.clear_coverage_cache()
+    first = _payload(data_version="mhf-v1-a", codes=["600000"], start_date="2021-01-01", end_date="2021-01-31")
+    equivalent = first.model_copy(update={"page_size": 99, "cursor": None})
+    next_version = first.model_copy(update={"data_version": "mhf-v1-b"})
+
+    assert daily_window._cached_coverage(first) == daily_window._cached_coverage(equivalent)
+    assert calls == 1
+    daily_window._cached_coverage(next_version)
+    assert calls == 2
+
+
+def test_coverage_cache_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        daily_window,
+        "_load_coverage_uncached",
+        lambda _payload: ({"universe_size": 1, "expected_total": 1, "actual_total": 1, "missing_total": 0, "duplicate_total": 0}, []),
+    )
+    daily_window.clear_coverage_cache()
+    for index in range(daily_window.COVERAGE_CACHE_MAX_ENTRIES + 3):
+        daily_window._cached_coverage(_payload(data_version=f"mhf-v1-{index}"))
+    assert len(daily_window._COVERAGE_CACHE) == daily_window.COVERAGE_CACHE_MAX_ENTRIES

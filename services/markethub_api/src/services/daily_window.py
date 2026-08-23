@@ -8,8 +8,10 @@ import io
 import json
 import logging
 import time
+from collections import OrderedDict
 from collections.abc import Generator, Iterator
 from itertools import chain
+from threading import RLock
 
 import pandas as pd
 import pyarrow as pa
@@ -324,6 +326,9 @@ from delivered order by trade_date,code
 ARROW_MEDIA_TYPE = "application/vnd.apache.arrow.stream"
 ARROW_SCHEMA_VERSION = "markethub-daily-window-arrow-v1"
 ARROW_RECORD_BATCH_ROWS = 8_192
+COVERAGE_CACHE_MAX_ENTRIES = 32
+_COVERAGE_CACHE: OrderedDict[str, tuple[dict[str, object], list[dict[str, object]]]] = OrderedDict()
+_COVERAGE_CACHE_LOCK = RLock()
 ARROW_SCHEMA = pa.schema(
     [
         ("code", pa.string()), ("trade_time", pa.string()), ("freq", pa.string()),
@@ -361,6 +366,15 @@ def _request_fingerprint(payload: StockDailyWindowQueryPayload) -> str:
     }
     encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def clear_coverage_cache() -> None:
+    with _COVERAGE_CACHE_LOCK:
+        _COVERAGE_CACHE.clear()
+
+
+def _coverage_cache_key(payload: StockDailyWindowQueryPayload) -> str:
+    return f"{payload.data_version}:{_request_fingerprint(payload)}"
 
 
 def _encode_cursor(payload: StockDailyWindowQueryPayload, trade_time: str, code: str) -> str:
@@ -460,6 +474,35 @@ def _raise_incomplete(coverage_row: dict[str, object], coverage: list[dict[str, 
         )
 
 
+def _load_coverage_uncached(payload: StockDailyWindowQueryPayload) -> tuple[dict[str, object], list[dict[str, object]]]:
+    coverage_row = _single_row(query_dataframe(_COVERAGE_QUERY, _universe_params(payload)), "coverage")
+    coverage = _parse_json_text(coverage_row.get("coverage_json", "[]"), "coverage")
+    unknown_codes = _parse_json_text(coverage_row.get("unknown_codes_json", "[]"), "unknown_codes")
+    normalized_coverage = [dict(item) for item in coverage if isinstance(item, dict)]
+    if len(normalized_coverage) != len(coverage):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "DAILY_WINDOW_INTEGRITY_UNAVAILABLE", "message": "coverage 行结构无效"},
+        )
+    _raise_incomplete(coverage_row, normalized_coverage, [str(code) for code in unknown_codes])
+    return coverage_row, normalized_coverage
+
+
+def _cached_coverage(payload: StockDailyWindowQueryPayload) -> tuple[dict[str, object], list[dict[str, object]]]:
+    key = _coverage_cache_key(payload)
+    with _COVERAGE_CACHE_LOCK:
+        cached = _COVERAGE_CACHE.get(key)
+        if cached is not None:
+            _COVERAGE_CACHE.move_to_end(key)
+            return cached
+        loaded = _load_coverage_uncached(payload)
+        _COVERAGE_CACHE[key] = loaded
+        _COVERAGE_CACHE.move_to_end(key)
+        while len(_COVERAGE_CACHE) > COVERAGE_CACHE_MAX_ENTRIES:
+            _COVERAGE_CACHE.popitem(last=False)
+        return loaded
+
+
 def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> EncodedDailyWindowResponse:
     request_started = time.perf_counter()
     start_rss_mb = process_rss_mb()
@@ -470,15 +513,12 @@ def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> 
     version_pre_ms = _elapsed_ms(version_pre_started)
 
     coverage_started = time.perf_counter()
-    coverage_row = _single_row(query_dataframe(_COVERAGE_QUERY, _universe_params(payload)), "coverage")
+    coverage_row, coverage = _cached_coverage(payload)
     coverage_db_ms = _elapsed_ms(coverage_started)
-    coverage = _parse_json_text(coverage_row.get("coverage_json", "[]"), "coverage")
-    unknown_codes = _parse_json_text(coverage_row.get("unknown_codes_json", "[]"), "unknown_codes")
 
     version_coverage_started = time.perf_counter()
     require_market_data_version(payload.data_version)
     version_coverage_ms = _elapsed_ms(version_coverage_started)
-    _raise_incomplete(coverage_row, coverage, [str(code) for code in unknown_codes])
 
     page_started = time.perf_counter()
     page_params = _universe_params(payload) + (
@@ -596,35 +636,6 @@ def _stream_single_row(query: str, params: tuple[object, ...], stage: str) -> di
     return rows[0]
 
 
-def _arrow_coverage(payload: StockDailyWindowQueryPayload) -> tuple[dict[str, object], list[dict[str, object]]]:
-    raw = _stream_rows(_COVERAGE_ROWS_QUERY, _universe_params(payload))
-    unknown = [str(row["code"]) for row in _stream_rows(_UNKNOWN_CODES_QUERY, _universe_params(payload))]
-    coverage: list[dict[str, object]] = []
-    duplicate_total = 0
-    for row in raw:
-        missing_dates = [value.isoformat() if hasattr(value, "isoformat") else str(value) for value in row.get("missing_trade_dates", [])]
-        coverage.append(
-            {
-                "code": str(row["code"]),
-                "expected_rows": int(row.get("expected_rows", 0) or 0),
-                "actual_rows": int(row.get("actual_rows", 0) or 0),
-                "missing_rows": int(row.get("missing_rows", 0) or 0),
-                "missing_trade_dates": missing_dates,
-                "complete": bool(row.get("complete", False)),
-            }
-        )
-        duplicate_total += int(row.get("duplicate_rows", 0) or 0)
-    summary = {
-        "universe_size": len(coverage),
-        "expected_total": sum(int(row["expected_rows"]) for row in coverage),
-        "actual_total": sum(int(row["actual_rows"]) for row in coverage),
-        "missing_total": sum(int(row["missing_rows"]) for row in coverage),
-        "duplicate_total": duplicate_total,
-    }
-    _raise_incomplete(summary, coverage, unknown)
-    return summary, coverage
-
-
 def _page_params(payload: StockDailyWindowQueryPayload, cursor_trade_time: str | None, cursor_code: str) -> tuple[object, ...]:
     return _universe_params(payload) + (
         cursor_trade_time,
@@ -728,7 +739,7 @@ def prepare_arrow_response(payload: StockDailyWindowQueryPayload) -> PreparedDai
     require_market_data_version(payload.data_version)
 
     coverage_started = time.perf_counter()
-    coverage_row, coverage = _arrow_coverage(payload)
+    coverage_row, coverage = _cached_coverage(payload)
     coverage_db_ms = _elapsed_ms(coverage_started)
     require_market_data_version(payload.data_version)
 
