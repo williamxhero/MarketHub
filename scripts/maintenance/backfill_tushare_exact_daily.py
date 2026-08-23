@@ -73,8 +73,11 @@ def load_json(path: Path) -> dict[str, Any]:
 def parse_failure_details(path: Path, codes: set[str]) -> tuple[str, dict[str, tuple[date, ...]]]:
     outer = load_json(path)
     if outer.get("contract") == "markethub-stock-daily-all-a-audit-v1":
-        if outer.get("scope") != "exhaustive":
+        scope = outer.get("scope")
+        if scope not in {"exhaustive", "exhaustive_filtered_exact_keys"}:
             raise ValueError("daily audit target scope is not exhaustive")
+        if scope == "exhaustive_filtered_exact_keys" and not isinstance(outer.get("derived_from"), dict):
+            raise ValueError("filtered daily audit has no source provenance")
         selected_dates: dict[str, set[date]] = {}
         for entry in outer.get("gaps", []):
             if not isinstance(entry, dict):
@@ -114,7 +117,7 @@ def market_for_code(code: str) -> str:
         return "SHSE"
     if code.startswith(("000", "001", "002", "003", "300", "301")):
         return "SZSE"
-    if code.startswith("920"):
+    if code.startswith(("4", "8", "920")):
         return "BJSE"
     raise ValueError(f"unsupported exact Tushare repair code: {code}")
 
@@ -127,6 +130,50 @@ def provider_code_for(code: str) -> str:
 
 def provider_codes_for(code: str) -> tuple[str, ...]:
     return (provider_code_for(code), *BSE_PROVIDER_ALIASES.get(code, ()))
+
+
+def _normalized_ts_code(value: object) -> str:
+    text = _text(value).upper()
+    if not text:
+        return ""
+    code, separator, suffix = text.partition(".")
+    if len(code) != 6 or not code.isdigit() or separator != "." or suffix != "BJ":
+        raise ValueError(f"invalid Tushare BSE mapping code: {value}")
+    return f"{code}.BJ"
+
+
+def build_bse_provider_identities(
+    records: list[dict[str, object]],
+    codes: set[str],
+) -> dict[str, tuple[str, tuple[str, ...]]]:
+    old_to_new: dict[str, str] = {}
+    new_to_old: dict[str, str] = {}
+    for record in records:
+        old_ts_code = _normalized_ts_code(record.get("o_code"))
+        new_ts_code = _normalized_ts_code(record.get("n_code"))
+        old_code = old_ts_code.split(".", 1)[0]
+        new_code = new_ts_code.split(".", 1)[0]
+        if old_code in old_to_new and old_to_new[old_code] != new_ts_code:
+            raise ValueError(f"conflicting Tushare BSE mapping for old code: {old_code}")
+        if new_code in new_to_old and new_to_old[new_code] != old_ts_code:
+            raise ValueError(f"conflicting Tushare BSE mapping for new code: {new_code}")
+        old_to_new[old_code] = new_ts_code
+        new_to_old[new_code] = old_ts_code
+    identities: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for code in sorted(codes):
+        if market_for_code(code) != "BJSE":
+            identities[code] = (provider_code_for(code), ())
+            continue
+        if code.startswith(("4", "8")):
+            primary = old_to_new.get(code)
+            if primary is None:
+                raise ValueError(f"Tushare BSE mapping unavailable for old code: {code}")
+            identities[code] = (primary, (provider_code_for(code),))
+            continue
+        old_alias = new_to_old.get(code)
+        aliases = (old_alias,) if old_alias else BSE_PROVIDER_ALIASES.get(code, ())
+        identities[code] = (provider_code_for(code), aliases)
+    return identities
 
 
 def _text(value: object) -> str:
@@ -158,9 +205,14 @@ def classify_tushare_target(
     suspension_records: list[dict[str, object]],
     adj_factor: float | None,
     risk_records: list[dict[str, object]],
+    *,
+    primary_provider_code: str | None = None,
+    provider_aliases: tuple[str, ...] = (),
 ) -> tuple[dict[str, object] | None, str | None]:
-    provider_code = provider_code_for(code)
-    allowed_provider_codes = set(provider_codes_for(code))
+    provider_code = primary_provider_code or provider_code_for(code)
+    allowed_provider_codes = {provider_code, *provider_aliases}
+    if primary_provider_code is None:
+        allowed_provider_codes.update(provider_codes_for(code))
     for record in suspension_records:
         if _text(record.get("ts_code")) not in allowed_provider_codes:
             raise ValueError(f"suspension identity mismatch: {code}/{target_date}")
@@ -280,7 +332,14 @@ def _plain_records(frame: Any) -> list[dict[str, object]]:
     return records
 
 
-def _fetch_tushare(targets: dict[str, tuple[date, ...]]) -> tuple[str, dict[str, dict[str, list[dict[str, object]]]]]:
+def _fetch_tushare(
+    targets: dict[str, tuple[date, ...]],
+) -> tuple[
+    str,
+    dict[str, dict[str, list[dict[str, object]]]],
+    dict[str, tuple[str, tuple[str, ...]]],
+    list[dict[str, object]],
+]:
     _load_service_environment()
     from quotemux.settings import QuoteMuxSettings
     from quotemux.source_packages.instance_context import use_source_instance
@@ -297,8 +356,11 @@ def _fetch_tushare(targets: dict[str, tuple[date, ...]]) -> tuple[str, dict[str,
         provider = get_ts_pro()
         if provider is None:
             raise RuntimeError("Tushare provider unavailable")
+        mapping_frame = call_tushare_api("bse_mapping", provider.bse_mapping)
+        bse_mapping_records = _plain_records(mapping_frame)
+        provider_identities = build_bse_provider_identities(bse_mapping_records, set(targets))
         for code, dates in sorted(targets.items()):
-            ts_code = provider_code_for(code)
+            ts_code, aliases = provider_identities[code]
             kwargs = {
                 "ts_code": ts_code,
                 "start_date": min(dates).strftime("%Y%m%d"),
@@ -312,7 +374,7 @@ def _fetch_tushare(targets: dict[str, tuple[date, ...]]) -> tuple[str, dict[str,
                 frame = call_tushare_api(api_name, fetcher, **kwargs)
                 per_code[api_name] = _plain_records(frame)
             per_code["suspend_d_alias"] = []
-            for alias in BSE_PROVIDER_ALIASES.get(code, ()):
+            for alias in aliases:
                 alias_frame = call_tushare_api(
                     "suspend_d",
                     provider.suspend_d,
@@ -322,7 +384,7 @@ def _fetch_tushare(targets: dict[str, tuple[date, ...]]) -> tuple[str, dict[str,
                 )
                 per_code["suspend_d_alias"].extend(_plain_records(alias_frame))
             output[code] = per_code
-    return instance.instance_id, output
+    return instance.instance_id, output, provider_identities, bse_mapping_records
 
 
 def health(url: str) -> dict[str, Any]:
@@ -359,7 +421,7 @@ def export_artifact(
         raise RuntimeError("live release does not match expected release")
     if not source_audit_data_version:
         source_audit_data_version = str(before_health.get("data_version", ""))
-    source_instance_id, raw = _fetch_tushare(targets)
+    source_instance_id, raw, provider_identities, bse_mapping_records = _fetch_tushare(targets)
     after_health = health(health_url)
     if after_health.get("version") != before_health.get("version") or after_health.get("data_version") != before_health.get("data_version"):
         raise RuntimeError("live release/data version drifted during Tushare export")
@@ -367,6 +429,7 @@ def export_artifact(
     residuals: list[dict[str, object]] = []
     for code, dates in sorted(targets.items()):
         provider = raw[code]
+        primary_provider_code, provider_aliases = provider_identities[code]
         daily = _index_unique(provider["daily"], "trade_date", code, "daily")
         factors = _index_unique(provider["adj_factor"], "trade_date", code, "adj_factor")
         suspensions: dict[str, list[dict[str, object]]] = {}
@@ -386,13 +449,15 @@ def export_artifact(
                 suspensions.get(key, []),
                 factor,
                 risks.get(key, []),
+                primary_provider_code=primary_provider_code,
+                provider_aliases=provider_aliases,
             )
             if normalized is None:
                 residuals.append({
                     "market": market_for_code(code),
                     "code": code,
                     "trade_date": target_date.isoformat(),
-                    "provider_code": provider_code_for(code),
+                    "provider_code": primary_provider_code,
                     "reason": reason,
                 })
             else:
@@ -423,7 +488,13 @@ def export_artifact(
         "responses": raw,
         "authoritative_bse_code_mapping": {
             "source_url": BSE_MAPPING_SOURCE_URL,
-            "canonical_to_provider_aliases": BSE_PROVIDER_ALIASES,
+            "tushare_api": "bse_mapping",
+            "records": bse_mapping_records,
+            "canonical_to_provider_identity": {
+                code: {"primary": primary, "aliases": list(aliases)}
+                for code, (primary, aliases) in sorted(provider_identities.items())
+                if market_for_code(code) == "BJSE"
+            },
         },
     }
     write_json(raw_path, raw_payload)

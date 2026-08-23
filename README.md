@@ -27,4 +27,4 @@ MarketHub 额外提供由 TqSdk 驱动的中国期货实时快照：实际合约
 
 ## 回测框架
 
-想要回测策略，可以使用 [ApexTrade](https://github.com/leodo/apex-trade) + [MarketHub 数据适配器](https://github.com/williamxhero/apex-trader-markethub-adapter)
+想要回测策略，可以使用 **[Quant Runtime](https://github.com/williamxhero/QuantRuntime.git)**

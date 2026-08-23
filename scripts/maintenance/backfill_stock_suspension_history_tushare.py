@@ -123,7 +123,7 @@ def _targets(audit_path: Path) -> tuple[dict[str, Any], dict[tuple[str, str], tu
     return audit, targets
 
 
-def probe(audit_path: Path, output_root: Path, health_url: str) -> dict[str, object]:
+def probe(audit_path: Path, output_root: Path, health_url: str, stop_before_baostock: bool = False) -> dict[str, object]:
     _load_service_environment()
     from quotemux.settings import QuoteMuxSettings
     from quotemux.source_packages.instance_context import use_source_instance
@@ -167,15 +167,18 @@ def probe(audit_path: Path, output_root: Path, health_url: str) -> dict[str, obj
                     qualified.append({"market": market, "code": code, "trade_date": target_date, "provider_code": provider_code, "source": SOURCE, "source_marker": SOURCE_MARKER, "source_record": source_rows[0]})
     baostock_raw: dict[str, object] = {}
     baostock_targets: dict[tuple[str, str], list[date]] = {}
-    for row in pending:
-        target_date = row["trade_date"]
-        assert isinstance(target_date, date)
-        if row["market"] == "BJSE" and target_date < BSE_INCEPTION:
-            excluded.append({**row, "reason": "bjse_before_market_inception", "market_inception": BSE_INCEPTION})
-        elif row["market"] in {"SHSE", "SZSE"}:
-            baostock_targets.setdefault((str(row["market"]), str(row["code"])), []).append(target_date)
-        else:
-            residuals.append(row)
+    if stop_before_baostock:
+        residuals.extend({**row, "reason": "tushare_unverified_baostock_not_run"} for row in pending)
+    else:
+        for row in pending:
+            target_date = row["trade_date"]
+            assert isinstance(target_date, date)
+            if row["market"] == "BJSE" and target_date < BSE_INCEPTION:
+                excluded.append({**row, "reason": "bjse_before_market_inception", "market_inception": BSE_INCEPTION})
+            elif row["market"] in {"SHSE", "SZSE"}:
+                baostock_targets.setdefault((str(row["market"]), str(row["code"])), []).append(target_date)
+            else:
+                residuals.append(row)
     if baostock_targets:
         import baostock as bs
 
@@ -234,7 +237,7 @@ def probe(audit_path: Path, output_root: Path, health_url: str) -> dict[str, obj
         "created_at_utc": datetime.now(timezone.utc),
         "release": before_health["version"],
         "target_data_version": before_health["data_version"],
-        "sources": [SOURCE, BAOSTOCK_SOURCE],
+        "sources": [SOURCE] if stop_before_baostock else [SOURCE, BAOSTOCK_SOURCE],
         "source_audit": str(audit_path),
         "source_audit_sha256": _sha256(audit_path),
         "target_rows": target_count,
@@ -313,12 +316,13 @@ def main() -> int:
     probe_parser.add_argument("--audit", type=Path, required=True)
     probe_parser.add_argument("--output-root", type=Path, required=True)
     probe_parser.add_argument("--health-url", default="http://127.0.0.1:8803/api/health")
+    probe_parser.add_argument("--stop-before-baostock", action="store_true")
     apply_parser = subparsers.add_parser("apply")
     apply_parser.add_argument("--artifact", type=Path, required=True)
     apply_parser.add_argument("--health-url", default="http://127.0.0.1:8803/api/health")
     apply_parser.add_argument("--commit", action="store_true")
     args = parser.parse_args()
-    result = probe(args.audit, args.output_root, args.health_url) if args.command == "probe" else apply(args.artifact, args.health_url, args.commit)
+    result = probe(args.audit, args.output_root, args.health_url, args.stop_before_baostock) if args.command == "probe" else apply(args.artifact, args.health_url, args.commit)
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return 0
 

@@ -8,5 +8,6 @@ efinance
 mootdx
 opentdx
 tushare==1.4.24
+baostock==0.8.9
 pytest
 httpx

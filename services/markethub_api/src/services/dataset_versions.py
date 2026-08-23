@@ -20,6 +20,7 @@ DATASET_IDS = (
     "stock_research_daily",
 )
 STOCK_DAILY_DATASET_ID = "stock_daily_1d"
+READ_MODEL_DATASET_IDS = frozenset(("stock_daily_1d", "stock_bar_1m"))
 VERSION_CONTRACT = "markethub-dataset-vector-v1"
 ROUTE_DATASET_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "/api/stocks/catalog": ("stock_reference",),
@@ -73,7 +74,10 @@ def current_stock_daily_dataset_version() -> str:
 def current_dataset_publications(versions: dict[str, str] | None = None) -> dict[str, dict[str, object]]:
     versions = current_dataset_versions() if versions is None else versions
     publications = {
-        dataset_id: {"status": "online", "dataset_version": version}
+        dataset_id: {
+            "status": "not_ready" if dataset_id in READ_MODEL_DATASET_IDS else "online",
+            "dataset_version": version,
+        }
         for dataset_id, version in versions.items()
     }
     try:
