@@ -20,6 +20,9 @@ def sync_runtime_env(
         "MARKETHUB_LOG_ROOT": str(runtime_root / "logs"),
         "MARKETHUB_DATA_UPDATE_ROOT": str(runtime_root / "data-update"),
         "MARKETHUB_EXPORT_ROOT": str(app_root / "exports"),
+        # Keep maintenance entrypoints independent of a particular release name while
+        # still letting them import code from the atomically switched current release.
+        "MARKETHUB_CODE_ROOT": str(app_root / "current"),
         "QUOTEMUX_RUNTIME_ROOT": str(runtime_root / "runtime"),
         "QUOTEMUX_CACHE_PAYLOAD_ROOT": str(runtime_root / "cache_payloads"),
         "QUOTEMUX_PACKAGE_REPO_SPEC": str(release_root / "QuoteMux_Packages"),

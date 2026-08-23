@@ -143,6 +143,7 @@ def test_release_installer_rewrites_release_scoped_env_without_losing_secrets(tm
     assert "MARKETHUB_DB_PASSWORD=top-secret" in content
     assert "CUSTOM_SETTING=preserved" in content
     assert "# keep this comment" in content
+    assert "MARKETHUB_CODE_ROOT=" + str(tmp_path / "app" / "current") in content
     assert "QUOTEMUX_PACKAGE_REPO_SPEC=" + str(tmp_path / "app" / "releases" / "new-release" / "QuoteMux_Packages") in content
     assert "QUOTEMUX_PACKAGE_VENV_ROOT=" + str(tmp_path / "runtime" / "package_venvs" / "new-release") in content
     assert "/old/" not in content

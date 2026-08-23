@@ -14,6 +14,7 @@ GLOBAL_DATA_UPDATE_SCRIPT="${MARKETHUB_GLOBAL_DATA_UPDATE_SCRIPT:-$SCRIPT_DIR/gl
 DATA_HEALTH_SCRIPT="${MARKETHUB_DATA_HEALTH_SCRIPT:-$SCRIPT_DIR/data-health-check.sh}"
 PARQUET_PUBLISHER_SCRIPT="${MARKETHUB_PARQUET_PUBLISHER_SCRIPT:-$SCRIPT_DIR/../publisher/publish_stock_daily_parquet.py}"
 MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
+MARKETHUB_CODE_ROOT="${MARKETHUB_CODE_ROOT:-}"
 MARKETHUB_EXPORT_ROOT="${MARKETHUB_EXPORT_ROOT:-/data/MarketHub2/exports}"
 MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH="${MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH:-0}"
 # Long-running catch-up captures must not block the health and publisher chain.
@@ -31,6 +32,11 @@ run_once() {
     "$DATA_HEALTH_SCRIPT"
     if [ "$MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH" = "1" ]; then
         log "数据健康检查通过，开始发布版本化 stock_daily_1d Parquet"
+        if [ -z "$MARKETHUB_CODE_ROOT" ]; then
+            log "缺少 MARKETHUB_CODE_ROOT，无法从当前 release 加载 publisher 依赖"
+            return 1
+        fi
+        PYTHONPATH="$MARKETHUB_CODE_ROOT/QuoteMux/src:$MARKETHUB_CODE_ROOT/MarketHub/services/markethub_api/src${PYTHONPATH:+:$PYTHONPATH}" \
         "$MARKETHUB_PYTHON" "$PARQUET_PUBLISHER_SCRIPT" \
             --export-root "$MARKETHUB_EXPORT_ROOT" \
             --compression "${MARKETHUB_PARQUET_COMPRESSION:-zstd}" \
