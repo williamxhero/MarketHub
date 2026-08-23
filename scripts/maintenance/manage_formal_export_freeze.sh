@@ -107,6 +107,23 @@ restore_units() {
     done <"$lease_dir/unit-state.tsv"
 }
 
+restore_reconcile_schedule() {
+    local lease_dir="$1"
+    if ! awk -F '\t' '
+        $1 == "user" && $2 == "xdn-task-center-reconcile.timer" && $5 == "active" { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' "$lease_dir/unit-state.tsv"; then
+        return
+    fi
+    # OnUnitActiveSec can remain elapsed when a previously active timer is
+    # stopped for a long freeze and merely started again. Run the authoritative
+    # reconciler once, then restart its timer from that fresh activation point.
+    systemctl --user start xdn-task-center-reconcile.service
+    systemctl --user restart xdn-task-center-reconcile.timer
+    test "$(unit_property user xdn-task-center-reconcile.timer ActiveState)" = active
+    test -n "$(unit_property user xdn-task-center-reconcile.timer NextElapseUSecRealtime)"
+}
+
 assert_services_idle() {
     local scope="$1"
     shift
@@ -230,8 +247,9 @@ restore() {
     test -f "$lease_dir/unit-state.tsv"
     require_systemctl_privilege
     restore_units "$lease_dir"
-    date -Ins >"$lease_dir/restored_at"
     rm -f "$ACTIVE_FILE"
+    restore_reconcile_schedule "$lease_dir"
+    date -Ins >"$lease_dir/restored_at"
     printf 'formal-export freeze restored; lease=%s\n' "$lease_id"
 }
 
