@@ -38,7 +38,8 @@ $freezeOwner = if ($ResumeFreezeOwner) { $ResumeFreezeOwner } else { "query-read
 $freezeTool = "$($deployment.runtime_root)/scripts/manage-formal-export-freeze.sh"
 if ($ResumeFreezeOwner) {
     $freezeStatus = & ssh $HostName "test -x '$freezeTool' && '$freezeTool' status"
-    if ($LASTEXITCODE -ne 0 -or $freezeStatus -notmatch "(?m)^lease=$([regex]::Escape($freezeOwner))$") {
+    $matchingLeaseLines = @($freezeStatus | Where-Object { $_.Trim() -ceq "lease=$freezeOwner" })
+    if ($LASTEXITCODE -ne 0 -or $matchingLeaseLines.Count -ne 1) {
         throw "目标机现有 freeze 与 -ResumeFreezeOwner 不匹配，拒绝接管"
     }
 } else {

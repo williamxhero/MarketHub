@@ -21,6 +21,7 @@ def test_query_read_v3_migration_is_versioned_generic_and_reuses_formal_tools() 
     assert "freeze '$freezeOwner'" in deploy
     assert "acquire '$freezeOwner'" not in deploy
     assert "ResumeFreezeOwner" in deploy
+    assert 'Where-Object { $_.Trim() -ceq "lease=$freezeOwner" }' in deploy
     assert "拒绝接管" in deploy
     assert "deploy_yosef_server.ps1" in deploy
     assert "if ($migrationSucceeded)" in deploy
