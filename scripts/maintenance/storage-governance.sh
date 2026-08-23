@@ -28,7 +28,7 @@ log() {
 remove_path() {
     local path="$1"
     case "$path" in
-        "$MARKETHUB_ROOT"/releases/*|"$RUNTIME_ROOT"/package_venvs/deploy_*|"$MARKETHUB_ROOT"/inbox/*) ;;
+        "$MARKETHUB_ROOT"/releases/*|"$RUNTIME_ROOT"/package_venvs/*|"$MARKETHUB_ROOT"/inbox/*) ;;
         *)
             echo "拒绝删除非治理路径: $path" >&2
             exit 20
@@ -73,10 +73,16 @@ current_venv="$(systemctl show "$SERVICE_NAME.service" -p Environment --value \
     echo "无法解析当前 QuoteMux provider 环境目录" >&2
     exit 11
 }
+package_venv_root="$RUNTIME_ROOT/package_venvs"
+current_venv="$(readlink -f "$current_venv")"
+[[ "$(dirname "$current_venv")" == "$(readlink -f "$package_venv_root")" ]] || {
+    echo "当前 QuoteMux provider 环境不是 package_venvs 的直接子目录，拒绝治理" >&2
+    exit 12
+}
 
-for venv in "$RUNTIME_ROOT"/package_venvs/deploy_*; do
+for venv in "$package_venv_root"/*; do
     [[ -d "$venv" ]] || continue
-    [[ "$(readlink -f "$venv")" == "$(readlink -f "$current_venv")" ]] || remove_path "$venv"
+    [[ "$(readlink -f "$venv")" == "$current_venv" ]] || remove_path "$venv"
 done
 
 while IFS= read -r -d '' archive; do

@@ -71,7 +71,7 @@ install -d -o "$service_user" -g "$service_group" "$app_root/releases" "$runtime
 rm -rf -- "$release_root"
 mkdir -p "$release_root"
 tar --no-same-owner -xzf "$archive" -C "$release_root"
-find "$release_root/MarketHub/migrations" -type f -name '*.sh' -exec chmod 0755 {} +
+find "$release_root/MarketHub" -type f -name '*.sh' -exec chmod 0755 {} +
 chown -R "$service_user:$service_group" "$release_root"
 chown "$service_user:$service_group" "$runtime_root"
 

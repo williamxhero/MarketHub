@@ -64,6 +64,8 @@ python3 MarketHub/migrations/storage_v2_20260823/discover_environment.py \
   --service-name markethub-api
 ```
 
+需要让远端入口只保存正式 `preflight.json`、不创建 release 或迁移时，使用同一命令并追加 `-PreflightOnly`。
+
 发现优先级如下：
 
 1. 已加载 systemd unit 的 `WorkingDirectory`、`EnvironmentFiles`、`User` 和 `ExecStart`。

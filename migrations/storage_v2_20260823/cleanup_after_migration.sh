@@ -34,8 +34,8 @@ mkdir -p "$EVIDENCE_ROOT"
   verify
 
 governance="$MARKETHUB_ROOT/current/MarketHub/scripts/maintenance/storage-governance.sh"
-if [[ -x "$governance" ]]; then
-  MARKETHUB_ROOT="$MARKETHUB_ROOT" MARKETHUB_RUNTIME_ROOT="$RUNTIME_ROOT" MARKETHUB_SERVICE_NAME="$SERVICE_NAME" "$governance"
+if [[ -f "$governance" ]]; then
+  MARKETHUB_ROOT="$MARKETHUB_ROOT" MARKETHUB_RUNTIME_ROOT="$RUNTIME_ROOT" MARKETHUB_SERVICE_NAME="$SERVICE_NAME" bash "$governance"
 fi
 
 df -h "$MARKETHUB_ROOT"

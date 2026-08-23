@@ -87,6 +87,8 @@ def test_remote_migration_discovers_environment_before_deploying() -> None:
 
     assert content.index("discover_environment.py") < content.index("deploy_yosef_server.ps1")
     assert "preflight.json" in content
+    assert "PreflightOnly" in content
+    assert "base64 --decode --ignore-garbage | sudo" in content
     assert "inspect-before-apply.json" in content
     assert "base64 --decode" in content
     assert "bash '$migrationRoot/cleanup_after_migration.sh'" in content
@@ -95,10 +97,12 @@ def test_remote_migration_discovers_environment_before_deploying() -> None:
     assert "yosef:yosef" not in generic_deploy
     assert "User=$service_user" in generic_deploy
     assert "base64 --decode" in generic_deploy
-    assert "find \"$release_root/MarketHub/migrations\" -type f -name '*.sh' -exec chmod 0755 {} +" in generic_deploy
+    assert "find \"$release_root/MarketHub\" -type f -name '*.sh' -exec chmod 0755 {} +" in generic_deploy
     assert "'$HealthUrl'" in generic_deploy
     governance = (SCRIPT.parents[2] / "scripts" / "maintenance" / "storage-governance.sh").read_text(encoding="utf-8")
     assert 'systemctl show "$SERVICE_NAME.service"' in governance
+    assert 'for venv in "$package_venv_root"/*' in governance
+    assert "不是 package_venvs 的直接子目录" in governance
 
 
 def test_package_installer_uses_the_discovered_runtime_root() -> None:

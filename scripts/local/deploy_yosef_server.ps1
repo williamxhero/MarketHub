@@ -72,7 +72,7 @@ fi
 test -f "$env_path"
 mkdir -p "$release_root" "$runtime_root"
 tar --no-same-owner -xzf "$remote_archive" -C "$release_root"
-find "$release_root/MarketHub/migrations" -type f -name '*.sh' -exec chmod 0755 {} +
+find "$release_root/MarketHub" -type f -name '*.sh' -exec chmod 0755 {} +
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info" "$release_root/QuoteMux_Packages/build"
 service_group="$(id -gn "$service_user")"
 sudo -n chown -R "$service_user:$service_group" "$release_root"

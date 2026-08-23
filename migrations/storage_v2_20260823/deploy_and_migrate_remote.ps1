@@ -9,6 +9,7 @@ param(
     [Parameter(Mandatory = $true)][string]$TargetStorageVersion,
     [switch]$ConfirmRemoteDatabaseSpace,
     [switch]$InstallOrUpgradePrerequisites,
+    [switch]$PreflightOnly,
     [switch]$CleanupLegacy,
     [switch]$PruneOldReleases
 )

@@ -9,6 +9,7 @@ param(
     [Parameter(Mandatory = $true)][string]$TargetStorageVersion,
     [switch]$ConfirmRemoteDatabaseSpace,
     [switch]$InstallOrUpgradePrerequisites,
+    [switch]$PreflightOnly,
     [switch]$CleanupLegacy,
     [switch]$PruneOldReleases
 )
@@ -130,11 +131,15 @@ $savePreflight = @"
 set -Eeuo pipefail
 service_group=`$(id -gn '$ServiceUser')
 sudo -n install -d -o '$ServiceUser' -g "`$service_group" '$evidenceRoot'
-sudo -n -u '$ServiceUser' tee '$evidenceRoot/preflight.json' >/dev/null
+base64 --decode --ignore-garbage | sudo -n -u '$ServiceUser' tee '$evidenceRoot/preflight.json' >/dev/null
 "@
 $encodedPreflight = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($preflightJson))
-$encodedPreflight | ssh $HostName "base64 --decode --ignore-garbage | $savePreflight"
+$encodedPreflight | ssh $HostName $savePreflight
 if ($LASTEXITCODE -ne 0) { throw "无法保存迁移前环境证据；尚未开始部署或迁移" }
+if ($PreflightOnly) {
+    Write-Output "只读环境发现与证据保存完成；未创建 release，未执行数据库迁移"
+    return
+}
 
 $deployScript = Join-Path $marketHubRoot "scripts\local\deploy_yosef_server.ps1"
 & $deployScript `
