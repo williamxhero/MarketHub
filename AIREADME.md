@@ -69,6 +69,55 @@ POST http://<MARKETHUB_HOST>:<MARKETHUB_PORT>/api/admin/capture/run-due-async
 
 如果用户选择 Windows Task Scheduler，只注册 API 启动任务和 HTTP 到期检查；不要声称 Bash 全局更新已经部署。
 
+## 6. 已有部署升级到 storage-v2
+
+本节只适用于已经运行旧版 MarketHub、数据库中分钟表仍是普通 PostgreSQL 表的环境。它是一次性能存储迁移，不是普通覆盖升级；全新安装以及已经完成 storage-v2 的环境不要重新执行破坏性迁移。正式版本合同、恢复语义和机器可读 manifest 位于 `migrations/storage_v2_20260823/`，执行 AI 必须先完整阅读该目录的 `README.md` 和 `manifest.json`。
+
+本次合同：
+
+- 迁移 ID：`markethub-storage-v2-20260823`
+- 源版本：`storage-v1-postgresql-ordinary-bars`
+- 目标版本：`storage-v2.0.0-timescale-parquet-arrow`
+- PostgreSQL：16 或 18
+- TimescaleDB：不低于 2.27.2
+
+其他人的 AI task 在 pull 本次版本后按以下顺序执行：
+
+1. 确认 MarketHub、QuoteMux、QuoteMux_Packages 三个同级仓库干净，再分别执行 `git pull --ff-only`。不得覆盖或丢弃用户未提交修改。
+2. 目标只能是用户实际部署 MarketHub 的机器。不要把执行 AI 自己的 Windows、WSL、路径、主机名、服务名、端口或数据库参数当成目标环境，也不要把本机 WSL 演练当成远端迁移前置步骤。
+3. 先用通用入口的 `-PreflightOnly` 做只读发现。脚本会读取目标机器真实的 systemd unit、服务用户、env 文件、发布/运行目录、API、PostgreSQL/TimescaleDB、目标表和磁盘余量，并保存 `preflight.json`。发现结果不满足 manifest 时停止，不创建 release、不写数据库。
+4. preflight 通过后，仍从同一个 `deploy_and_migrate_remote.ps1` 入口安装完整新 release 并执行 `apply`、`verify`。不得手工运行迁移 SQL、rename/drop 表或绕过版本门。
+5. 中途失败时保留证据和数据库现场，在本迁移目录修复脚本、增加或更新测试、提交修复后，再从同一顶层入口幂等重跑，直到脚本完成迁移与验收。
+6. 只有 `apply.json`、`verify.json` 成功，四张 canonical 表均为 hypertable，且没有 shadow/failed/journal/trigger 残留时，才可追加 `-CleanupLegacy -PruneOldReleases`。清理也必须由脚本执行。
+7. 最终核对 API health/OpenAPI、systemd 状态和重启次数、数据库迁移状态、证据目录、磁盘空间、唯一 current release，以及三个仓库对应的 Git commit。
+
+通用示例（主机名和路径只作占位，必须替换为目标机器的真实值）：
+
+```powershell
+git -C MarketHub pull --ff-only
+git -C QuoteMux pull --ff-only
+git -C QuoteMux_Packages pull --ff-only
+
+# 第一次只读探测，不部署、不迁移。
+pwsh -File MarketHub/migrations/storage_v2_20260823/deploy_and_migrate_remote.ps1 `
+  -HostName <TARGET_HOST> `
+  -ExpectedSourceStorageVersion storage-v1-postgresql-ordinary-bars `
+  -TargetStorageVersion storage-v2.0.0-timescale-parquet-arrow `
+  -PreflightOnly
+
+# preflight 通过后执行完整部署、迁移、验收；验收通过后清理 legacy 和旧 release。
+pwsh -File MarketHub/migrations/storage_v2_20260823/deploy_and_migrate_remote.ps1 `
+  -HostName <TARGET_HOST> `
+  -ExpectedSourceStorageVersion storage-v1-postgresql-ordinary-bars `
+  -TargetStorageVersion storage-v2.0.0-timescale-parquet-arrow `
+  -CleanupLegacy `
+  -PruneOldReleases
+```
+
+若目标机器的路径或服务名不是默认布局，可传 `-RemoteRoot`、`-RemoteRuntimeRoot`、`-RemoteEnvPath`、`-ServiceName` 和 `-HealthUrl` 作为发现提示；已有部署仍以目标机器 unit/env 的实际内容为准。数据库位于另一台主机时，AI 必须先在数据库主机核对迁移空间，再按迁移说明决定是否使用 `-ConfirmRemoteDatabaseSpace`。TimescaleDB 版本不足时只有在用户授权系统包升级后才能使用 `-InstallOrUpgradePrerequisites`。
+
+迁移完成后的日常代码发布恢复为普通覆盖流程，不应每次重复运行此一次性迁移包。
+
 
 ## 7. 停止条件
 
