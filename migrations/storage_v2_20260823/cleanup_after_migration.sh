@@ -9,6 +9,7 @@ fi
 SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MARKETHUB_ROOT="${MARKETHUB_ROOT:-/data/MarketHub2}"
 RUNTIME_ROOT="${MARKETHUB_RUNTIME_ROOT:-/data/markethub}"
+SERVICE_NAME="${MARKETHUB_SERVICE_NAME:-markethub-api}"
 ENV_PATH="${MARKETHUB_ENV_PATH:-$RUNTIME_ROOT/env/markethub.env}"
 PYTHON="${MARKETHUB_VENV_ROOT:-$RUNTIME_ROOT/.venv}/bin/python"
 EVIDENCE_ROOT="$RUNTIME_ROOT/migrations/markethub-storage-v2-20260823"
@@ -34,7 +35,7 @@ mkdir -p "$EVIDENCE_ROOT"
 
 governance="$MARKETHUB_ROOT/current/MarketHub/scripts/maintenance/storage-governance.sh"
 if [[ -x "$governance" ]]; then
-  MARKETHUB_ROOT="$MARKETHUB_ROOT" MARKETHUB_RUNTIME_ROOT="$RUNTIME_ROOT" "$governance"
+  MARKETHUB_ROOT="$MARKETHUB_ROOT" MARKETHUB_RUNTIME_ROOT="$RUNTIME_ROOT" MARKETHUB_SERVICE_NAME="$SERVICE_NAME" "$governance"
 fi
 
 df -h "$MARKETHUB_ROOT"

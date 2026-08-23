@@ -1,6 +1,6 @@
 {
   "migration_id": "markethub-storage-v2-20260823",
-  "package_version": "1.0.0",
+  "package_version": "1.1.0",
   "source_application_release": "deploy_20260822_191100 or an earlier ordinary-bar-table deployment",
   "source_storage_version": "storage-v1-postgresql-ordinary-bars",
   "target_application_version": "MarketHub main with storage-v2 migration package",
@@ -14,5 +14,7 @@
     "fact.future_bar_1m"
   ],
   "migration_mode": "resumable-shadow-copy-cutover",
+  "preflight_environment_discovery_required": true,
+  "supported_deployment_models": ["systemd-native-linux", "wsl2-systemd", "remote-postgresql-with-explicit-space-confirmation"],
   "legacy_cleanup_requires_explicit_target_version": true
 }

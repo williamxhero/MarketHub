@@ -55,13 +55,26 @@ def _install_all_packages(python_executable: Path) -> None:
 
 
 def _install_playwright_browsers() -> None:
-    package_venv_root = WORKSPACE_ROOT / "runtime" / "package_venvs"
+    configured_root = os.getenv("QUOTEMUX_PACKAGE_VENV_ROOT", "").strip()
+    package_venv_root = Path(configured_root) if configured_root else WORKSPACE_ROOT / "runtime" / "package_venvs"
     candidates = sorted(package_venv_root.glob("crawler_provider-*"))
     if candidates == []:
         return
-    python_executable = _python_executable(candidates[-1])
-    if not python_executable.is_file():
-        return
+    python_executable = None
+    for candidate in reversed(candidates):
+        candidate_python = _python_executable(candidate)
+        if not candidate_python.is_file():
+            continue
+        probe = subprocess.run(
+            [str(candidate_python), "-c", "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('playwright') else 1)"],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            python_executable = candidate_python
+            break
+    if python_executable is None:
+        raise RuntimeError("crawler_provider 使用 Playwright，但其隔离环境未声明或未安装 playwright 依赖")
     subprocess.run(
         [str(python_executable), "-m", "playwright", "install", "chromium"],
         cwd=str(WORKSPACE_ROOT),

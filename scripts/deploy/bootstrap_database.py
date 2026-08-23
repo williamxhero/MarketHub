@@ -116,6 +116,88 @@ BASE_SCHEMA_SQL = (
     )
     """,
     "create index if not exists stock_daily_1d_trade_date_idx on fact.stock_daily_1d (trade_date, market, code)",
+    *(
+        f"""
+        do $$
+        begin
+          if to_regclass('fact.{table_name}') is null then
+            create table fact.{table_name} (
+              market character varying not null,
+              code character(6) not null,
+              bar_time timestamp without time zone not null,
+              open double precision not null,
+              high double precision not null,
+              low double precision not null,
+              close double precision not null,
+              volume bigint not null,
+              amount double precision,
+              loaded_at timestamp with time zone not null default now(),
+              primary key (market,code,bar_time)
+            );
+            perform create_hypertable(
+              'fact.{table_name}'::regclass,
+              by_range('bar_time',interval '14 days'),
+              create_default_indexes => false
+            );
+            create index {table_name}_code_time_idx on fact.{table_name}(code,bar_time);
+            create index {table_name}_time_idx on fact.{table_name}(bar_time desc);
+            alter table fact.{table_name} set (
+              timescaledb.enable_columnstore=true,
+              timescaledb.segmentby='market,code',
+              timescaledb.orderby='bar_time ASC'
+            );
+            call add_columnstore_policy(
+              'fact.{table_name}'::regclass,
+              after => interval '30 days',
+              if_not_exists => true
+            );
+          end if;
+        end $$
+        """
+        for table_name in ("stock_bar_5m", "stock_bar_30m")
+    ),
+    """
+    create table if not exists ref.future_series (
+        product_code text not null,
+        exchange text not null,
+        series_type text not null,
+        display_name text not null default '',
+        loaded_at timestamp with time zone not null default now(),
+        primary key (product_code, exchange, series_type),
+        check (series_type in ('apex_l0_adjusted', 'main_continuous'))
+    )
+    """,
+    """
+    do $$
+    begin
+      if to_regclass('fact.future_bar_1m') is null then
+        create table fact.future_bar_1m (
+          product_code text not null,
+          exchange text not null,
+          series_type text not null,
+          bar_time timestamp without time zone not null,
+          open double precision,
+          high double precision,
+          low double precision,
+          close double precision,
+          volume double precision,
+          open_interest double precision,
+          adjustment_offset double precision,
+          source_key text not null,
+          loaded_at timestamp with time zone not null default now(),
+          primary key (product_code,exchange,series_type,bar_time),
+          foreign key (product_code,exchange,series_type)
+            references ref.future_series(product_code,exchange,series_type)
+        );
+        perform create_hypertable(
+          'fact.future_bar_1m'::regclass,
+          by_range('bar_time',interval '14 days'),
+          create_default_indexes => false
+        );
+        create index future_bar_1m_time_idx on fact.future_bar_1m(bar_time,product_code,series_type);
+      end if;
+    end $$
+    """,
     """
     create table if not exists fact.stock_price_band_daily (
         market text not null,
@@ -255,28 +337,33 @@ def _ensure_database(database_config: dict[str, str]) -> None:
 
 
 def _create_database_with_local_postgres_user(database_config: dict[str, str]) -> bool:
+    if database_config["host"] not in ("", "127.0.0.1", "localhost", "::1"):
+        return False
     psql = shutil.which("psql")
     sudo = shutil.which("sudo")
     if os.name == "nt" or psql is None or sudo is None:
         return False
     user_name = database_config["user"]
     database_name = database_config["dbname"]
+    database_port = database_config["port"]
     password = database_config["password"].replace("'", "''")
     role_sql = (
         "do $$ begin "
-        f"if not exists (select 1 from pg_roles where rolname = '{user_name}') then "
+        f"if exists (select 1 from pg_roles where rolname = '{user_name}') then "
+        f"alter role {user_name} login password '{password}'; "
+        "else "
         f"create role {user_name} login password '{password}'; "
         "end if; end $$"
     )
-    if _run_as_postgres(psql, ("-v", "ON_ERROR_STOP=1", "-d", "postgres", "-c", role_sql)) != 0:
+    if _run_as_postgres(psql, ("-p", database_port, "-v", "ON_ERROR_STOP=1", "-d", "postgres", "-c", role_sql)) != 0:
         return False
     exists_sql = f"select 1 from pg_database where datname = '{database_name}'"
-    result = subprocess.run([sudo, "-n", "-u", "postgres", psql, "-tAc", exists_sql], capture_output=True, text=True)
+    result = subprocess.run([sudo, "-n", "-u", "postgres", psql, "-p", database_port, "-tAc", exists_sql], capture_output=True, text=True)
     if result.returncode != 0:
         return False
     if result.stdout.strip() == "1":
         return True
-    return _run_as_postgres(psql, ("-v", "ON_ERROR_STOP=1", "-d", "postgres", "-c", f"create database {database_name} owner {user_name}")) == 0
+    return _run_as_postgres(psql, ("-p", database_port, "-v", "ON_ERROR_STOP=1", "-d", "postgres", "-c", f"create database {database_name} owner {user_name}")) == 0
 
 
 def _run_as_postgres(psql: str, arguments: tuple[str, ...]) -> int:
@@ -288,8 +375,33 @@ def _ensure_extension(database_config: dict[str, str]) -> None:
         with _connect(database_config) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("create extension if not exists timescaledb")
+                cursor.execute("alter extension timescaledb update")
     except psycopg.Error as exc:
+        if _ensure_extension_with_local_postgres_user(database_config):
+            return
         raise RuntimeError("无法启用 TimescaleDB 扩展。请确认目标 PostgreSQL 已安装 TimescaleDB，且当前账号有创建扩展权限。") from exc
+
+
+def _ensure_extension_with_local_postgres_user(database_config: dict[str, str]) -> bool:
+    if database_config["host"] not in ("", "127.0.0.1", "localhost", "::1"):
+        return False
+    psql = shutil.which("psql")
+    sudo = shutil.which("sudo")
+    if os.name == "nt" or psql is None or sudo is None:
+        return False
+    return _run_as_postgres(
+        psql,
+        (
+            "-p",
+            database_config["port"],
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-d",
+            database_config["dbname"],
+            "-c",
+            "create extension if not exists timescaledb; alter extension timescaledb update",
+        ),
+    ) == 0
 
 
 def _ensure_base_schema(database_config: dict[str, str]) -> None:

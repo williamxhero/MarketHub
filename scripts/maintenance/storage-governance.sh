@@ -4,6 +4,7 @@ set -Eeuo pipefail
 # MarketHub 存储治理只处理可重建的发布产物，不触碰数据库、行情事实表和缓存正文。
 MARKETHUB_ROOT="${MARKETHUB_ROOT:-/data/MarketHub2}"
 RUNTIME_ROOT="${MARKETHUB_RUNTIME_ROOT:-/data/markethub}"
+SERVICE_NAME="${MARKETHUB_SERVICE_NAME:-markethub-api}"
 KEEP_RELEASES="${MARKETHUB_STORAGE_KEEP_RELEASES:-5}"
 INBOX_RETENTION_DAYS="${MARKETHUB_STORAGE_INBOX_RETENTION_DAYS:-14}"
 DRY_RUN=0
@@ -64,7 +65,7 @@ while IFS= read -r -d '' release; do
     [[ "$keep" -eq 1 ]] || remove_path "$resolved"
 done < <(find "$MARKETHUB_ROOT/releases" -mindepth 1 -maxdepth 1 -type d -print0)
 
-current_venv="$(systemctl show markethub-api.service -p Environment --value \
+current_venv="$(systemctl show "$SERVICE_NAME.service" -p Environment --value \
     | tr ' ' '\n' \
     | sed -n 's/^QUOTEMUX_PACKAGE_VENV_ROOT=//p' \
     | head -n 1)"

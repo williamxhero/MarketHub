@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$RemoteRuntimeRoot,
     [Parameter(Mandatory = $true)][string]$RemoteEnvPath,
     [Parameter(Mandatory = $true)][string]$ServiceName,
-    [Parameter(Mandatory = $true)][string]$HealthUrl
+    [Parameter(Mandatory = $true)][string]$HealthUrl,
+    [string]$ServiceUser = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +28,11 @@ foreach ($path in @($marketHubRoot, $quoteMuxRoot, $quoteMuxPackagesRoot)) {
         throw "缺少部署目录: $path"
     }
 }
+if ([string]::IsNullOrWhiteSpace($ServiceUser)) {
+    $ServiceUser = (& ssh $HostName "id -un") -replace "`0", ""
+    $ServiceUser = $ServiceUser.Trim()
+}
+if ([string]::IsNullOrWhiteSpace($ServiceUser)) { throw "无法确定远端 MarketHub 服务用户" }
 
 $releaseName = "deploy_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
 $archivePath = Join-Path ([System.IO.Path]::GetTempPath()) "$releaseName.tgz"
@@ -49,6 +55,7 @@ remote_archive="$3"
 runtime_root="$4"
 env_path="$5"
 service_name="$6"
+service_user="$7"
 release_root="$remote_root/releases/$release_name"
 restart_on_exit() {
   sudo -n systemctl restart "$service_name.service" >/dev/null 2>&1 || true
@@ -66,7 +73,8 @@ test -f "$env_path"
 mkdir -p "$release_root" "$runtime_root"
 tar --no-same-owner -xzf "$remote_archive" -C "$release_root"
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info" "$release_root/QuoteMux_Packages/build"
-chown -R yosef:yosef "$release_root"
+service_group="$(id -gn "$service_user")"
+sudo -n chown -R "$service_user:$service_group" "$release_root"
 test -x "$runtime_root/.venv/bin/python" || python3 -m venv "$runtime_root/.venv"
 "$runtime_root/.venv/bin/python" -m pip install --upgrade pip
 "$runtime_root/.venv/bin/python" -m pip install -e "$release_root/QuoteMux"
@@ -94,7 +102,7 @@ rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"
 rm -rf "$release_root/QuoteMux_Packages/build"
 rm -rf "$release_root/QuoteMux/src/quotemux.egg-info"
 rm -rf "$release_root/QuoteMux/build"
-chown -R yosef:yosef "$release_root"
+sudo -n chown -R "$service_user:$service_group" "$release_root"
 ln -sfn "$release_root" "$remote_root/current.next"
 mv -Tf "$remote_root/current.next" "$remote_root/current"
 mkdir -p "$runtime_root/scripts"
@@ -112,8 +120,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=yosef
-Group=yosef
+User=$service_user
+Group=$service_group
 WorkingDirectory=$remote_root/current/MarketHub/services/markethub_api
 EnvironmentFile=$env_path
 Environment=MARKETHUB_RUNTIME_ROOT=$runtime_root
@@ -143,10 +151,10 @@ sudo -n systemctl restart "$service_name.service"
 trap - EXIT
 rm -f "$remote_archive" /tmp/markethub-service
 '@
-$remoteScript.Replace("`r", "") | ssh $HostName bash -s -- $RemoteRoot $releaseName $remoteArchive $RemoteRuntimeRoot $RemoteEnvPath $ServiceName
+$remoteScript.Replace("`r", "") | ssh $HostName bash -s -- $RemoteRoot $releaseName $remoteArchive $RemoteRuntimeRoot $RemoteEnvPath $ServiceName $ServiceUser
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }
 # 服务重启后允许短暂启动窗口，健康检查固定在远端执行，避免本机解析或转发时序造成误报。
-Invoke-NativeCommand -FilePath "ssh" -Arguments @($HostName, "curl -fsS --retry 20 --retry-delay 2 --retry-connrefused 'http://127.0.0.1:8803/api/health'")
+Invoke-NativeCommand -FilePath "ssh" -Arguments @($HostName, "curl -fsS --retry 20 --retry-delay 2 --retry-connrefused '$HealthUrl'")
 Write-Output "部署完成: $RemoteRoot/releases/$releaseName"
