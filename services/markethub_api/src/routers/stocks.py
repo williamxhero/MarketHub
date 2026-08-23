@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from quotemux.models import DividendItem, DividendPage, RightsIssueItem, RightsIssuePage, StockQuotesQueryResult, StockStrategyFactorItem
 
 from data_threads import QuoteClientDisconnectedError, run_data_task, run_quote_task
-from routers.stock_quote_models import StockDailyWindowQueryPayload, StockDailyWindowQueryResponse, StockQuotesQueryPayload
+from routers.stock_quote_models import StockDailyWindowQueryPayload, StockDailyWindowQueryResponse, StockQuotesQueryPayload, StockQuotesVersionedQueryResult
 from services import daily_window, stock_1m_delivery, stock_quotes_arrow, stocks
 from services.common import filter_response_fields
 from services.runtime_memory import run_with_memory_log
@@ -127,9 +127,9 @@ async def api_stock_quotes(
         "meta_detail=summary 默认只返回 missing_count，full 才展开 missing_trade_times。"
         "覆盖率仅计算证券上市至退市区间内的交易日；若 meta.codes.expected_bar_count=0 且 complete=true，表示该日期无可交易行，策略适配器不得要求 OHLCV。"
         "is_suspended=true 的行不是可交易行，策略适配器必须排除；服务不会用零值或前收盘价合成 OHLCV。"
-        "返回合同固定为 StockQuotesQueryResult，GET 和 POST 对相同查询条件返回相同 items 与 meta。"
+        "返回合同保持 StockQuotesQueryResult 兼容，并在 meta 中附加本次固定的 dataset_version；GET 和 POST 对相同查询条件返回相同 items 与 meta。"
     ),
-    response_model=StockQuotesQueryResult,
+    response_model=StockQuotesVersionedQueryResult,
     responses={
         200: {
             "content": {
@@ -140,7 +140,7 @@ async def api_stock_quotes(
         406: {"description": "Accept 不支持"},
     },
 )
-async def api_stock_quotes_query(payload: StockQuotesQueryPayload, request: Request) -> dict[str, object] | Response:
+async def api_stock_quotes_query(payload: StockQuotesQueryPayload, request: Request) -> StockQuotesVersionedQueryResult | dict[str, object] | Response:
     accept = request.headers.get("accept", "").lower()
     wants_arrow = stock_quotes_arrow.ARROW_MEDIA_TYPE in accept
     accepts_json = not accept or "*/*" in accept or "application/json" in accept

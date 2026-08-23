@@ -5,7 +5,7 @@ from typing import Literal
 from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from quotemux.models import StockQuoteItem
+from quotemux.models import StockQuoteItem, StockQuotesMeta
 
 
 class StockQuotesQueryPayload(BaseModel):
@@ -47,6 +47,15 @@ class StockQuotesQueryPayload(BaseModel):
     )
     data_version: str = Field(default="", description="兼容字段：/api/health 返回的全局市场事实版本。")
     dataset_version: str = Field(default="", description="推荐字段：对应频率的数据集版本；1m 使用 stock_bar_1m。")
+
+
+class StockQuotesVersionedMeta(StockQuotesMeta):
+    dataset_version: str = Field(default="", description="实际固定的目标数据集版本。")
+
+
+class StockQuotesVersionedQueryResult(BaseModel):
+    items: list[StockQuoteItem] = Field(default_factory=list)
+    meta: StockQuotesVersionedMeta
 
 
 class StockDailyWindowQueryPayload(BaseModel):

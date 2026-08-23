@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 import pyarrow as pa
 import pytest
 
@@ -15,6 +16,7 @@ if str(SERVICE_ROOT) not in sys.path:
 
 from quotemux.infra.db.read_client import QueryBatch
 from routers.stock_quote_models import StockQuotesQueryPayload
+from app import app
 from services import stock_1m_delivery
 
 
@@ -75,6 +77,33 @@ def test_stock_1m_json_uses_same_order_and_coverage(monkeypatch) -> None:
 
     assert result["items"][0]["trade_time"] == "2026-08-14 09:31:00"
     assert result["meta"]["complete"] is True
+
+
+def test_stock_1m_json_endpoint_preserves_dataset_version(monkeypatch) -> None:
+    monkeypatch.setattr(
+        stock_1m_delivery,
+        "build_json",
+        lambda *_args, **_kwargs: {
+            "items": [],
+            "meta": {
+                "data_version": "",
+                "dataset_version": "mhd-v1-test",
+                "total_rows": 0,
+                "returned_rows": 0,
+                "complete": True,
+                "truncated": False,
+                "codes": [],
+            },
+        },
+    )
+
+    response = TestClient(app).post(
+        "/api/stocks/quotes/query",
+        json={"codes": ["600000"], "freq": "1m", "trade_date": "2026-08-14", "dataset_version": "mhd-v1-test"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["meta"]["dataset_version"] == "mhd-v1-test"
 
 
 def test_stock_1m_incomplete_fails_before_streaming(monkeypatch) -> None:
