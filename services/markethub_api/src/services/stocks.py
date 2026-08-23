@@ -1,5 +1,8 @@
 ﻿from __future__ import annotations
 
+from dataclasses import dataclass
+import hashlib
+import json
 from typing import Literal
 
 import pandas as pd
@@ -14,6 +17,7 @@ from services.market_data_version import require_market_data_version
 from services.dataset_versions import STOCK_DAILY_DATASET_ID, current_dataset_version, require_dataset_version
 from services.request_timing import record_stage_ms
 from services.versioned_object_cache import get_or_build as get_or_build_object
+from services.versioned_response_cache import CacheValue, VersionedResponseCache
 
 
 _QUOTEMUX = QuoteMux()
@@ -26,6 +30,15 @@ def _read_stage(stage: str, duration_seconds: float) -> None:
 
 
 _PUBLIC_READER = QuoteMuxPublicReader(stage_callback=_read_stage)
+
+
+@dataclass(frozen=True)
+class EncodedReferenceResponse:
+    content: bytes
+    headers: dict[str, str]
+
+
+_REFERENCE_RESPONSE_CACHE: VersionedResponseCache[EncodedReferenceResponse] = VersionedResponseCache()
 
 
 _STRATEGY_WINDOW_COVERAGE_QUERY = """
@@ -300,6 +313,30 @@ def get_catalog(codes: str, name: str, exchange: str, list_status: str, include_
         lambda: _QUOTEMUX.stocks.get_catalog(actual_codes, name, exchange, list_status, include_delisted, limit or DEFAULT_LIMIT, offset, data_version=market_version),
     )
     return result
+
+
+def get_catalog_encoded(codes: str, name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int, data_version: str) -> EncodedReferenceResponse:
+    actual_codes = require_codes("", codes) if codes else []
+    market_version = require_market_data_version(data_version)
+    dataset_version = current_dataset_version("stock_reference")
+    key = "|".join(("catalog-json", dataset_version, ",".join(sorted(actual_codes)), name, exchange, list_status, str(include_delisted), str(limit), str(offset)))
+
+    def build() -> CacheValue[EncodedReferenceResponse]:
+        items = get_catalog(codes, name, exchange, list_status, include_delisted, limit, offset, market_version)
+        payload = [item.model_dump(mode="json") for item in items]
+        content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
+        response = EncodedReferenceResponse(
+            content=content,
+            headers={
+                "ETag": f'"{hashlib.sha256(content).hexdigest()}"',
+                "Cache-Control": "public,max-age=31536000,immutable",
+                "Vary": "Accept, Accept-Encoding",
+            },
+        )
+        return CacheValue(value=response, size_bytes=len(content))
+
+    response, _ = _REFERENCE_RESPONSE_CACHE.get_or_build(key, build)
+    return response
 
 
 def get_archive(trade_date: str, code: str, name: str, industry: str, area: str, limit: int, offset: int) -> list[StockArchiveItem]:

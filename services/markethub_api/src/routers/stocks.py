@@ -274,6 +274,7 @@ async def api_stock_daily_local_window(
 
 @router.get("/api/stocks/catalog", summary='返回股票基础清单', description='`GET` 返回股票基础清单。\n\n## 查询参数\n\n- `codes`（类型：`str`）：多个股票代码，逗号分隔。\n- `name`（类型：`str`）：股票简称关键字。\n- `market`（类型：`str`）：兼容参数，当前实现保留该入参但不参与筛选。\n- `exchange`（类型：`str`）：交易所标识。\n- `list_status`（类型：`str`）：上市状态筛选。\n- `is_hs`（类型：`str`）：兼容参数，当前实现保留该入参但不参与筛选。\n- `include_delisted`（类型：`bool`；默认：`false`）：是否包含已退市标的。\n- `limit`（类型：`int`；默认：`5000`；范围：`1-5000`）：返回记录上限。\n- `offset`（类型：`int`；默认：`0`；最小值：`0`）：结果偏移量，从 `0` 开始。\n\n## 返回类型\n\n顶层返回 `list[StockBasicInfo]`。\n\n## 返回字段\n\n- `code`（`str`）：股票代码。\n- `name`（`str`）：名称。\n- `exchange`（`str`）：交易所。\n- `market`（`str`）：所属市场板块，如主板、创业板或北交所等口径值。\n- `list_status`（`str`）：上市状态。\n- `list_date`（`str`）：上市日期。\n- `delist_date`（`str`）：退市日期；未退市时为空字符串。\n- `industry`（`str`）：所属行业。\n- `area`（`str`）：所属地域。\n\n## 补充说明\n\n- `market` 和 `is_hs` 当前只是兼容入参，不参与实际筛选。')
 async def api_stock_catalog(
+    request: Request,
     codes: str = Query("", description='多个股票代码，逗号分隔。'),
     name: str = Query("", description='名称。'),
     market: str = Query("", description='所属市场板块，如主板、创业板或北交所等口径值。'),
@@ -288,7 +289,10 @@ async def api_stock_catalog(
     del market
     del is_hs
     args = (codes, name, exchange, list_status, include_delisted, limit, offset, data_version)
-    return await run_data_task(_dump_item_list, stocks.get_catalog, args)
+    encoded = await run_data_task(lambda loader, loader_args: loader(*loader_args), stocks.get_catalog_encoded, args)
+    if request.headers.get("if-none-match", "") == encoded.headers["ETag"]:
+        return Response(status_code=304, headers=encoded.headers)  # type: ignore[return-value]
+    return Response(content=encoded.content, media_type="application/json", headers=encoded.headers)  # type: ignore[return-value]
 
 
 @router.get("/api/stocks/catalog/archive", summary='返回指定交易日的股票归档清单', description='`GET` 返回指定交易日的股票归档清单。\n\n## 查询参数\n\n- `trade_date`（类型：`str`）：归档交易日，格式 `YYYY-MM-DD`。\n- `code`（类型：`str`）：股票代码。\n- `name`（类型：`str`）：股票简称关键字。\n- `industry`（类型：`str`）：所属行业筛选。\n- `area`（类型：`str`）：所属地域筛选。\n- `limit`（类型：`int`；默认：`200`；范围：`1-5000`）：返回记录上限。\n- `offset`（类型：`int`；默认：`0`；最小值：`0`）：结果偏移量，从 `0` 开始。\n\n## 返回类型\n\n顶层返回 `list[StockArchiveItem]`。\n\n## 返回字段\n\n- `trade_date`（`str`）：交易日期。\n- `code`（`str`）：股票代码。\n- `name`（`str`）：名称。\n- `exchange`（`str`）：归档时点对应的交易所。\n- `market`（`str`）：归档时点对应的所属市场板块。\n- `list_status`（`str`）：归档时点对应的上市状态。\n- `industry`（`str`）：所属行业。\n- `area`（`str`）：所属地域。')
