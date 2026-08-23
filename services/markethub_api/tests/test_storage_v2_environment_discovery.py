@@ -89,11 +89,13 @@ def test_remote_migration_discovers_environment_before_deploying() -> None:
     assert "preflight.json" in content
     assert "inspect-before-apply.json" in content
     assert "base64 --decode" in content
+    assert "bash '$migrationRoot/cleanup_after_migration.sh'" in content
     assert "-ServiceUser $ServiceUser" in content
     assert "User=yosef" not in generic_deploy
     assert "yosef:yosef" not in generic_deploy
     assert "User=$service_user" in generic_deploy
     assert "base64 --decode" in generic_deploy
+    assert "find \"$release_root/MarketHub/migrations\" -type f -name '*.sh' -exec chmod 0755 {} +" in generic_deploy
     assert "'$HealthUrl'" in generic_deploy
     governance = (SCRIPT.parents[2] / "scripts" / "maintenance" / "storage-governance.sh").read_text(encoding="utf-8")
     assert 'systemctl show "$SERVICE_NAME.service"' in governance

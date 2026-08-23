@@ -167,7 +167,7 @@ if ($CleanupLegacy) {
     $remoteCleanup = @"
 set -Eeuo pipefail
 MARKETHUB_ROOT='$RemoteRoot' MARKETHUB_RUNTIME_ROOT='$RemoteRuntimeRoot' MARKETHUB_SERVICE_NAME='$ServiceName' MARKETHUB_STORAGE_KEEP_RELEASES=$(if ($PruneOldReleases) { '1' } else { '5' }) \
-  '$migrationRoot/cleanup_after_migration.sh' --apply --confirm-target-version '$TargetStorageVersion'
+  bash '$migrationRoot/cleanup_after_migration.sh' --apply --confirm-target-version '$TargetStorageVersion'
 curl -fsS '$HealthUrl'
 "@
     Invoke-RemoteBash -Script $remoteCleanup
