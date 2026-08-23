@@ -35,7 +35,7 @@ foreach ($name in @("app_root", "runtime_root", "env_path", "service_name", "hea
 }
 $freezeOwner = "query-read-v3-$stamp"
 $freezeTool = "$($deployment.runtime_root)/scripts/manage-formal-export-freeze.sh"
-& ssh $HostName "test -x '$freezeTool' && '$freezeTool' acquire '$freezeOwner'"
+& ssh $HostName "test -x '$freezeTool' && '$freezeTool' freeze '$freezeOwner'"
 if ($LASTEXITCODE -ne 0) { throw "无法通过正式工具获取更新 freeze" }
 $migrationSucceeded = $false
 try {
