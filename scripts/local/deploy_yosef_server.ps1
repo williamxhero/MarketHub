@@ -106,6 +106,11 @@ sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/type=cache" || true
 sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/package_venvs" || true
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/install_all_packages.py"
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/bootstrap_database.py"
+# 此时旧 API 已停止，任何仍为 running 且 advisory lock 可取得的 capture
+# 都是上个进程遗留状态。通过 QuoteMux 正式维护入口修复，避免 Task Center
+# 把部署中断误判为永久运行；锁仍被占用时 fail closed，不强制覆盖活任务。
+capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
+printf 'capture run reconciliation: %s\n' "$capture_reconcile_json"
 # 某些构建后端会在源码包目录重新生成 egg-info；发布产物不允许带入 root-owned 构建目录。
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"
 rm -rf "$release_root/QuoteMux_Packages/build"

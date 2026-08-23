@@ -806,6 +806,13 @@ def _query_market_data_contract_metrics(index_code: str) -> dict[str, int]:
                 (select max(trade_date) from fact.board_daily_1d)
             ) as trade_date,
             %s::varchar as index_code
+        ), target_suspensions as (
+            select distinct suspension.market, suspension.code
+            from fact.stock_suspension_history suspension
+            cross join target
+            where suspension.status = 'suspended'
+              and suspension.suspend_start_date <= target.trade_date
+              and suspension.suspend_end_date >= target.trade_date
         ), recent_index_bars as (
             select index_rows.*
             from fact.index_bar_1d index_rows
@@ -885,7 +892,7 @@ def _query_market_data_contract_metrics(index_code: str) -> dict[str, int]:
               on stock_ref.market = membership.stock_market
              and stock_ref.code = membership.stock_code
              and stock_ref.listed_date <= target.trade_date
-             and (stock_ref.delisted_date is null or stock_ref.delisted_date >= target.trade_date)
+             and (stock_ref.delisted_date is null or stock_ref.delisted_date > target.trade_date)
              and not (stock_ref.market = 'SHSE' and left(stock_ref.code, 3) = '900')
              and not (stock_ref.market = 'SZSE' and left(stock_ref.code, 3) = '200')
         ), stock_history as (
@@ -972,7 +979,7 @@ def _query_market_data_contract_metrics(index_code: str) -> dict[str, int]:
             (select count(*) from concept_coverage where bar_count <> 8)::int as second_stage_incomplete_concept_count,
             (select count(*) from fact.concept_daily_1d concept_rows join eligible_concepts on eligible_concepts.concept_id = concept_rows.concept_id join trade_dates on trade_dates.trade_date = concept_rows.trade_date where concept_rows.pct_chg is null)::int as second_stage_null_pct_chg_count,
             (select count(*) from fact.concept_daily_1d concept_rows join eligible_concepts on eligible_concepts.concept_id = concept_rows.concept_id join trade_dates on trade_dates.trade_date = concept_rows.trade_date where concept_rows.amount is null or concept_rows.amount <= 0)::int as second_stage_invalid_amount_count,
-            (select count(*) from current_members left join current_stock on current_stock.market = current_members.stock_market and current_stock.code = current_members.stock_code where current_stock.code is null)::int as second_stage_missing_member_stock_count,
+            (select count(*) from current_members left join current_stock on current_stock.market = current_members.stock_market and current_stock.code = current_members.stock_code where current_stock.code is null and not exists (select 1 from target_suspensions suspension where suspension.market = current_members.stock_market and suspension.code = current_members.stock_code))::int as second_stage_missing_member_stock_count,
             (select count(*) from current_members join current_stock on current_stock.market = current_members.stock_market and current_stock.code = current_members.stock_code where current_stock.pre_close is null)::int as second_stage_missing_member_pre_close_count,
             (select count(*) from current_members where not (
                 (stock_market = 'SHSE' and (left(stock_code, 1) in ('5', '6') or left(stock_code, 3) = '900'))
@@ -989,7 +996,7 @@ def _query_market_data_contract_metrics(index_code: str) -> dict[str, int]:
             (select count(*) from fact.board_daily_1d board_rows cross join target where board_rows.trade_date = target.trade_date and (board_rows.open is null or board_rows.high is null or board_rows.low is null or board_rows.close is null or board_rows.pre_close is null or board_rows.change is null or board_rows.pct_chg is null or board_rows.amount is null or board_rows.volume is null))::int as global_board_daily_core_null_count,
             (select count(*) from fact.stock_daily_1d stock_rows cross join target where stock_rows.trade_date = target.trade_date and not coalesce(stock_rows.is_suspended, false) and (stock_rows.close is null or stock_rows.pre_close is null or stock_rows.pct_chg is null or stock_rows.amount is null))::int as global_stock_daily_core_null_count,
             (select count(*) from fact.stock_daily_1d stock_rows cross join target where stock_rows.trade_date = target.trade_date and not exists (select 1 from ref.stock stock_ref where stock_ref.market = stock_rows.market and stock_ref.code = stock_rows.code))::int as global_stock_daily_without_ref_count,
-            (select count(*) from ref.stock stock_ref cross join target where stock_ref.listed_date <= target.trade_date and (stock_ref.delisted_date is null or stock_ref.delisted_date >= target.trade_date) and not (stock_ref.market = 'SHSE' and left(stock_ref.code, 3) = '900') and not (stock_ref.market = 'SZSE' and left(stock_ref.code, 3) = '200') and not exists (select 1 from fact.stock_daily_1d stock_rows where stock_rows.market = stock_ref.market and stock_rows.code = stock_ref.code and stock_rows.trade_date = target.trade_date))::int as global_active_stock_without_daily_count,
+            (select count(*) from ref.stock stock_ref cross join target where stock_ref.listed_date <= target.trade_date and (stock_ref.delisted_date is null or stock_ref.delisted_date > target.trade_date) and not (stock_ref.market = 'SHSE' and left(stock_ref.code, 3) = '900') and not (stock_ref.market = 'SZSE' and left(stock_ref.code, 3) = '200') and not exists (select 1 from fact.stock_daily_1d stock_rows where stock_rows.market = stock_ref.market and stock_rows.code = stock_ref.code and stock_rows.trade_date = target.trade_date) and not exists (select 1 from target_suspensions suspension where suspension.market = stock_ref.market and suspension.code = stock_ref.code))::int as global_active_stock_without_daily_count,
             (select case when exists (select 1 from information_schema.columns where table_schema = 'ref' and table_name = 'stock' and column_name = 'board_type') then 0 else 1 end)::int as global_missing_board_type_column_count,
             (select count(*) from ref.stock stock_ref where coalesce(to_jsonb(stock_ref)->>'board_type', '') = '')::int as global_blank_board_type_count,
             (select count(*) from ref.stock stock_ref where coalesce(to_jsonb(stock_ref)->>'board_type', '') <> coalesce(stock_ref.listing_board, ''))::int as global_board_type_listing_board_mismatch_count,

@@ -477,6 +477,25 @@ def test_market_data_contract_core_fields_do_not_reject_source_confirmed_suspens
     assert "stock_rows.trade_date = target.trade_date and not coalesce(stock_rows.is_suspended, false)" in captured_query
 
 
+def test_market_data_contract_missing_daily_checks_accept_suspension_history(monkeypatch) -> None:
+    import pandas as pd
+
+    captured_query = ""
+
+    def fake_query_dataframe(query: str, params: tuple[str, str]) -> pd.DataFrame:
+        nonlocal captured_query
+        captured_query = query
+        return pd.DataFrame()
+
+    monkeypatch.setattr(data_health, "query_dataframe", fake_query_dataframe)
+
+    data_health._query_market_data_contract_metrics("000001")
+
+    assert "target_suspensions as" in captured_query
+    assert captured_query.count("not exists (select 1 from target_suspensions suspension") == 2
+    assert "stock_ref.delisted_date > target.trade_date" in captured_query
+
+
 def test_market_data_contract_latest_date_check_ignores_unclosed_partial_rows(monkeypatch) -> None:
     import pandas as pd
 
