@@ -492,8 +492,50 @@ def _ensure_quotemux_schema() -> None:
 
 def _ensure_dataset_version_vector(database_config: dict[str, str]) -> None:
     migration_sql = (SCRIPT_ROOT / "dataset-version-vector.sql").read_text(encoding="utf-8")
-    with _connect(database_config) as connection:
-        connection.execute(migration_sql)
+    try:
+        with _connect(database_config) as connection:
+            connection.execute(migration_sql)
+        return
+    except psycopg.errors.InsufficientPrivilege as exc:
+        if _ensure_dataset_version_vector_with_admin(database_config, migration_sql):
+            return
+        raise RuntimeError(
+            "无法初始化 dataset version/readmodel schema；目标数据库需要管理凭证，"
+            "或本机 postgres 账号的非交互 sudo 权限"
+        ) from exc
+
+
+def _dataset_vector_grants(database_user: str) -> str:
+    role = sql.Identifier(database_user).as_string()
+    return (
+        f"grant usage on schema audit,readmodel to {role};"
+        f"grant select on all tables in schema audit to {role};"
+        f"grant insert,update on audit.dataset_version_publication to {role};"
+        f"grant select,insert,update,delete on all tables in schema readmodel to {role};"
+    )
+
+
+def _ensure_dataset_version_vector_with_admin(database_config: dict[str, str], migration_sql: str) -> bool:
+    grants = _dataset_vector_grants(database_config["user"])
+    admin_config = {**_admin_config(database_config), "dbname": database_config["dbname"]}
+    if admin_config["password"]:
+        try:
+            with _connect(admin_config) as connection:
+                connection.execute(migration_sql)
+                connection.execute(grants)
+            return True
+        except psycopg.Error:
+            pass
+    if database_config["host"] not in ("", "127.0.0.1", "localhost", "::1"):
+        return False
+    psql = shutil.which("psql")
+    sudo = shutil.which("sudo")
+    if os.name == "nt" or psql is None or sudo is None:
+        return False
+    common = ("-X", "-p", database_config["port"], "-v", "ON_ERROR_STOP=1", "-d", database_config["dbname"])
+    if _run_as_postgres(psql, (*common, "-f", str(SCRIPT_ROOT / "dataset-version-vector.sql"))) != 0:
+        return False
+    return _run_as_postgres(psql, (*common, "-c", grants)) == 0
 
 
 if __name__ == "__main__":

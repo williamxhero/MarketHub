@@ -25,3 +25,6 @@ def test_database_bootstrap_installs_dataset_vector_after_quotemux_schema() -> N
     content = BOOTSTRAP.read_text(encoding="utf-8")
     assert content.index("_ensure_quotemux_schema()") < content.index("_ensure_dataset_version_vector(database_config)")
     assert 'SCRIPT_ROOT / "dataset-version-vector.sql"' in content
+    assert "_ensure_dataset_version_vector_with_admin" in content
+    assert "grant select,insert,update,delete on all tables in schema readmodel" in content
+    assert "sudo" in content and '"-u", "postgres"' in content
