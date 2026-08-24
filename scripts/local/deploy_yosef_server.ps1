@@ -63,8 +63,14 @@ current_switched=0
 env_backup="/tmp/${service_name}-${release_name}.env.bak"
 unit_path="/etc/systemd/system/$service_name.service"
 unit_backup="/tmp/${service_name}-${release_name}.service.bak"
+shared_backup="/tmp/${service_name}-${release_name}.shared.bak"
+scripts_existed=0; publisher_existed=0; governance_existed=0
 cp "$env_path" "$env_backup"
 if sudo -n test -f "$unit_path"; then sudo -n cp "$unit_path" "$unit_backup"; fi
+mkdir -p "$shared_backup"
+if test -d "$runtime_root/scripts"; then cp -a "$runtime_root/scripts" "$shared_backup/scripts"; scripts_existed=1; fi
+if test -d "$runtime_root/publisher"; then cp -a "$runtime_root/publisher" "$shared_backup/publisher"; publisher_existed=1; fi
+if sudo -n test -f /usr/local/sbin/markethub-storage-governance; then sudo -n cp /usr/local/sbin/markethub-storage-governance "$shared_backup/governance"; governance_existed=1; fi
 restart_on_exit() {
   if [ "$current_switched" = 1 ] && [ -n "$previous_current" ]; then
     ln -sfn "$previous_current" "$remote_root/current.next"
@@ -72,6 +78,10 @@ restart_on_exit() {
   fi
   cp "$env_backup" "$env_path" || true
   if sudo -n test -f "$unit_backup"; then sudo -n cp "$unit_backup" "$unit_path"; fi
+  rm -rf "$runtime_root/scripts" "$runtime_root/publisher"
+  if [ "$scripts_existed" = 1 ]; then cp -a "$shared_backup/scripts" "$runtime_root/scripts"; fi
+  if [ "$publisher_existed" = 1 ]; then cp -a "$shared_backup/publisher" "$runtime_root/publisher"; fi
+  if [ "$governance_existed" = 1 ]; then sudo -n cp "$shared_backup/governance" /usr/local/sbin/markethub-storage-governance; else sudo -n rm -f /usr/local/sbin/markethub-storage-governance; fi
   sudo -n systemctl daemon-reload || true
   sudo -n systemctl restart "$service_name.service" >/dev/null 2>&1 || true
   if ! curl -fsS "$health_url" >/dev/null; then
