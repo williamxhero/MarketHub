@@ -1260,6 +1260,7 @@ def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, obje
             bool(normalized_scope["include_expired"]), expected_snapshot_id
         )
         publication = {
+            **(result_publication if isinstance(result_publication, dict) else {}),
             **publication,
             "catalog_dataset_version": str(publication["dataset_version"]),
             "content_checksum": str(publication["checksum_sha256"]),
