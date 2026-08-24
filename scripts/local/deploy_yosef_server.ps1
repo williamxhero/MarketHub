@@ -60,12 +60,23 @@ health_url="$8"
 release_root="$remote_root/releases/$release_name"
 previous_current="$(readlink -f "$remote_root/current" 2>/dev/null || true)"
 current_switched=0
+env_backup="/tmp/${service_name}-${release_name}.env.bak"
+unit_path="/etc/systemd/system/$service_name.service"
+unit_backup="/tmp/${service_name}-${release_name}.service.bak"
+cp "$env_path" "$env_backup"
+if sudo -n test -f "$unit_path"; then sudo -n cp "$unit_path" "$unit_backup"; fi
 restart_on_exit() {
   if [ "$current_switched" = 1 ] && [ -n "$previous_current" ]; then
     ln -sfn "$previous_current" "$remote_root/current.next"
     mv -Tf "$remote_root/current.next" "$remote_root/current"
   fi
+  cp "$env_backup" "$env_path" || true
+  if sudo -n test -f "$unit_backup"; then sudo -n cp "$unit_backup" "$unit_path"; fi
+  sudo -n systemctl daemon-reload || true
   sudo -n systemctl restart "$service_name.service" >/dev/null 2>&1 || true
+  if ! curl -fsS "$health_url" >/dev/null; then
+    echo "rollback failed: previous release health check also failed" >&2
+  fi
 }
 trap restart_on_exit EXIT
 if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
@@ -127,15 +138,6 @@ sudo -n chown -R "$service_user:$service_group" "$release_root"
 ln -sfn "$release_root" "$remote_root/current.next"
 mv -Tf "$remote_root/current.next" "$remote_root/current"
 current_switched=1
-mkdir -p "$runtime_root/scripts" "$runtime_root/publisher"
-install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update.sh" "$runtime_root/scripts/global-data-update.sh"
-install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update-with-health.sh" "$runtime_root/scripts/global-data-update-with-health.sh"
-install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/data-health-check.sh" "$runtime_root/scripts/data-health-check.sh"
-install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/update-futures-1m.sh" "$runtime_root/scripts/update-futures-1m.sh"
-install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/manage_formal_export_freeze.sh" "$runtime_root/scripts/manage-formal-export-freeze.sh"
-install -m 0755 "$remote_root/current/MarketHub/migrations/storage_v2_20260823/cleanup_after_migration.sh" "$runtime_root/scripts/storage-v2-cleanup-after-migration.sh"
-install -m 0755 "$remote_root/current/MarketHub/scripts/publisher/publish_stock_daily_parquet.py" "$runtime_root/publisher/publish_stock_daily_parquet.py"
-sudo -n install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/storage-governance.sh" /usr/local/sbin/markethub-storage-governance
 cat >/tmp/markethub-service <<UNIT
 [Unit]
 Description=MarketHub API
@@ -174,6 +176,15 @@ sudo -n systemctl enable "$service_name.service"
 sudo -n systemctl restart "$service_name.service"
 for attempt in $(seq 1 20); do
   if curl -fsS "$health_url" >/dev/null; then
+    mkdir -p "$runtime_root/scripts" "$runtime_root/publisher"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update.sh" "$runtime_root/scripts/global-data-update.sh"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update-with-health.sh" "$runtime_root/scripts/global-data-update-with-health.sh"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/data-health-check.sh" "$runtime_root/scripts/data-health-check.sh"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/update-futures-1m.sh" "$runtime_root/scripts/update-futures-1m.sh"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/manage_formal_export_freeze.sh" "$runtime_root/scripts/manage-formal-export-freeze.sh"
+    install -m 0755 "$remote_root/current/MarketHub/migrations/storage_v2_20260823/cleanup_after_migration.sh" "$runtime_root/scripts/storage-v2-cleanup-after-migration.sh"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/publisher/publish_stock_daily_parquet.py" "$runtime_root/publisher/publish_stock_daily_parquet.py"
+    sudo -n install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/storage-governance.sh" /usr/local/sbin/markethub-storage-governance
     current_switched=0
     trap - EXIT
     rm -f "$remote_archive" /tmp/markethub-service
