@@ -116,10 +116,16 @@ def test_catalog_repair_uses_canonical_empty_scope_and_finalizes_only_catalog(mo
     assert result["publication"]["snapshot_id"] == "snapshot-1"
 
 
-@pytest.mark.parametrize("scope", ({"codes": ["rb"]}, {"include_expired": True}))
-def test_catalog_repair_rejects_partial_or_expired_scope(scope: dict[str, object]) -> None:
-    with pytest.raises(ValueError, match="只支持"):
+@pytest.mark.parametrize("scope", ({"codes": ["rb"]}, {"include_expired": "yes"}))
+def test_catalog_repair_rejects_partial_or_invalid_scope(scope: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
         admin_runtime._normalize_repair_scope("future_contract_reference", scope)
+
+
+def test_catalog_repair_allows_expired_full_scope() -> None:
+    assert admin_runtime._normalize_repair_scope(
+        "future_contract_reference", {"codes": [], "include_expired": True}
+    ) == {"codes": [], "include_expired": True}
 
 
 def test_catalog_repair_status_reads_current_publication_evidence(monkeypatch) -> None:

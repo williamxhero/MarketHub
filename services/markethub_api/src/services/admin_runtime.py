@@ -1271,8 +1271,8 @@ def _normalize_repair_scope(dataset_id: str, scope: dict[str, object]) -> dict[s
     if codes != []:
         raise ValueError("future_contract_reference repair 只支持 codes=[] 的完整国内活跃合约快照")
     include_expired = scope.get("include_expired", False)
-    if include_expired is not False:
-        raise ValueError("future_contract_reference repair 只支持 include_expired=false")
+    if not isinstance(include_expired, bool):
+        raise ValueError("future_contract_reference repair scope.include_expired 必须是布尔值")
     return {"codes": codes, "include_expired": include_expired}
 
 
