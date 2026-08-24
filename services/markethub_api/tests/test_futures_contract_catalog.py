@@ -86,8 +86,9 @@ def test_catalog_repair_uses_canonical_empty_scope_and_finalizes_only_catalog(mo
     finalized: list[bool] = []
 
     class CaptureAdmin:
-        def run_repair(self, capability_id: str, scope: dict[str, object], version: str) -> dict[str, object]:
+        def run_repair(self, capability_id: str, scope: dict[str, object], version: str, locked_precondition) -> dict[str, object]:
             calls.append((capability_id, scope, version))
+            locked_precondition()
             return {"id": 19, "capability_id": capability_id, "status": "success"}
 
         def finalize_catalog_repair_publication(self, _run_id: int, publication: dict[str, object]) -> dict[str, object]:
@@ -99,7 +100,7 @@ def test_catalog_repair_uses_canonical_empty_scope_and_finalizes_only_catalog(mo
     monkeypatch.setattr(
         admin_runtime,
         "finalize_future_contract_reference_state",
-        lambda: finalized.append(True) or {
+        lambda *_args: finalized.append(True) or {
             "dataset_version": "mhd-v1-published", "snapshot_id": "snapshot-1", "row_count": 23,
             "product_count": 23, "checksum_sha256": "a" * 64, "complete": True,
         },

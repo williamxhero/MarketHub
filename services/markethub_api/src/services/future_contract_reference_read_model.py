@@ -23,8 +23,8 @@ def _connect() -> psycopg.Connection[Any]:
     )
 
 
-def finalize_future_contract_reference_state() -> dict[str, object]:
-    """Mark only the atomically published QuoteMux catalog generation online."""
+def finalize_future_contract_reference_state(include_expired: bool = False, expected_snapshot_id: str = "") -> dict[str, object]:
+    """Verify this repair scope, while keeping active-scope health authoritative."""
     with _connect() as connection:
         state = connection.execute(
             "select baseline_id,generation from audit.dataset_version_state where dataset_id=%s",
@@ -34,22 +34,31 @@ def finalize_future_contract_reference_state() -> dict[str, object]:
             "select snapshot.snapshot_id,snapshot.row_count,snapshot.product_count,snapshot.content_checksum "
             "from ref.future_contract_catalog_publication publication "
             "join ref.future_contract_catalog_snapshot snapshot on snapshot.snapshot_id=publication.snapshot_id "
-            "where publication.scope_include_expired=false and snapshot.complete=true",
+            "where publication.scope_include_expired=%s and snapshot.complete=true",
+            (include_expired,),
         ).fetchone()
         if state is None or snapshot is None:
             raise RuntimeError("future contract catalog publication unavailable")
+        if expected_snapshot_id and str(snapshot["snapshot_id"]) != expected_snapshot_id:
+            raise RuntimeError("future contract catalog publication changed before finalization")
         generation = int(state["generation"])
         dataset_version = dataset_version_from_state(DATASET_ID, str(state["baseline_id"]), generation)
         checksum = str(snapshot["content_checksum"] or "")
         if len(checksum) != 64:
             checksum = hashlib.sha256(json.dumps(dict(snapshot), sort_keys=True, default=str).encode()).hexdigest()
-        connection.execute(
-            "insert into readmodel.dataset_build_state(dataset_id,dataset_version,status,source_generation,coverage_ready,complete,row_count,checksum_sha256,built_at_utc,updated_at_utc) "
-            "values(%s,%s,'online',%s,true,true,%s,%s,clock_timestamp(),clock_timestamp()) on conflict(dataset_id,dataset_version) do update set "
-            "status='online',source_generation=excluded.source_generation,coverage_ready=true,complete=true,row_count=excluded.row_count,"
-            "checksum_sha256=excluded.checksum_sha256,built_at_utc=clock_timestamp(),error_message='',updated_at_utc=clock_timestamp()",
-            (DATASET_ID, dataset_version, generation, int(snapshot["row_count"]), checksum),
-        )
+        active_snapshot = connection.execute(
+            "select snapshot.row_count,snapshot.content_checksum from ref.future_contract_catalog_publication publication "
+            "join ref.future_contract_catalog_snapshot snapshot on snapshot.snapshot_id=publication.snapshot_id "
+            "where publication.scope_include_expired=false and snapshot.complete=true",
+        ).fetchone()
+        if active_snapshot is not None:
+            connection.execute(
+                "insert into readmodel.dataset_build_state(dataset_id,dataset_version,status,source_generation,coverage_ready,complete,row_count,checksum_sha256,built_at_utc,updated_at_utc) "
+                "values(%s,%s,'online',%s,true,true,%s,%s,clock_timestamp(),clock_timestamp()) on conflict(dataset_id,dataset_version) do update set "
+                "status='online',source_generation=excluded.source_generation,coverage_ready=true,complete=true,row_count=excluded.row_count,"
+                "checksum_sha256=excluded.checksum_sha256,built_at_utc=clock_timestamp(),error_message='',updated_at_utc=clock_timestamp()",
+                (DATASET_ID, dataset_version, generation, int(active_snapshot["row_count"]), str(active_snapshot["content_checksum"] or checksum)),
+            )
     return {
         "dataset_id": DATASET_ID,
         "dataset_version": dataset_version,
