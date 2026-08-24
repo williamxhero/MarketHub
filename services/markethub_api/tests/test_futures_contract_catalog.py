@@ -91,7 +91,14 @@ def test_catalog_repair_uses_canonical_empty_scope_and_finalizes_only_catalog(mo
 
     monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", CaptureAdmin())
     monkeypatch.setattr(admin_runtime, "run_with_memory_log", lambda _name, _detail, operation: operation())
-    monkeypatch.setattr(admin_runtime, "finalize_future_contract_reference_state", lambda: finalized.append(True))
+    monkeypatch.setattr(
+        admin_runtime,
+        "finalize_future_contract_reference_state",
+        lambda: finalized.append(True) or {
+            "dataset_version": "mhd-v1-published", "snapshot_id": "snapshot-1", "row_count": 23,
+            "product_count": 23, "checksum_sha256": "a" * 64, "complete": True,
+        },
+    )
     monkeypatch.setattr(
         admin_runtime,
         "finalize_stock_1m_daily_coverage_state",
@@ -103,6 +110,32 @@ def test_catalog_repair_uses_canonical_empty_scope_and_finalizes_only_catalog(mo
     assert result["repair_task_id"] == 19
     assert calls == [("futures.contracts.catalog", {"codes": [], "include_expired": False}, "")]
     assert finalized == [True]
+    assert result["dataset_version"] == "mhd-v1-published"
+    assert result["publication"]["snapshot_id"] == "snapshot-1"
+
+
+@pytest.mark.parametrize("scope", ({"codes": ["rb"]}, {"include_expired": True}))
+def test_catalog_repair_rejects_partial_or_expired_scope(scope: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="只支持"):
+        admin_runtime._normalize_repair_scope("future_contract_reference", scope)
+
+
+def test_catalog_repair_status_reads_current_publication_evidence(monkeypatch) -> None:
+    class CaptureAdmin:
+        def get_repair_run(self, _task_id: int) -> dict[str, object]:
+            return {"capability_id": "futures.contracts.catalog", "status": "success", "detail_json": {}}
+
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", CaptureAdmin())
+    monkeypatch.setattr(
+        admin_runtime,
+        "current_future_contract_reference_publication",
+        lambda: {"dataset_version": "mhd-v1-published", "snapshot_id": "snapshot-1", "complete": True},
+    )
+
+    result = admin_runtime.get_data_repair(19)
+
+    assert result["dataset_version"] == "mhd-v1-published"
+    assert result["publication"]["snapshot_id"] == "snapshot-1"
 
 
 def test_catalog_dataset_is_publication_gated_and_independent_from_future_bar() -> None:

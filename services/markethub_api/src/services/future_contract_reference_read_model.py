@@ -60,3 +60,29 @@ def finalize_future_contract_reference_state() -> dict[str, object]:
         "checksum_sha256": checksum,
         "complete": True,
     }
+
+
+def current_future_contract_reference_publication() -> dict[str, object]:
+    """Read current publication evidence without changing catalog or version state."""
+    with _connect() as connection:
+        state = connection.execute(
+            "select baseline_id,generation from audit.dataset_version_state where dataset_id=%s",
+            (DATASET_ID,),
+        ).fetchone()
+        publication = connection.execute(
+            "select snapshot.snapshot_id,snapshot.row_count,snapshot.product_count,snapshot.content_checksum,snapshot.complete "
+            "from ref.future_contract_catalog_publication publication "
+            "join ref.future_contract_catalog_snapshot snapshot on snapshot.snapshot_id=publication.snapshot_id "
+            "where publication.scope_include_expired=false",
+        ).fetchone()
+    if state is None or publication is None or not bool(publication["complete"]):
+        return {}
+    return {
+        "dataset_id": DATASET_ID,
+        "dataset_version": dataset_version_from_state(DATASET_ID, str(state["baseline_id"]), int(state["generation"])),
+        "snapshot_id": str(publication["snapshot_id"]),
+        "row_count": int(publication["row_count"]),
+        "product_count": int(publication["product_count"]),
+        "checksum_sha256": str(publication["content_checksum"] or ""),
+        "complete": True,
+    }
