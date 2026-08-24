@@ -38,9 +38,9 @@ from services.dataset_versions import require_current
 from services.futures_repair_evidence import ManagedBackAdjustedRepairEvidenceRegistry
 from services.futures_1m_completeness import carry_forward_current_back_adjusted_completeness
 from services.future_contract_reference_read_model import (
-    current_future_contract_reference_publication,
     finalize_future_contract_reference_state,
 )
+from services.dataset_versions import require_dataset_version
 from services.runtime_memory import run_with_memory_log
 
 
@@ -1263,17 +1263,23 @@ def _repair_capability_id(dataset_id: str, scope: dict[str, object]) -> str:
 def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, object]) -> dict[str, object]:
     capability_id = _repair_capability_id(dataset_id, scope)
     normalized_scope = _normalize_repair_scope(dataset_id, scope)
+    repair_baseline = dataset_version
+    if dataset_id == "future_contract_reference":
+        # A catalog repair must name the current generation it intends to replace.
+        # Empty input is expanded server-side; a stale client-supplied value fails
+        # closed via DATASET_VERSION_STALE rather than bypassing capture idempotency.
+        repair_baseline = require_dataset_version(dataset_id, dataset_version)
     result = run_with_memory_log(
         "capture.run_repair",
-        {"dataset_id": dataset_id, "dataset_version": dataset_version},
-        lambda: _capture_admin().run_repair(capability_id, normalized_scope, dataset_version),
+        {"dataset_id": dataset_id, "dataset_version": repair_baseline},
+        lambda: _capture_admin().run_repair(capability_id, normalized_scope, repair_baseline),
     )
     publication: dict[str, object] = {}
     if dataset_id == "future_contract_reference" and str(result.get("status", "")) == "success":
         publication = finalize_future_contract_reference_state()
     else:
         _finalize_capture_read_models((result,))
-    actual_version = str(publication.get("dataset_version", dataset_version))
+    actual_version = str(publication.get("dataset_version", repair_baseline))
     return {
         **result,
         "repair_task_id": int(result["id"]),
@@ -1308,11 +1314,12 @@ def get_data_repair(repair_task_id: int) -> dict[str, object]:
             if capability == capability_id
         ),
         "future_bar_1m" if capability_id in _FUTURE_1M_REPAIR_CAPABILITIES.values() else "",
-    publication = (
-        current_future_contract_reference_publication()
-        if dataset_id == "future_contract_reference" and str(result.get("status", "")) == "success"
-        else {}
     )
+    # A historical repair must never be relabelled with a later current pointer.
+    # QuoteMux persists the capture's publication evidence in detail_json; old
+    # records created before that contract intentionally return no evidence.
+    publication_value = detail.get("publication", {})
+    publication = publication_value if isinstance(publication_value, dict) else {}
     return {
         **result,
         "repair_task_id": repair_task_id,
