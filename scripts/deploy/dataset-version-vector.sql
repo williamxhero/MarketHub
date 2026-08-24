@@ -35,7 +35,7 @@ insert into audit.dataset_version_state(dataset_id,baseline_id,generation)
 select dataset_id,md5(dataset_id || clock_timestamp()::text || random()::text || txid_current()::text),1
 from unnest(array[
     'stock_reference','stock_daily_1d','stock_bar_1m','stock_bar_5m','stock_bar_30m',
-    'future_bar_1m','concept_daily_1d','stock_research_daily'
+    'future_bar_1m','future_contract_reference','concept_daily_1d','stock_research_daily'
 ]::text[]) dataset_id
 on conflict (dataset_id) do nothing;
 
@@ -64,6 +64,10 @@ values
     ('stock_bar_30m','ref','trade_calendar','query_read_v3'),
     ('future_bar_1m','fact','future_bar_1m','query_read_v3'),
     ('future_bar_1m','ref','future_series','query_read_v3'),
+    -- QuoteMux writes immutable snapshot rows first, then atomically moves this
+    -- current-pointer publication.  Bumping on the pointer prevents an incomplete
+    -- unpublished snapshot from advancing any version.
+    ('future_contract_reference','ref','future_contract_catalog_publication','query_read_v3'),
     ('concept_daily_1d','fact','concept_daily_1d','query_read_v3'),
     ('concept_daily_1d','ref','concept','query_read_v3'),
     ('concept_daily_1d','ref','concept_stock_membership','query_read_v3'),
