@@ -1243,15 +1243,13 @@ def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, obje
         # Empty input is expanded server-side; a stale client-supplied value fails
         # closed via DATASET_VERSION_STALE rather than bypassing capture idempotency.
         repair_baseline = require_dataset_version(dataset_id, dataset_version)
+    repair_arguments: tuple[object, ...] = (capability_id, normalized_scope, repair_baseline)
+    if dataset_id == "future_contract_reference":
+        repair_arguments = (*repair_arguments,)
     result = run_with_memory_log(
         "capture.run_repair",
         {"dataset_id": dataset_id, "dataset_version": repair_baseline},
-        lambda: _capture_admin().run_repair(
-            capability_id,
-            normalized_scope,
-            repair_baseline,
-            locked_precondition=lambda: require_dataset_version(dataset_id, repair_baseline),
-        ),
+        lambda: _run_repair_with_optional_catalog_cas(dataset_id, repair_arguments, repair_baseline),
     )
     publication: dict[str, object] = {}
     if dataset_id == "future_contract_reference" and str(result.get("status", "")) == "success":
@@ -1281,6 +1279,15 @@ def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, obje
         "dataset_version": actual_version,
         "publication": publication,
     }
+
+
+def _run_repair_with_optional_catalog_cas(dataset_id: str, arguments: tuple[object, ...], repair_baseline: str) -> dict[str, object]:
+    if dataset_id == "future_contract_reference":
+        return _capture_admin().run_repair(
+            *arguments,
+            locked_precondition=lambda: require_dataset_version(dataset_id, repair_baseline),
+        )
+    return _capture_admin().run_repair(*arguments)
 
 
 def _normalize_repair_scope(dataset_id: str, scope: dict[str, object]) -> dict[str, object]:
