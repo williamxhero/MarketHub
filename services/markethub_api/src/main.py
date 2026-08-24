@@ -170,9 +170,9 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
     if isinstance(exc.detail, dict):
         code = str(exc.detail.get("code", f"HTTP_{exc.status_code}"))
         message = str(exc.detail.get("message", "请求失败"))
-        details = str(exc.detail.get("details", ""))
-        payload = ApiError(code=code, message=message, details=details)
-        return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
+        # Some repair errors carry an actionable JSON template.  Preserve that
+        # object rather than stringifying it through the legacy ApiError model.
+        return JSONResponse(status_code=exc.status_code, content={"code": code, "message": message, "details": exc.detail.get("details", "")})
     detail = exc.detail if isinstance(exc.detail, str) else "请求失败"
     payload = ApiError(code=f"HTTP_{exc.status_code}", message=detail)
     return JSONResponse(status_code=exc.status_code, content=payload.model_dump())

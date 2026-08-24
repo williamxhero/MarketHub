@@ -105,6 +105,10 @@ async def api_future_contract_catalog(
                 "details": exc.details,
             },
         ) from exc
+    # The publication pointer and its dataset version are read independently.  Do
+    # not return an internally inconsistent header/body pair if a repair published
+    # a new pointer between those two reads.
+    require_dataset_version(_CATALOG_DATASET_ID, current_version)
     response.headers["X-MarketHub-Dataset-Version"] = current_version
     return items
 

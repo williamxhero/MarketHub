@@ -6,6 +6,7 @@ import sys
 
 import pytest
 from fastapi import HTTPException, Response
+from fastapi.testclient import TestClient
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +91,7 @@ def test_catalog_repair_uses_canonical_empty_scope_and_finalizes_only_catalog(mo
             return {"id": 19, "capability_id": capability_id, "status": "success"}
 
     monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", CaptureAdmin())
+    monkeypatch.setattr(admin_runtime, "require_dataset_version", lambda *_args: "mhd-v1-baseline")
     monkeypatch.setattr(admin_runtime, "run_with_memory_log", lambda _name, _detail, operation: operation())
     monkeypatch.setattr(
         admin_runtime,
@@ -108,7 +110,7 @@ def test_catalog_repair_uses_canonical_empty_scope_and_finalizes_only_catalog(mo
     result = admin_runtime.run_data_repair("future_contract_reference", "", {})
 
     assert result["repair_task_id"] == 19
-    assert calls == [("futures.contracts.catalog", {"codes": [], "include_expired": False}, "")]
+    assert calls == [("futures.contracts.catalog", {"codes": [], "include_expired": False}, "mhd-v1-baseline")]
     assert finalized == [True]
     assert result["dataset_version"] == "mhd-v1-published"
     assert result["publication"]["snapshot_id"] == "snapshot-1"
@@ -123,19 +125,33 @@ def test_catalog_repair_rejects_partial_or_expired_scope(scope: dict[str, object
 def test_catalog_repair_status_reads_current_publication_evidence(monkeypatch) -> None:
     class CaptureAdmin:
         def get_repair_run(self, _task_id: int) -> dict[str, object]:
-            return {"capability_id": "futures.contracts.catalog", "status": "success", "detail_json": {}}
+            return {"capability_id": "futures.contracts.catalog", "status": "success", "detail_json": {"publication": {"dataset_version": "mhd-v1-published", "snapshot_id": "snapshot-1", "complete": True}}}
 
     monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", CaptureAdmin())
-    monkeypatch.setattr(
-        admin_runtime,
-        "current_future_contract_reference_publication",
-        lambda: {"dataset_version": "mhd-v1-published", "snapshot_id": "snapshot-1", "complete": True},
-    )
-
     result = admin_runtime.get_data_repair(19)
 
     assert result["dataset_version"] == "mhd-v1-published"
     assert result["publication"]["snapshot_id"] == "snapshot-1"
+
+
+def test_catalog_incomplete_http_details_remain_a_json_object(monkeypatch) -> None:
+    import main
+
+    monkeypatch.setattr(futures_router, "require_dataset_version", lambda *_args: "mhd-v1-catalog")
+    monkeypatch.setattr(
+        futures._QUOTEMUX.futures,
+        "get_contract_catalog",
+        lambda *_args: (_ for _ in ()).throw(FutureContractCatalogIncompleteError("missing_products", missing_products=("rb",))),
+    )
+    monkeypatch.setattr(main.reader_packages, "ensure_reader_packages_ready", lambda: None)
+    monkeypatch.setattr(main.adj_factor_warmup, "resume_tasks", lambda: None)
+    monkeypatch.setattr(main.adj_factor_warmup, "stop_tasks", lambda: None)
+
+    response = TestClient(main.app).get("/api/futures/contracts?codes=rb")
+
+    assert response.status_code == 409
+    assert isinstance(response.json()["details"], dict)
+    assert response.json()["details"]["repair_template"]["scope"]["codes"] == []
 
 
 def test_catalog_dataset_is_publication_gated_and_independent_from_future_bar() -> None:
