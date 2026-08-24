@@ -22,8 +22,10 @@ def get_main_continuous_realtime(codes: str) -> list[FutureRealtimeQuoteItem]:
     return _QUOTEMUX.futures.get_main_continuous_realtime(codes)
 
 
-def get_contract_catalog(codes: str, include_expired: bool) -> list[FutureContractCatalogItem]:
-    return _QUOTEMUX.futures.get_contract_catalog(codes, include_expired)
+def get_contract_catalog(codes: str, include_expired: bool, dataset_version: str) -> list[FutureContractCatalogItem]:
+    """Read the immutable QuoteMux catalog snapshot; this path has no provider or writer."""
+    items = _QUOTEMUX.futures.get_contract_catalog(codes, include_expired)
+    return [item.model_copy(update={"catalog_dataset_version": dataset_version}) for item in items]
 
 
 def get_main_contract_mappings(codes: str) -> list[FutureMainContractMappingItem]:

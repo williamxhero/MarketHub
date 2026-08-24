@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from quotemux.models import ApiError
+from quotemux.futures import FutureContractCatalogIncompleteError
 from platform_models import FutureContractCatalogItem, FutureContractRealtimeQuoteItem, FutureMainContractMappingItem
 
 from data_threads import run_data_task
 from services import futures
+from services.dataset_versions import require_dataset_version
 
 
 router = APIRouter()
@@ -18,6 +20,12 @@ _LIVE_FUTURES_RESPONSES = {
     400: {"model": ApiError, "description": "品种代码或实际合约符号不合法。"},
     422: {"model": ApiError, "description": "查询参数缺失或不符合接口约束。"},
     503: {"model": ApiError, "description": "未启用 TqSdk source instance，或实时上游暂不可用。"},
+}
+
+_CATALOG_DATASET_ID = "future_contract_reference"
+_CATALOG_RESPONSES = {
+    **_LIVE_FUTURES_RESPONSES,
+    409: {"model": ApiError, "description": "本地已发布合约目录不完整；普通查询不会调用 provider。"},
 }
 
 
@@ -61,27 +69,44 @@ async def api_future_realtime_quotes(
     "/api/futures/contracts",
     response_model=list[FutureContractCatalogItem],
     summary="查询中国期货实际合约目录与规格",
-    description="""返回 TqSdk 当前可见的国内期货实际合约目录及规格。
+    description="""返回已持久化的国内期货实际合约目录与规格。
 
 ## 数据来源与新鲜度
 
-- 唯一 source 是 TqSdk `query_quotes`；每次请求即时读取，不写入 MarketHub 或 QuoteMux 的本地表。
-- `raw_metadata` 保留上游原始合约元数据；标准字段包含 provider symbol、交易所、品种、交割合约、到期/交割信息、合约乘数和最小变动价位。
-- `include_expired=false` 仅返回未过期合约。目录是调用时 source 可见的元数据快照，不是历史参考表，也不承诺在盘中之外更新。
+- 数据由管理员 repair/capture 从 `shinny_tqsdk` 持久化并原子发布；普通 `GET` 只读 QuoteMux 本地快照，绝不调用 provider、安装依赖或写库。
+- `raw_metadata` 保留采集时的上游原始元数据；`snapshot_id`、`captured_at`、`source`、`provenance` 和 `availability` 使引用数据可审计。
+- `product_code`、`exchange`、`currency`、`tick_size`、`price_precision` 与 `multiplier` 来自已发布 native catalog。`asset_class`、`lot_size`、手续费与保证金属于 Quant Runtime execution profile；若 profile 未冻结，字段为 null 且 `availability`/`provenance` 明确说明，绝不以零伪造。
+- native provider symbol 与 contract symbol 保持原样，不由 MarketHub 猜测或拼接别名。
 
 ## 查询参数
 
 - `codes`：可选，逗号分隔的期货品种代码；为空时返回全部 84 个国内品种可见的未过期合约，例如 `IF,au`。
 - `include_expired`：是否包含上游标记为过期的合约，默认 `false`。
+- `dataset_version`：可选版本钉住；与 `/api/health` 的 `future_contract_reference` 不一致时返回 `DATASET_VERSION_STALE`。
 
-该接口不返回行情，也不会与 EDB T+1 或 Apex L0 历史序列拼接、混写。""",
-    responses=_LIVE_FUTURES_RESPONSES,
+若未发布完整快照或 scope 缺失，返回 `DATA_INCOMPLETE` 及 `/api/admin/data-repairs` repair 模板。该接口不返回行情，也不会与 EDB T+1 或 Apex L0 历史序列拼接、混写。""",
+    responses=_CATALOG_RESPONSES,
 )
 async def api_future_contract_catalog(
+    response: Response,
     codes: str = Query("", description="可选的期货品种代码，逗号分隔；留空查询全部国内品种。", examples=["IF,au"]),
     include_expired: bool = Query(False, description="是否包含上游标记为过期的实际合约。"),
+    dataset_version: str = Query("", description="可选的 future_contract_reference dataset version 钉住。"),
 ) -> list[FutureContractCatalogItem]:
-    return await run_data_task(futures.get_contract_catalog, codes, include_expired)
+    current_version = require_dataset_version(_CATALOG_DATASET_ID, dataset_version)
+    try:
+        items = await run_data_task(futures.get_contract_catalog, codes, include_expired, current_version)
+    except FutureContractCatalogIncompleteError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DATA_INCOMPLETE",
+                "message": "本地期货合约目录不完整；普通查询禁止调用 provider 或写库",
+                "details": exc.details,
+            },
+        ) from exc
+    response.headers["X-MarketHub-Dataset-Version"] = current_version
+    return items
 
 
 @router.get(
