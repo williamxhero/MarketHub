@@ -90,6 +90,9 @@ def test_catalog_repair_uses_canonical_empty_scope_and_finalizes_only_catalog(mo
             calls.append((capability_id, scope, version))
             return {"id": 19, "capability_id": capability_id, "status": "success"}
 
+        def finalize_catalog_repair_publication(self, _run_id: int, publication: dict[str, object]) -> dict[str, object]:
+            return {"detail_json": {"publication": publication}}
+
     monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", CaptureAdmin())
     monkeypatch.setattr(admin_runtime, "require_dataset_version", lambda *_args: "mhd-v1-baseline")
     monkeypatch.setattr(admin_runtime, "run_with_memory_log", lambda _name, _detail, operation: operation())
@@ -131,7 +134,7 @@ def test_catalog_repair_allows_expired_full_scope() -> None:
 def test_catalog_repair_status_reads_current_publication_evidence(monkeypatch) -> None:
     class CaptureAdmin:
         def get_repair_run(self, _task_id: int) -> dict[str, object]:
-            return {"capability_id": "futures.contracts.catalog", "status": "success", "detail_json": {"publication": {"dataset_version": "mhd-v1-published", "snapshot_id": "snapshot-1", "complete": True}}}
+            return {"capability_id": "futures.contracts.catalog", "status": "success", "detail_json": {"publication": {"catalog_dataset_version": "mhd-v1-published", "snapshot_id": "snapshot-1", "content_checksum": "a" * 64, "row_count": 23, "product_count": 23, "complete": True}}}
 
     monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", CaptureAdmin())
     result = admin_runtime.get_data_repair(19)

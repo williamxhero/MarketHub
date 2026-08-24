@@ -1277,6 +1277,16 @@ def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, obje
     publication: dict[str, object] = {}
     if dataset_id == "future_contract_reference" and str(result.get("status", "")) == "success":
         publication = finalize_future_contract_reference_state()
+        publication = {
+            **publication,
+            "catalog_dataset_version": str(publication["dataset_version"]),
+            "content_checksum": str(publication["checksum_sha256"]),
+        }
+        persisted_run = _capture_admin().finalize_catalog_repair_publication(int(result["id"]), publication)
+        persisted_detail = persisted_run.get("detail_json", {})
+        if not isinstance(persisted_detail, dict) or not isinstance(persisted_detail.get("publication"), dict):
+            raise RuntimeError("QuoteMux 未持久化 catalog repair publication evidence")
+        publication = persisted_detail["publication"]
     else:
         _finalize_capture_read_models((result,))
     actual_version = str(publication.get("dataset_version", repair_baseline))
@@ -1320,6 +1330,12 @@ def get_data_repair(repair_task_id: int) -> dict[str, object]:
     # records created before that contract intentionally return no evidence.
     publication_value = detail.get("publication", {})
     publication = publication_value if isinstance(publication_value, dict) else {}
+    if publication:
+        publication = {
+            **publication,
+            "dataset_version": str(publication.get("dataset_version", publication.get("catalog_dataset_version", ""))),
+            "checksum_sha256": str(publication.get("checksum_sha256", publication.get("content_checksum", ""))),
+        }
     return {
         **result,
         "repair_task_id": repair_task_id,
