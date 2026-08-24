@@ -14,7 +14,7 @@
 
 ## 期货实时 API
 
-MarketHub 额外提供由 TqSdk 驱动的中国期货实时快照：实际合约目录与规格、当前主力实际合约映射，以及指定实际交割合约的完整实时 quote。它们是调用时读取的非持久化数据，与 EDB T+1 和 Apex L0 历史序列严格分开。调用说明、字段和新鲜度口径见 [期货实时 API](docs/china-futures-realtime-api.md)。
+MarketHub 提供由 TqSdk 驱动的中国期货引用与实时接口：实际合约目录与规格通过管理员 repair/capture 持久化为可审计的本地快照，普通 `GET /api/futures/contracts` 只读该快照，不会现场调用 provider 或写库；当前主力实际合约映射和指定实际交割合约的实时 quote 仍是调用时读取的非持久化数据。它们与 EDB T+1 和 Apex L0 历史序列严格分开。调用说明、字段和新鲜度口径见 [期货实时 API](docs/china-futures-realtime-api.md)。
 
 
 

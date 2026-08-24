@@ -16,6 +16,7 @@ DATASET_IDS = (
     "stock_bar_5m",
     "stock_bar_30m",
     "future_bar_1m",
+    "future_contract_reference",
     "concept_daily_1d",
     "stock_research_daily",
 )
@@ -25,6 +26,7 @@ _CAPABILITY_DATASET_IDS = {
     "futures.quotes.back_adjusted_continuous.1m": "future_bar_1m",
     "futures.quotes.main_continuous.1m": "future_bar_1m",
 }
+PUBLICATION_GATED_DATASET_IDS = READ_MODEL_DATASET_IDS | frozenset(("future_contract_reference",))
 VERSION_CONTRACT = "markethub-dataset-vector-v1"
 ROUTE_DATASET_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "/api/stocks/catalog": ("stock_reference",),
@@ -36,6 +38,7 @@ ROUTE_DATASET_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "/api/stocks/quotes/daily-local-window": ("stock_daily_1d",),
     "/api/futures/coverage": ("future_bar_1m",),
     "/api/futures/quotes/1m": ("future_bar_1m",),
+    "/api/futures/contracts": ("future_contract_reference",),
     "/api/exports/stock_daily_1d/{dataset_version}/manifest": ("stock_daily_1d",),
     "/api/exports/stock_daily_1d/{dataset_version}/files/{relative_path}": ("stock_daily_1d",),
 }
@@ -80,7 +83,7 @@ def current_dataset_publications(versions: dict[str, str] | None = None) -> dict
     versions = current_dataset_versions() if versions is None else versions
     publications = {
         dataset_id: {
-            "status": "not_ready" if dataset_id in READ_MODEL_DATASET_IDS else "online",
+            "status": "not_ready" if dataset_id in PUBLICATION_GATED_DATASET_IDS else "online",
             "dataset_version": version,
         }
         for dataset_id, version in versions.items()
