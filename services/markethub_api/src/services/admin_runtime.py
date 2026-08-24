@@ -33,7 +33,10 @@ from quotemux.store.default_update_policy import cache_enabled_from_ttl_days as 
 from quotemux.store.postgres import CACHE_NEVER_EXPIRE_TTL_SECONDS, _coverage_mode_for_capability, _key_fields_for_capability, _request_scope_fields_for_capability, _time_field_for_capability
 from quotemux.store.timeout_admin import QuoteMuxTimeoutAdmin
 from services.minute_coverage_read_model import finalize_stock_1m_daily_coverage_state
-from services.future_contract_reference_read_model import finalize_future_contract_reference_state
+from services.future_contract_reference_read_model import (
+    current_future_contract_reference_publication,
+    finalize_future_contract_reference_state,
+)
 from services.runtime_memory import run_with_memory_log
 
 
@@ -1239,8 +1242,19 @@ def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, obje
         {"dataset_id": dataset_id, "dataset_version": dataset_version},
         lambda: _capture_admin().run_repair(capability_id, normalized_scope, dataset_version),
     )
-    _finalize_capture_read_models((result,))
-    return {**result, "repair_task_id": int(result["id"]), "dataset_id": dataset_id, "dataset_version": dataset_version}
+    publication: dict[str, object] = {}
+    if dataset_id == "future_contract_reference" and str(result.get("status", "")) == "success":
+        publication = finalize_future_contract_reference_state()
+    else:
+        _finalize_capture_read_models((result,))
+    actual_version = str(publication.get("dataset_version", dataset_version))
+    return {
+        **result,
+        "repair_task_id": int(result["id"]),
+        "dataset_id": dataset_id,
+        "dataset_version": actual_version,
+        "publication": publication,
+    }
 
 
 def _normalize_repair_scope(dataset_id: str, scope: dict[str, object]) -> dict[str, object]:
@@ -1248,11 +1262,11 @@ def _normalize_repair_scope(dataset_id: str, scope: dict[str, object]) -> dict[s
     if dataset_id != "future_contract_reference":
         return scope
     codes = scope.get("codes", [])
-    if not isinstance(codes, list) or not all(isinstance(code, str) for code in codes):
-        raise ValueError("future_contract_reference repair scope.codes 必须是字符串数组")
+    if codes != []:
+        raise ValueError("future_contract_reference repair 只支持 codes=[] 的完整国内活跃合约快照")
     include_expired = scope.get("include_expired", False)
-    if not isinstance(include_expired, bool):
-        raise ValueError("future_contract_reference repair scope.include_expired 必须是布尔值")
+    if include_expired is not False:
+        raise ValueError("future_contract_reference repair 只支持 include_expired=false")
     return {"codes": codes, "include_expired": include_expired}
 
 
@@ -1262,11 +1276,17 @@ def get_data_repair(repair_task_id: int) -> dict[str, object]:
     detail = detail if isinstance(detail, dict) else {}
     capability_id = str(result.get("capability_id", ""))
     dataset_id = next((dataset for dataset, capability in _REPAIR_DATASET_CAPABILITIES.items() if capability == capability_id), "")
+    publication = (
+        current_future_contract_reference_publication()
+        if dataset_id == "future_contract_reference" and str(result.get("status", "")) == "success"
+        else {}
+    )
     return {
         **result,
         "repair_task_id": repair_task_id,
         "dataset_id": dataset_id,
-        "dataset_version": str(detail.get("repair_dataset_version", "")),
+        "dataset_version": str(publication.get("dataset_version", detail.get("repair_dataset_version", ""))),
+        "publication": publication,
     }
 
 
