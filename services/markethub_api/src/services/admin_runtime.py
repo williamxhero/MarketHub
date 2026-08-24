@@ -1272,11 +1272,21 @@ def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, obje
     result = run_with_memory_log(
         "capture.run_repair",
         {"dataset_id": dataset_id, "dataset_version": repair_baseline},
-        lambda: _capture_admin().run_repair(capability_id, normalized_scope, repair_baseline),
+        lambda: _capture_admin().run_repair(
+            capability_id,
+            normalized_scope,
+            repair_baseline,
+            locked_precondition=lambda: require_dataset_version(dataset_id, repair_baseline),
+        ),
     )
     publication: dict[str, object] = {}
     if dataset_id == "future_contract_reference" and str(result.get("status", "")) == "success":
-        publication = finalize_future_contract_reference_state()
+        result_detail = result.get("detail_json", {})
+        result_publication = result_detail.get("publication", {}) if isinstance(result_detail, dict) else {}
+        expected_snapshot_id = str(result_publication.get("snapshot_id", "")) if isinstance(result_publication, dict) else ""
+        publication = finalize_future_contract_reference_state(
+            bool(normalized_scope["include_expired"]), expected_snapshot_id
+        )
         publication = {
             **publication,
             "catalog_dataset_version": str(publication["dataset_version"]),
