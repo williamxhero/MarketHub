@@ -104,7 +104,7 @@ class CapturePolicyPayload(BaseModel):
 class DataRepairPayload(BaseModel):
     dataset_id: str
     dataset_version: str = ""
-    scope: dict[str, object]
+    scope: dict[str, object] = Field(default_factory=dict)
 
 
 @router.get("/api/admin/source-packages")

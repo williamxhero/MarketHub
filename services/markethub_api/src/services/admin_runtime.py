@@ -37,6 +37,7 @@ from services.minute_coverage_read_model import finalize_stock_1m_daily_coverage
 from services.dataset_versions import require_current
 from services.futures_repair_evidence import ManagedBackAdjustedRepairEvidenceRegistry
 from services.futures_1m_completeness import carry_forward_current_back_adjusted_completeness
+from services.future_contract_reference_read_model import finalize_future_contract_reference_state
 from services.runtime_memory import run_with_memory_log
 
 
@@ -1234,6 +1235,8 @@ def run_capture(capability_id: str) -> dict[str, object]:
 _REPAIR_DATASET_CAPABILITIES = {
     "stock_daily_1d": "stocks.quotes.daily",
     "stock_bar_1m": "stocks.quotes.intraday",
+    "future_bar_1m": "futures.quotes.main_continuous.1m",
+    "future_contract_reference": "futures.contracts.catalog",
     "concept_daily_1d": "concepts.quotes.daily",
 }
 
@@ -1256,13 +1259,27 @@ def _repair_capability_id(dataset_id: str, scope: dict[str, object]) -> str:
 
 def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, object]) -> dict[str, object]:
     capability_id = _repair_capability_id(dataset_id, scope)
+    normalized_scope = _normalize_repair_scope(dataset_id, scope)
     result = run_with_memory_log(
         "capture.run_repair",
         {"dataset_id": dataset_id, "dataset_version": dataset_version},
-        lambda: _capture_admin().run_repair(capability_id, scope, dataset_version),
+        lambda: _capture_admin().run_repair(capability_id, normalized_scope, dataset_version),
     )
     _finalize_capture_read_models((result,))
     return {**result, "repair_task_id": int(result["id"]), "dataset_id": dataset_id, "dataset_version": dataset_version}
+
+
+def _normalize_repair_scope(dataset_id: str, scope: dict[str, object]) -> dict[str, object]:
+    """Keep the persisted catalog capture scope canonical and idempotent."""
+    if dataset_id != "future_contract_reference":
+        return scope
+    codes = scope.get("codes", [])
+    if not isinstance(codes, list) or not all(isinstance(code, str) for code in codes):
+        raise ValueError("future_contract_reference repair scope.codes 必须是字符串数组")
+    include_expired = scope.get("include_expired", False)
+    if not isinstance(include_expired, bool):
+        raise ValueError("future_contract_reference repair scope.include_expired 必须是布尔值")
+    return {"codes": codes, "include_expired": include_expired}
 
 
 def get_data_repair(repair_task_id: int) -> dict[str, object]:
@@ -1304,6 +1321,8 @@ def _finalize_capture_read_models(results: tuple[dict[str, object], ...] | list[
         if capability_id == "futures.quotes.main_continuous.1m":
             carry_forward_current_back_adjusted_completeness()
             return
+        if capability_id == "futures.contracts.catalog":
+            finalize_future_contract_reference_state()
 
 
 def _time_from_text(value: str):
