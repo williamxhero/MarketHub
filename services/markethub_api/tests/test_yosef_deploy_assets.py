@@ -32,3 +32,6 @@ def test_deploy_restores_previous_current_release_when_new_health_check_fails() 
     assert 'if [ "$current_switched" = 1 ] && [ -n "$previous_current" ]; then' in source
     assert 'curl -fsS "$health_url" >/dev/null' in source
     assert "'$ServiceUser' '$HealthUrl'" in source
+    assert 'shared_backup="/tmp/${service_name}-${release_name}.shared.bak"' in source
+    assert 'rm -rf "$runtime_root/scripts" "$runtime_root/publisher"' in source
+    assert 'markethub-storage-governance; else sudo -n rm -f' in source
