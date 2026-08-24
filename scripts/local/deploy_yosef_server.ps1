@@ -56,8 +56,15 @@ runtime_root="$4"
 env_path="$5"
 service_name="$6"
 service_user="$7"
+health_url="$8"
 release_root="$remote_root/releases/$release_name"
+previous_current="$(readlink -f "$remote_root/current" 2>/dev/null || true)"
+current_switched=0
 restart_on_exit() {
+  if [ "$current_switched" = 1 ] && [ -n "$previous_current" ]; then
+    ln -sfn "$previous_current" "$remote_root/current.next"
+    mv -Tf "$remote_root/current.next" "$remote_root/current"
+  fi
   sudo -n systemctl restart "$service_name.service" >/dev/null 2>&1 || true
 }
 trap restart_on_exit EXIT
@@ -119,6 +126,7 @@ rm -rf "$release_root/QuoteMux/build"
 sudo -n chown -R "$service_user:$service_group" "$release_root"
 ln -sfn "$release_root" "$remote_root/current.next"
 mv -Tf "$remote_root/current.next" "$remote_root/current"
+current_switched=1
 mkdir -p "$runtime_root/scripts" "$runtime_root/publisher"
 install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update.sh" "$runtime_root/scripts/global-data-update.sh"
 install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update-with-health.sh" "$runtime_root/scripts/global-data-update-with-health.sh"
@@ -164,11 +172,20 @@ sudo -n install -m 0644 /tmp/markethub-service "/etc/systemd/system/$service_nam
 sudo -n systemctl daemon-reload
 sudo -n systemctl enable "$service_name.service"
 sudo -n systemctl restart "$service_name.service"
-trap - EXIT
-rm -f "$remote_archive" /tmp/markethub-service
+for attempt in $(seq 1 20); do
+  if curl -fsS "$health_url" >/dev/null; then
+    current_switched=0
+    trap - EXIT
+    rm -f "$remote_archive" /tmp/markethub-service
+    exit 0
+  fi
+  sleep 2
+done
+echo "new MarketHub release failed health check; restoring previous current release" >&2
+exit 1
 '@
 $encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
-$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser'"
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }
