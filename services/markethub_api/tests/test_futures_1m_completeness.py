@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import inspect
 import sys
 
 from fastapi import HTTPException
@@ -121,6 +122,13 @@ def test_manifest_validation_requires_refs_and_rejects_overlapping_intervals() -
         completeness._validated_entries([base, {**base, "start_date": "2026-02-03", "end_date": "2026-02-04"}])
     with pytest.raises(ValueError, match="availability_ref"):
         completeness._validated_entries([{**base, "availability_ref": ""}])
+
+
+def test_schema_ddl_is_confined_to_explicit_bootstrap_seam() -> None:
+    source = inspect.getsource(completeness)
+
+    assert source.count("connection.execute(_DDL)") == 1
+    assert "def bootstrap_futures_1m_completeness_schema()" in source
 
 
 @pytest.mark.parametrize(

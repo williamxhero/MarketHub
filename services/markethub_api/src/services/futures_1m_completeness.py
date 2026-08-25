@@ -245,7 +245,6 @@ def publish_validated_futures_1m_completeness_manifest(manifest: Mapping[str, ob
     canonical = {"dataset_id": DATASET_ID, "dataset_version": version, "entries": entries, "back_adjusted_series_state": back_adjusted_state}
     checksum = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
     with _connect() as connection:
-        connection.execute(_DDL)
         state = connection.execute("select baseline_id,generation from audit.dataset_version_state where dataset_id=%s", (DATASET_ID,)).fetchone()
         if state is None:
             raise RuntimeError("future_bar_1m dataset version state unavailable")
@@ -293,7 +292,6 @@ def carry_forward_current_back_adjusted_completeness() -> dict[str, object]:
         raise RuntimeError("back-adjusted series lineage state unavailable")
     current_state = _normalized_back_adjusted_series_state(series_rows[0])
     with _connect() as connection:
-        connection.execute(_DDL)
         existing = connection.execute(
             "select publication.dataset_version from readmodel.future_1m_completeness_publication publication join readmodel.dataset_build_state state on state.dataset_id=%s and state.dataset_version=publication.dataset_version where publication.dataset_version=%s and state.status='online' and state.coverage_ready",
             (DATASET_ID, current_version),
