@@ -334,6 +334,10 @@ def bootstrap_futures_1m_completeness_schema() -> None:
         connection.execute(_DDL)
         read_role = sql.Identifier(_application_read_role())
         connection.execute(
+            sql.SQL("revoke all privileges on table readmodel.future_1m_completeness_active_revision from {}")
+            .format(read_role)
+        )
+        connection.execute(
             sql.SQL("grant select on table readmodel.future_1m_completeness_revision, "
                     "readmodel.future_1m_completeness_revision_interval, "
                     "readmodel.future_1m_completeness_revision_activation, "
@@ -367,6 +371,8 @@ def bootstrap_futures_1m_completeness_schema() -> None:
                for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER") ),
             *( ("readmodel.future_1m_completeness_revision_activation_activation_id_seq", privilege)
                for privilege in ("USAGE", "SELECT", "UPDATE") ),
+            *( ("readmodel.future_1m_completeness_active_revision", privilege)
+               for privilege in ("INSERT", "UPDATE", "DELETE", "REFERENCES", "TRIGGER") ),
         ):
             check = "has_sequence_privilege" if relation.endswith("_seq") else "has_table_privilege"
             row = connection.execute(f"select {check}(%s, %s, %s) as allowed", (_application_read_role(), relation, privilege)).fetchone()

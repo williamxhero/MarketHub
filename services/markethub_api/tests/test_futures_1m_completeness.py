@@ -281,6 +281,7 @@ def test_revision_schema_bootstrap_grants_query_read_and_revokes_application_wri
     assert "revoke insert, update, delete on table readmodel.future_1m_completeness_revision" in source
     assert "revoke truncate, references, trigger on table readmodel.future_1m_completeness_revision" in source
     assert "revoke usage, select, update on sequence" in source
+    assert "revoke all privileges on table readmodel.future_1m_completeness_active_revision" in source
     assert "has_sequence_privilege" in source
     assert "has_table_privilege" in source
 
