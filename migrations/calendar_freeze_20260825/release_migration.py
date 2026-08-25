@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 
 
@@ -113,12 +114,31 @@ def preflight(start: date, end: date, exchange: str) -> dict[str, object]:
     }
 
 
-def apply(market_data_version: str, start: date, end: date, exchange: str) -> dict[str, object]:
+def apply(
+    market_data_version: str,
+    start: date,
+    end: date,
+    exchange: str,
+    *,
+    reader_role: str = "",
+) -> dict[str, object]:
     if not market_data_version.startswith("mhf-v1-") or len(market_data_version) != 71:
         raise ValueError("market_data_version must be an mhf-v1 sha256 version")
     storage_exchange = _storage_exchange(exchange)
     with _connect() as connection:
         connection.execute(_DDL)
+        if reader_role:
+            connection.execute(
+                sql.SQL("grant usage on schema audit, readmodel to {}").format(
+                    sql.Identifier(reader_role)
+                )
+            )
+            connection.execute(
+                sql.SQL(
+                    "grant select on table audit.trade_calendar_publication, "
+                    "readmodel.trade_calendar_snapshot_row to {}"
+                ).format(sql.Identifier(reader_role))
+            )
         rows = connection.execute(
             "select trade_date,is_open from ref.trade_calendar "
             "where exchange=%s and trade_date between %s and %s order by trade_date",
@@ -194,12 +214,23 @@ def main() -> int:
     parser.add_argument("--exchange", default="SSE")
     parser.add_argument("--start", type=date.fromisoformat, required=True)
     parser.add_argument("--end", type=date.fromisoformat, required=True)
+    parser.add_argument(
+        "--reader-role",
+        default="",
+        help="database role used by the MarketHub API; apply grants it read-only access",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.action == "preflight":
         result = preflight(args.start, args.end, args.exchange)
     elif args.action == "apply":
-        result = apply(args.market_data_version, args.start, args.end, args.exchange)
+        result = apply(
+            args.market_data_version,
+            args.start,
+            args.end,
+            args.exchange,
+            reader_role=args.reader_role,
+        )
     else:
         result = verify(args.market_data_version, args.start, args.end, args.exchange)
     encoded = json.dumps(result, ensure_ascii=False, indent=2, default=str) + "\n"

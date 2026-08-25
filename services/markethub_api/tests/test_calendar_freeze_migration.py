@@ -46,3 +46,12 @@ def test_psycopg_bulk_insert_uses_a_cursor() -> None:
     assert "with connection.cursor() as cursor:" in source
     assert "cursor.executemany(" in source
     assert "connection.executemany(" not in source
+
+
+def test_apply_accepts_explicit_read_only_api_role() -> None:
+    source = MIGRATION_PATH.read_text(encoding="utf-8")
+
+    assert 'parser.add_argument(\n        "--reader-role",' in source
+    assert "grant usage on schema audit, readmodel" in source
+    assert "grant select on table audit.trade_calendar_publication" in source
+    assert "sql.Identifier(reader_role)" in source
