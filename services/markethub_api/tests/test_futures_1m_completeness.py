@@ -273,6 +273,19 @@ def test_schema_ddl_is_confined_to_explicit_bootstrap_seam() -> None:
     assert "immutable futures completeness state already exists" in source
 
 
+def test_revision_schema_bootstrap_grants_query_read_without_application_write() -> None:
+    ddl = completeness._DDL.lower()
+
+    assert "grant select on all tables in schema readmodel to public;" in ddl
+    assert ddl.index("grant select on all tables in schema readmodel to public;") > ddl.index(
+        "create or replace view readmodel.future_1m_completeness_active_revision"
+    )
+    assert "grant insert on all tables in schema readmodel" not in ddl
+    assert "grant update on all tables in schema readmodel" not in ddl
+    assert "grant delete on all tables in schema readmodel" not in ddl
+    assert "grant usage on all sequences in schema readmodel" not in ddl
+
+
 @pytest.mark.parametrize(
     "field,replacement",
     (

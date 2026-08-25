@@ -98,6 +98,10 @@ create or replace view readmodel.future_1m_completeness_active_revision as
 select distinct on (dataset_version) dataset_version,revision_sha256,mode,activation_id,activated_at_utc
 from readmodel.future_1m_completeness_revision_activation
 order by dataset_version,activation_id desc;
+-- Query readers consume immutable completeness evidence but never publish it.
+-- Keep the bootstrap grant aligned with dataset-version-vector.sql: all
+-- readmodel state is publicly selectable while publication stays migration-only.
+grant select on all tables in schema readmodel to public;
 """
 
 
