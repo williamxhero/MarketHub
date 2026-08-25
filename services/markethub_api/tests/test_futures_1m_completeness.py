@@ -186,6 +186,21 @@ def test_stale_expected_revision_fails_closed(monkeypatch: pytest.MonkeyPatch) -
     assert raised.value.detail["details"]["reason"] == "completeness_revision_mismatch"
 
 
+def test_append_only_legacy_activation_restores_the_original_strict_publication(monkeypatch: pytest.MonkeyPatch) -> None:
+    reader = _configure(monkeypatch, _interval("complete"))
+    original = reader.query_batch
+
+    def query_batch(sql: str, params: tuple[object, ...], *, stage: str) -> QueryBatch:
+        if stage == "futures_1m_completeness_active_revision":
+            return QueryBatch(("revision_sha256", "mode"), ((None, "legacy"),))
+        return original(sql, params, stage=stage)
+
+    reader.query_batch = query_batch  # type: ignore[method-assign]
+    assert completeness.validate_published_futures_1m_completeness(
+        "ag", "back_adjusted_continuous", "2026-02-02 09:01:00", "2026-02-02 15:00:00",
+    ) == completeness.Futures1mCompletenessEvidence(VERSION)
+
+
 def test_manifest_validation_requires_refs_and_rejects_overlapping_intervals() -> None:
     base = {
         "product_code": "ag", "exchange": "SHFE", "series_type": "back_adjusted_continuous",

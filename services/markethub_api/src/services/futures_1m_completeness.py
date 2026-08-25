@@ -86,14 +86,16 @@ create index if not exists future_1m_completeness_revision_interval_lookup_idx
 create table if not exists readmodel.future_1m_completeness_revision_activation (
     activation_id bigserial primary key,
     dataset_version text not null,
-    revision_sha256 text not null,
+    revision_sha256 text,
+    mode text not null check (mode in ('revision','legacy')),
     activated_at_utc timestamp with time zone not null default clock_timestamp(),
-    foreign key (dataset_version,revision_sha256) references readmodel.future_1m_completeness_revision(dataset_version,revision_sha256)
+    foreign key (dataset_version,revision_sha256) references readmodel.future_1m_completeness_revision(dataset_version,revision_sha256),
+    check ((mode = 'revision' and revision_sha256 is not null) or (mode = 'legacy' and revision_sha256 is null))
 );
 create index if not exists future_1m_completeness_revision_activation_latest_idx
     on readmodel.future_1m_completeness_revision_activation(dataset_version,activation_id desc);
 create or replace view readmodel.future_1m_completeness_active_revision as
-select distinct on (dataset_version) dataset_version,revision_sha256,activation_id,activated_at_utc
+select distinct on (dataset_version) dataset_version,revision_sha256,mode,activation_id,activated_at_utc
 from readmodel.future_1m_completeness_revision_activation
 order by dataset_version,activation_id desc;
 """
@@ -204,13 +206,18 @@ def validate_published_futures_1m_completeness(
         _incomplete(version, "unpublished", [{"state": state[0] if state else {}}])
 
     active_revisions = _rows(_READ_CLIENT.query_batch(
-        "select revision_sha256 from readmodel.future_1m_completeness_active_revision where dataset_version=%s",
+        "select revision_sha256,mode from readmodel.future_1m_completeness_active_revision where dataset_version=%s",
         (version,),
         stage="futures_1m_completeness_active_revision",
     ))
     if len(active_revisions) > 1:
         _incomplete(version, "active_revision_ambiguous", active_revisions)
     if active_revisions:
+        if str(active_revisions[0].get("mode", "revision")) == "legacy":
+            if expected_completeness_revision:
+                _incomplete(version, "completeness_revision_unpublished", [{"requested_revision": expected_completeness_revision}])
+            _validate_legacy_date_intervals(products, series_type, start, end, version)
+            return Futures1mCompletenessEvidence(version)
         revision = str(active_revisions[0].get("revision_sha256", ""))
         if not revision:
             _incomplete(version, "active_revision_invalid", active_revisions)
@@ -495,11 +502,24 @@ def activate_futures_1m_completeness_revision(dataset_version: str, revision_sha
         revision_row = connection.execute("select revision_sha256 from readmodel.future_1m_completeness_revision where dataset_version=%s and revision_sha256=%s", (version, revision)).fetchone()
         if revision_row is None:
             raise ValueError("unknown immutable completeness revision")
-        active = connection.execute("select revision_sha256,activation_id from readmodel.future_1m_completeness_active_revision where dataset_version=%s", (version,)).fetchone()
-        if active is not None and str(active["revision_sha256"]) == revision:
+        active = connection.execute("select revision_sha256,mode,activation_id from readmodel.future_1m_completeness_active_revision where dataset_version=%s", (version,)).fetchone()
+        if active is not None and str(active["mode"]) == "revision" and str(active["revision_sha256"]) == revision:
             return {"dataset_id": DATASET_ID, "dataset_version": version, "revision_sha256": revision, "activation_id": int(active["activation_id"]), "idempotent": True}
-        activation = connection.execute("insert into readmodel.future_1m_completeness_revision_activation(dataset_version,revision_sha256) values(%s,%s) returning activation_id", (version, revision)).fetchone()
+        activation = connection.execute("insert into readmodel.future_1m_completeness_revision_activation(dataset_version,revision_sha256,mode) values(%s,%s,'revision') returning activation_id", (version, revision)).fetchone()
     return {"dataset_id": DATASET_ID, "dataset_version": version, "revision_sha256": revision, "activation_id": int(activation["activation_id"]), "idempotent": False}
+
+
+def restore_legacy_futures_1m_completeness(dataset_version: str) -> dict[str, object]:
+    """Append a legacy-pointer activation without changing any immutable publication or revision."""
+    version = str(dataset_version).strip()
+    if version != current_dataset_version(DATASET_ID):
+        raise ValueError("legacy restore dataset_version does not match current immutable dataset")
+    with _connect() as connection:
+        active = connection.execute("select mode,activation_id from readmodel.future_1m_completeness_active_revision where dataset_version=%s", (version,)).fetchone()
+        if active is not None and str(active["mode"]) == "legacy":
+            return {"dataset_id": DATASET_ID, "dataset_version": version, "mode": "legacy", "activation_id": int(active["activation_id"]), "idempotent": True}
+        activation = connection.execute("insert into readmodel.future_1m_completeness_revision_activation(dataset_version,revision_sha256,mode) values(%s,null,'legacy') returning activation_id", (version,)).fetchone()
+    return {"dataset_id": DATASET_ID, "dataset_version": version, "mode": "legacy", "activation_id": int(activation["activation_id"]), "idempotent": False}
 
 
 def carry_forward_current_back_adjusted_completeness() -> dict[str, object]:
