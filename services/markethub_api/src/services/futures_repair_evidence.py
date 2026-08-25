@@ -12,6 +12,7 @@ from typing import Any
 
 
 _REGISTRY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{2,127}$")
+_SHA256 = re.compile(r"[0-9a-f]{64}$")
 
 
 def _managed_root() -> Path:
@@ -29,12 +30,22 @@ def _checked_registry_id(registry_id: str) -> str:
 def _canonical_manifest(manifest: Mapping[str, object], artifact: bytes) -> bytes:
     payload = dict(manifest)
     digest = hashlib.sha256(artifact).hexdigest()
-    if str(payload.get("artifact_sha256", "")) != digest:
-        raise ValueError("derivation manifest artifact_sha256 does not match artifact bytes")
+    if str(payload.get("staged_artifact_sha256", "")) != digest:
+        raise ValueError("derivation manifest staged_artifact_sha256 does not match artifact bytes")
+    if payload.get("schema_version") != "futures_back_adjusted_1m_derivation_v1":
+        raise ValueError("unsupported derivation manifest schema_version")
+    if payload.get("series_type") != "back_adjusted_continuous":
+        raise ValueError("derivation manifest series_type must be back_adjusted_continuous")
     if str(payload.get("frozen_dataset_version", "")).strip() == "":
         raise ValueError("derivation manifest requires frozen_dataset_version")
-    if not isinstance(payload.get("derivation"), Mapping) or not payload["derivation"]:
-        raise ValueError("derivation manifest requires a non-empty derivation object")
+    for field in ("ruleset_sha256", "gap_ranges_artifact_sha256"):
+        if not _SHA256.fullmatch(str(payload.get(field, ""))):
+            raise ValueError(f"derivation manifest requires {field}")
+    for field in ("source_capture", "contract_mapping_capture"):
+        if not isinstance(payload.get(field), Mapping) or not payload[field]:
+            raise ValueError(f"derivation manifest requires {field}")
+    if not isinstance(payload.get("exact_missing_keys"), list) or not payload["exact_missing_keys"]:
+        raise ValueError("derivation manifest requires exact_missing_keys")
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 

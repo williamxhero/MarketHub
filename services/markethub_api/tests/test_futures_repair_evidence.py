@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 import sys
 
@@ -17,9 +16,15 @@ from services.futures_repair_evidence import ManagedBackAdjustedRepairEvidenceRe
 
 def _manifest(artifact: bytes) -> dict[str, object]:
     return {
+        "schema_version": "futures_back_adjusted_1m_derivation_v1",
+        "series_type": "back_adjusted_continuous",
         "frozen_dataset_version": "mhd-v1-frozen",
-        "artifact_sha256": hashlib.sha256(artifact).hexdigest(),
-        "derivation": {"source": "registered-authoritative-capture", "range": "2026-02-02"},
+        "staged_artifact_sha256": hashlib.sha256(artifact).hexdigest(),
+        "ruleset_sha256": "a" * 64,
+        "gap_ranges_artifact_sha256": "b" * 64,
+        "source_capture": {"capture_id": "source-001"},
+        "contract_mapping_capture": {"capture_id": "mapping-001"},
+        "exact_missing_keys": [{"product_code": "ag", "bar_time": "2026-02-02 10:46:00"}],
     }
 
 
@@ -42,8 +47,8 @@ def test_registry_persists_verified_immutable_artifact_and_manifest(tmp_path: Pa
 def test_registry_rejects_hash_mismatch_and_registry_mutation(tmp_path: Path) -> None:
     artifact = b"authoritative-staged-bytes"
     registry = ManagedBackAdjustedRepairEvidenceRegistry(tmp_path / "managed")
-    with pytest.raises(ValueError, match="artifact_sha256"):
-        registry.register("ag-repair-001", artifact, {**_manifest(artifact), "artifact_sha256": "0" * 64})
+    with pytest.raises(ValueError, match="staged_artifact_sha256"):
+        registry.register("ag-repair-001", artifact, {**_manifest(artifact), "staged_artifact_sha256": "0" * 64})
     registry.register("ag-repair-001", artifact, _manifest(artifact))
     with pytest.raises(RuntimeError, match="immutable"):
         registry.register("ag-repair-001", b"different", _manifest(b"different"))
@@ -63,5 +68,5 @@ def test_registry_resolution_rechecks_disk_hash(tmp_path: Path) -> None:
     registry.register("ag-repair-001", artifact, _manifest(artifact))
     (root / "ag-repair-001" / "artifact.bin").write_bytes(b"tampered")
 
-    with pytest.raises(ValueError, match="artifact_sha256"):
+    with pytest.raises(ValueError, match="staged_artifact_sha256"):
         registry.resolve("ag-repair-001")

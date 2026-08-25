@@ -44,6 +44,19 @@ def _configure(monkeypatch: pytest.MonkeyPatch, *intervals: tuple[object, ...]) 
     return reader
 
 
+def _back_adjusted_series_state() -> dict[str, object]:
+    return {
+        "series_type": "back_adjusted_continuous",
+        "generation": 19,
+        "row_count": 1_234_567,
+        "first_bar_time": "2012-01-04 09:01:00",
+        "last_bar_time": "2026-08-11 15:00:00",
+        "transaction_id": 42,
+        "operation": "upsert",
+        "delta_fingerprint": "a" * 32,
+    }
+
+
 def test_ag_225_192_manifest_gap_returns_409_even_when_endpoints_match(monkeypatch: pytest.MonkeyPatch) -> None:
     _configure(monkeypatch, _interval("missing", detail={"expected_rows": 225, "actual_rows": 192, "first_bar_time": "2026-02-02 09:01:00", "last_bar_time": "2026-02-02 15:00:00", "missing_rows": 33}))
 
@@ -108,3 +121,21 @@ def test_manifest_validation_requires_refs_and_rejects_overlapping_intervals() -
         completeness._validated_entries([base, {**base, "start_date": "2026-02-03", "end_date": "2026-02-04"}])
     with pytest.raises(ValueError, match="availability_ref"):
         completeness._validated_entries([{**base, "availability_ref": ""}])
+
+
+@pytest.mark.parametrize(
+    "field,replacement",
+    (
+        ("generation", 20),
+        ("row_count", 1_234_568),
+        ("first_bar_time", "2012-01-05 09:01:00"),
+        ("last_bar_time", "2026-08-11 14:59:00"),
+        ("transaction_id", 43),
+        ("operation", "delete"),
+        ("delta_fingerprint", "b" * 32),
+    ),
+)
+def test_main_generation_carry_forward_requires_every_back_adjusted_lineage_field_to_match(field: str, replacement: object) -> None:
+    published = _back_adjusted_series_state()
+    assert completeness.can_carry_forward_back_adjusted_completeness(published, _back_adjusted_series_state()) is True
+    assert completeness.can_carry_forward_back_adjusted_completeness(published, {**published, field: replacement}) is False

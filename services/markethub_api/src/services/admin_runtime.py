@@ -36,6 +36,7 @@ from quotemux.store.timeout_admin import QuoteMuxTimeoutAdmin
 from services.minute_coverage_read_model import finalize_stock_1m_daily_coverage_state
 from services.dataset_versions import require_current
 from services.futures_repair_evidence import ManagedBackAdjustedRepairEvidenceRegistry
+from services.futures_1m_completeness import carry_forward_current_back_adjusted_completeness
 from services.runtime_memory import run_with_memory_log
 
 
@@ -1299,6 +1300,9 @@ def _finalize_capture_read_models(results: tuple[dict[str, object], ...] | list[
         capability_id = get_capability_config_root(str(result.get("capability_id", "")))
         if capability_id == "stocks.quotes.intraday":
             finalize_stock_1m_daily_coverage_state()
+            return
+        if capability_id == "futures.quotes.main_continuous.1m":
+            carry_forward_current_back_adjusted_completeness()
             return
 
 

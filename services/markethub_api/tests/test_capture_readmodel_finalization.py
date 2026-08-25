@@ -60,6 +60,24 @@ def test_non_intraday_capture_does_not_finalize_minute_coverage(monkeypatch) -> 
     assert calls == []
 
 
+def test_main_continuous_capture_attempts_strict_back_adjusted_carry_forward(monkeypatch) -> None:
+    _configure(monkeypatch)
+    calls: list[bool] = []
+    monkeypatch.setattr(admin_runtime, "carry_forward_current_back_adjusted_completeness", lambda: calls.append(True))
+
+    admin_runtime._finalize_capture_read_models(({"capability_id": "futures.quotes.main_continuous.1m", "status": "success"},))
+
+    assert calls == [True]
+
+
+def test_main_continuous_capture_does_not_hide_a_failed_back_adjusted_carry_forward(monkeypatch) -> None:
+    _configure(monkeypatch)
+    monkeypatch.setattr(admin_runtime, "carry_forward_current_back_adjusted_completeness", lambda: (_ for _ in ()).throw(RuntimeError("lineage changed")))
+
+    with pytest.raises(RuntimeError, match="lineage changed"):
+        admin_runtime._finalize_capture_read_models(({"capability_id": "futures.quotes.main_continuous.1m", "status": "success"},))
+
+
 def test_future_1m_repair_routes_only_a_managed_registry_id(monkeypatch) -> None:
     _configure(monkeypatch)
 
