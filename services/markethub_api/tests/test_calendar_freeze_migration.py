@@ -38,3 +38,11 @@ def test_calendar_snapshot_accepts_persisted_closed_days_and_is_deterministic() 
 
     assert first == second
     assert first[0] == "cee282ceafaa6f93d69b8a7bb2b60a4b736144062faf261f7158cbdc5ddd6c3f"
+
+
+def test_psycopg_bulk_insert_uses_a_cursor() -> None:
+    source = MIGRATION_PATH.read_text(encoding="utf-8")
+
+    assert "with connection.cursor() as cursor:" in source
+    assert "cursor.executemany(" in source
+    assert "connection.executemany(" not in source

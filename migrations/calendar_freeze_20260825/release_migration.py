@@ -125,11 +125,12 @@ def apply(market_data_version: str, start: date, end: date, exchange: str) -> di
             (storage_exchange, start, end),
         ).fetchall()
         snapshot_sha256, normalized = canonical_snapshot(rows, start=start, end=end)
-        connection.executemany(
-            "insert into readmodel.trade_calendar_snapshot_row "
-            "(snapshot_sha256,exchange,trade_date,is_open) values (%s,%s,%s,%s) on conflict do nothing",
-            [(snapshot_sha256, exchange, trade_date, is_open) for trade_date, is_open in normalized],
-        )
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                "insert into readmodel.trade_calendar_snapshot_row "
+                "(snapshot_sha256,exchange,trade_date,is_open) values (%s,%s,%s,%s) on conflict do nothing",
+                [(snapshot_sha256, exchange, trade_date, is_open) for trade_date, is_open in normalized],
+            )
         connection.execute(
             "insert into audit.trade_calendar_publication "
             "(market_data_version,exchange,range_start,range_end,snapshot_sha256,row_count,open_day_count) "
