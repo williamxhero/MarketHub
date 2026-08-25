@@ -129,6 +129,8 @@ def test_schema_ddl_is_confined_to_explicit_bootstrap_seam() -> None:
 
     assert source.count("connection.execute(_DDL)") == 1
     assert "def bootstrap_futures_1m_completeness_schema()" in source
+    assert "connection.executemany(" not in source
+    assert "cursor.executemany(" in source
 
 
 @pytest.mark.parametrize(

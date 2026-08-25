@@ -265,11 +265,12 @@ def publish_validated_futures_1m_completeness_manifest(manifest: Mapping[str, ob
             "values(%s,%s,'building',%s,false,false,0,%s,null,clock_timestamp())",
             (DATASET_ID, version, generation, checksum),
         )
-        connection.executemany(
-            "insert into readmodel.future_1m_completeness_interval(dataset_version,product_code,exchange,series_type,start_date,end_date,status,availability_ref,session_rule_ref,detail_json,manifest_sha256) "
-            "values(%s,%s,%s,%s,%s::date,%s::date,%s,%s,%s,%s::jsonb,%s)",
-            [(version, item["product_code"], item["exchange"], item["series_type"], item["start_date"], item["end_date"], item["status"], item["availability_ref"], item["session_rule_ref"], json.dumps(item["detail"], sort_keys=True), checksum) for item in entries],
-        )
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                "insert into readmodel.future_1m_completeness_interval(dataset_version,product_code,exchange,series_type,start_date,end_date,status,availability_ref,session_rule_ref,detail_json,manifest_sha256) "
+                "values(%s,%s,%s,%s,%s::date,%s::date,%s,%s,%s,%s::jsonb,%s)",
+                [(version, item["product_code"], item["exchange"], item["series_type"], item["start_date"], item["end_date"], item["status"], item["availability_ref"], item["session_rule_ref"], json.dumps(item["detail"], sort_keys=True), checksum) for item in entries],
+            )
         connection.execute(
             "insert into readmodel.future_1m_completeness_publication(dataset_version,back_adjusted_series_state,manifest_sha256) values(%s,%s::jsonb,%s)",
             (version, json.dumps(back_adjusted_state, sort_keys=True), checksum),
