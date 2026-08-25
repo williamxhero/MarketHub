@@ -312,10 +312,11 @@ def _validate_revision_intervals(
 
 def _connect() -> psycopg.Connection[Any]:
     return psycopg.connect(
-        host=os.environ["MARKETHUB_DB_HOST"], port=int(os.environ["MARKETHUB_DB_PORT"]),
-        dbname=os.environ["MARKETHUB_DB_NAME"],
-        user=os.getenv("MARKETHUB_FUTURES_1M_COMPLETENESS_MIGRATION_USER", os.environ["MARKETHUB_DB_USER"]),
-        password=os.getenv("MARKETHUB_FUTURES_1M_COMPLETENESS_MIGRATION_PASSWORD", os.environ["MARKETHUB_DB_PASSWORD"]),
+        host=os.getenv("MARKETHUB_FUTURES_COMPLETENESS_MIGRATION_DB_HOST", os.environ["MARKETHUB_DB_HOST"]),
+        port=int(os.getenv("MARKETHUB_FUTURES_COMPLETENESS_MIGRATION_DB_PORT", os.environ["MARKETHUB_DB_PORT"])),
+        dbname=os.getenv("MARKETHUB_FUTURES_COMPLETENESS_MIGRATION_DB_NAME", os.environ["MARKETHUB_DB_NAME"]),
+        user=os.getenv("MARKETHUB_FUTURES_COMPLETENESS_MIGRATION_DB_USER", os.environ["MARKETHUB_DB_USER"]),
+        password=os.getenv("MARKETHUB_FUTURES_COMPLETENESS_MIGRATION_DB_PASSWORD", os.environ["MARKETHUB_DB_PASSWORD"]),
         connect_timeout=10, row_factory=dict_row,
         application_name="markethub-futures-1m-completeness-publisher",
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import inspect
 import sys
@@ -330,6 +331,29 @@ def test_application_read_role_is_explicit_and_identifier_safe(monkeypatch: pyte
     monkeypatch.setenv("MARKETHUB_DB_USER", "datalake; drop role postgres")
     with pytest.raises(RuntimeError, match="MARKETHUB_DB_USER"):
         completeness._application_read_role()
+
+
+def test_publisher_migration_connection_can_use_socket_without_repointing_registry_reader(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("MARKETHUB_DB_HOST", "registry-db.example")
+    monkeypatch.setenv("MARKETHUB_DB_PORT", "55432")
+    monkeypatch.setenv("MARKETHUB_DB_NAME", "datalake_dev")
+    monkeypatch.setenv("MARKETHUB_DB_USER", "datalake")
+    monkeypatch.setenv("MARKETHUB_DB_PASSWORD", "app-password")
+    monkeypatch.setenv("MARKETHUB_FUTURES_COMPLETENESS_MIGRATION_DB_HOST", "/var/run/postgresql")
+    monkeypatch.setenv("MARKETHUB_FUTURES_COMPLETENESS_MIGRATION_DB_USER", "postgres")
+    monkeypatch.setenv("MARKETHUB_FUTURES_COMPLETENESS_MIGRATION_DB_PASSWORD", "")
+    monkeypatch.setattr(completeness.psycopg, "connect", lambda **kwargs: captured.update(kwargs))
+
+    completeness._connect()
+
+    assert captured["host"] == "/var/run/postgresql"
+    assert captured["port"] == 55432
+    assert captured["dbname"] == "datalake_dev"
+    assert captured["user"] == "postgres"
+    assert captured["password"] == ""
+    assert os.environ["MARKETHUB_DB_HOST"] == "registry-db.example"
 
 
 @pytest.mark.parametrize(
