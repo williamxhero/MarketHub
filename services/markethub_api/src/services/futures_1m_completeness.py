@@ -6,10 +6,12 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import os
+import re
 from typing import Any
 
 from fastapi import HTTPException
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 
 from quotemux.futures import normalize_product_codes
@@ -98,10 +100,6 @@ create or replace view readmodel.future_1m_completeness_active_revision as
 select distinct on (dataset_version) dataset_version,revision_sha256,mode,activation_id,activated_at_utc
 from readmodel.future_1m_completeness_revision_activation
 order by dataset_version,activation_id desc;
--- Query readers consume immutable completeness evidence but never publish it.
--- Keep the bootstrap grant aligned with dataset-version-vector.sql: all
--- readmodel state is publicly selectable while publication stays migration-only.
-grant select on all tables in schema readmodel to public;
 """
 
 
@@ -315,16 +313,65 @@ def _validate_revision_intervals(
 def _connect() -> psycopg.Connection[Any]:
     return psycopg.connect(
         host=os.environ["MARKETHUB_DB_HOST"], port=int(os.environ["MARKETHUB_DB_PORT"]),
-        dbname=os.environ["MARKETHUB_DB_NAME"], user=os.environ["MARKETHUB_DB_USER"],
-        password=os.environ["MARKETHUB_DB_PASSWORD"], connect_timeout=10, row_factory=dict_row,
+        dbname=os.environ["MARKETHUB_DB_NAME"],
+        user=os.getenv("MARKETHUB_FUTURES_1M_COMPLETENESS_MIGRATION_USER", os.environ["MARKETHUB_DB_USER"]),
+        password=os.getenv("MARKETHUB_FUTURES_1M_COMPLETENESS_MIGRATION_PASSWORD", os.environ["MARKETHUB_DB_PASSWORD"]),
+        connect_timeout=10, row_factory=dict_row,
         application_name="markethub-futures-1m-completeness-publisher",
     )
+
+
+def _application_read_role() -> str:
+    role = os.environ["MARKETHUB_DB_USER"].strip()
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", role) is None:
+        raise RuntimeError("MARKETHUB_DB_USER must be a PostgreSQL identifier")
+    return role
 
 
 def bootstrap_futures_1m_completeness_schema() -> None:
     """Write-only migration seam; public reads never call this."""
     with _connect() as connection:
         connection.execute(_DDL)
+        read_role = sql.Identifier(_application_read_role())
+        connection.execute(
+            sql.SQL("grant select on table readmodel.future_1m_completeness_revision, "
+                    "readmodel.future_1m_completeness_revision_interval, "
+                    "readmodel.future_1m_completeness_revision_activation, "
+                    "readmodel.future_1m_completeness_active_revision to {}")
+            .format(read_role)
+        )
+        connection.execute(
+            sql.SQL("revoke insert, update, delete on table readmodel.future_1m_completeness_revision, "
+                    "readmodel.future_1m_completeness_revision_interval, "
+                    "readmodel.future_1m_completeness_revision_activation from {}")
+            .format(read_role)
+        )
+        connection.execute(
+            sql.SQL("revoke truncate, references, trigger on table readmodel.future_1m_completeness_revision, "
+                    "readmodel.future_1m_completeness_revision_interval, "
+                    "readmodel.future_1m_completeness_revision_activation from {}")
+            .format(read_role)
+        )
+        connection.execute(
+            sql.SQL("revoke usage, select, update on sequence "
+                    "readmodel.future_1m_completeness_revision_activation_activation_id_seq from {}")
+            .format(read_role)
+        )
+        for relation, privilege in (
+            *( (relation, privilege)
+               for relation in (
+                   "readmodel.future_1m_completeness_revision",
+                   "readmodel.future_1m_completeness_revision_interval",
+                   "readmodel.future_1m_completeness_revision_activation",
+               )
+               for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER") ),
+            *( ("readmodel.future_1m_completeness_revision_activation_activation_id_seq", privilege)
+               for privilege in ("USAGE", "SELECT", "UPDATE") ),
+        ):
+            check = "has_sequence_privilege" if relation.endswith("_seq") else "has_table_privilege"
+            row = connection.execute(f"select {check}(%s, %s, %s) as allowed", (_application_read_role(), relation, privilege)).fetchone()
+            if row is None or bool(row["allowed"]):
+                raise RuntimeError(f"immutable futures completeness application role retains {privilege} on {relation}")
 
 
 def _validated_entries(entries: object) -> list[dict[str, object]]:

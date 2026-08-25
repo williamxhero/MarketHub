@@ -273,17 +273,25 @@ def test_schema_ddl_is_confined_to_explicit_bootstrap_seam() -> None:
     assert "immutable futures completeness state already exists" in source
 
 
-def test_revision_schema_bootstrap_grants_query_read_without_application_write() -> None:
-    ddl = completeness._DDL.lower()
+def test_revision_schema_bootstrap_grants_query_read_and_revokes_application_write() -> None:
+    source = inspect.getsource(completeness.bootstrap_futures_1m_completeness_schema).lower()
 
-    assert "grant select on all tables in schema readmodel to public;" in ddl
-    assert ddl.index("grant select on all tables in schema readmodel to public;") > ddl.index(
-        "create or replace view readmodel.future_1m_completeness_active_revision"
-    )
-    assert "grant insert on all tables in schema readmodel" not in ddl
-    assert "grant update on all tables in schema readmodel" not in ddl
-    assert "grant delete on all tables in schema readmodel" not in ddl
-    assert "grant usage on all sequences in schema readmodel" not in ddl
+    assert "grant select on table readmodel.future_1m_completeness_revision" in source
+    assert "readmodel.future_1m_completeness_active_revision" in source
+    assert "revoke insert, update, delete on table readmodel.future_1m_completeness_revision" in source
+    assert "revoke truncate, references, trigger on table readmodel.future_1m_completeness_revision" in source
+    assert "revoke usage, select, update on sequence" in source
+    assert "has_sequence_privilege" in source
+    assert "has_table_privilege" in source
+
+
+def test_application_read_role_is_explicit_and_identifier_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MARKETHUB_DB_USER", "datalake_reader")
+    assert completeness._application_read_role() == "datalake_reader"
+
+    monkeypatch.setenv("MARKETHUB_DB_USER", "datalake; drop role postgres")
+    with pytest.raises(RuntimeError, match="MARKETHUB_DB_USER"):
+        completeness._application_read_role()
 
 
 @pytest.mark.parametrize(
