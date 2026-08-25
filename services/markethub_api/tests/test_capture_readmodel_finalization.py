@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from services import admin_runtime
 
 
@@ -56,3 +58,25 @@ def test_non_intraday_capture_does_not_finalize_minute_coverage(monkeypatch) -> 
     admin_runtime.run_capture("stocks.quotes.daily")
 
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("series_type", "expected_capability"),
+    (
+        ("back_adjusted_continuous", "futures.quotes.back_adjusted_continuous.1m"),
+        ("main_continuous", "futures.quotes.main_continuous.1m"),
+    ),
+)
+def test_future_1m_repair_routes_by_explicit_series_type(monkeypatch, series_type: str, expected_capability: str) -> None:
+    _configure(monkeypatch)
+
+    result = admin_runtime.run_data_repair("future_bar_1m", "mhd-v1-test", {"series_type": series_type, "codes": ["ag"]})
+
+    assert result["capability_id"] == expected_capability
+    assert result["dataset_id"] == "future_bar_1m"
+
+
+@pytest.mark.parametrize("scope", ({}, {"series_type": "continuous"}, {"series_type": None}))
+def test_future_1m_repair_rejects_missing_or_unknown_series_type(scope: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="scope.series_type"):
+        admin_runtime.run_data_repair("future_bar_1m", "mhd-v1-test", scope)

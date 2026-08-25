@@ -1222,15 +1222,30 @@ def run_capture(capability_id: str) -> dict[str, object]:
 _REPAIR_DATASET_CAPABILITIES = {
     "stock_daily_1d": "stocks.quotes.daily",
     "stock_bar_1m": "stocks.quotes.intraday",
-    "future_bar_1m": "futures.quotes.main_continuous.1m",
     "concept_daily_1d": "concepts.quotes.daily",
 }
 
+_FUTURE_1M_REPAIR_CAPABILITIES = {
+    "back_adjusted_continuous": "futures.quotes.back_adjusted_continuous.1m",
+    "main_continuous": "futures.quotes.main_continuous.1m",
+}
 
-def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, object]) -> dict[str, object]:
+
+def _repair_capability_id(dataset_id: str, scope: dict[str, object]) -> str:
+    if dataset_id == "future_bar_1m":
+        series_type = scope.get("series_type")
+        if not isinstance(series_type, str) or series_type not in _FUTURE_1M_REPAIR_CAPABILITIES:
+            supported = ", ".join(_FUTURE_1M_REPAIR_CAPABILITIES)
+            raise ValueError(f"future_bar_1m repair scope.series_type 必须是: {supported}")
+        return _FUTURE_1M_REPAIR_CAPABILITIES[series_type]
     capability_id = _REPAIR_DATASET_CAPABILITIES.get(dataset_id)
     if capability_id is None:
         raise ValueError(f"数据集不支持自动 repair: {dataset_id}")
+    return capability_id
+
+
+def run_data_repair(dataset_id: str, dataset_version: str, scope: dict[str, object]) -> dict[str, object]:
+    capability_id = _repair_capability_id(dataset_id, scope)
     result = run_with_memory_log(
         "capture.run_repair",
         {"dataset_id": dataset_id, "dataset_version": dataset_version},
@@ -1245,7 +1260,14 @@ def get_data_repair(repair_task_id: int) -> dict[str, object]:
     detail = result.get("detail_json", {})
     detail = detail if isinstance(detail, dict) else {}
     capability_id = str(result.get("capability_id", ""))
-    dataset_id = next((dataset for dataset, capability in _REPAIR_DATASET_CAPABILITIES.items() if capability == capability_id), "")
+    dataset_id = next(
+        (
+            dataset
+            for dataset, capability in _REPAIR_DATASET_CAPABILITIES.items()
+            if capability == capability_id
+        ),
+        "future_bar_1m" if capability_id in _FUTURE_1M_REPAIR_CAPABILITIES.values() else "",
+    )
     return {
         **result,
         "repair_task_id": repair_task_id,

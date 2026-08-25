@@ -15,7 +15,21 @@ _PUBLIC_READER = QuoteMuxPublicReader()
 
 
 def get_quotes_1m(codes: str, series_type: str, start_time: str, end_time: str, limit: int) -> list[FutureBar1mItem]:
-    return _QUOTEMUX.futures.get_quotes_1m(codes, series_type, start_time, end_time, limit)
+    return [
+        FutureBar1mItem.model_validate({
+            **row,
+            "bar_time": row["bar_time"].strftime("%Y-%m-%d %H:%M:%S")
+            if hasattr(row["bar_time"], "strftime")
+            else str(row["bar_time"]),
+        })
+        for row in _PUBLIC_READER.get_futures_quotes_1m_batch(
+            codes,
+            series_type,
+            start_time,
+            end_time,
+            limit=limit,
+        ).as_dicts()
+    ]
 
 
 def get_main_continuous_realtime(codes: str) -> list[FutureRealtimeQuoteItem]:
