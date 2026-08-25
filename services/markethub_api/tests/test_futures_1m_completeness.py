@@ -26,7 +26,7 @@ class _Reader:
     def query_batch(self, sql: str, params: tuple[object, ...], *, stage: str) -> QueryBatch:
         self.calls.append((stage, params))
         if stage == "futures_1m_completeness_state":
-            return QueryBatch(("coverage_ready", "status", "complete", "error_message"), ((True, "ready", True, ""),))
+            return QueryBatch(("coverage_ready", "status", "complete", "error_message"), ((True, "online", True, ""),))
         return QueryBatch(
             ("product_code", "exchange", "series_type", "start_date", "end_date", "status", "availability_ref", "session_rule_ref", "detail_json"),
             self.intervals,

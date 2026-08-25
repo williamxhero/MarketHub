@@ -106,7 +106,7 @@ def validate_published_futures_1m_completeness(
         (DATASET_ID, version),
         stage="futures_1m_completeness_state",
     ))
-    if len(state) != 1 or not bool(state[0].get("coverage_ready")) or str(state[0].get("status", "")) != "ready":
+    if len(state) != 1 or not bool(state[0].get("coverage_ready")) or str(state[0].get("status", "")) != "online":
         _incomplete(version, "unpublished", [{"state": state[0] if state else {}}])
 
     intervals = _rows(_READ_CLIENT.query_batch(
@@ -221,8 +221,8 @@ def publish_validated_futures_1m_completeness_manifest(manifest: Mapping[str, ob
             (DATASET_ID, version),
         ).fetchone()
         if existing is not None:
-            if str(existing["status"]) == "ready" and str(existing["checksum_sha256"] or "") == checksum:
-                return {"dataset_id": DATASET_ID, "dataset_version": version, "status": "ready", "checksum_sha256": checksum, "entries": len(entries), "idempotent": True}
+            if str(existing["status"]) == "online" and str(existing["checksum_sha256"] or "") == checksum:
+                return {"dataset_id": DATASET_ID, "dataset_version": version, "status": "online", "checksum_sha256": checksum, "entries": len(entries), "idempotent": True}
             raise RuntimeError(f"immutable futures completeness state already exists: {version}")
         connection.execute(
             "insert into readmodel.dataset_build_state(dataset_id,dataset_version,status,source_generation,coverage_ready,complete,row_count,checksum_sha256,built_at_utc,updated_at_utc) "
@@ -235,8 +235,8 @@ def publish_validated_futures_1m_completeness_manifest(manifest: Mapping[str, ob
             [(version, item["product_code"], item["exchange"], item["series_type"], item["start_date"], item["end_date"], item["status"], item["availability_ref"], item["session_rule_ref"], json.dumps(item["detail"], sort_keys=True), checksum) for item in entries],
         )
         connection.execute(
-            "update readmodel.dataset_build_state set status='ready',coverage_ready=true,complete=true,row_count=%s,built_at_utc=clock_timestamp(),error_message='',updated_at_utc=clock_timestamp() "
+            "update readmodel.dataset_build_state set status='online',coverage_ready=true,complete=true,row_count=%s,built_at_utc=clock_timestamp(),error_message='',updated_at_utc=clock_timestamp() "
             "where dataset_id=%s and dataset_version=%s",
             (len(entries), DATASET_ID, version),
         )
-    return {"dataset_id": DATASET_ID, "dataset_version": version, "status": "ready", "checksum_sha256": checksum, "entries": len(entries), "idempotent": False}
+    return {"dataset_id": DATASET_ID, "dataset_version": version, "status": "online", "checksum_sha256": checksum, "entries": len(entries), "idempotent": False}
