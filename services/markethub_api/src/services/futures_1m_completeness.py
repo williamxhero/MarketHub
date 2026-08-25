@@ -525,7 +525,7 @@ def publish_validated_futures_1m_completeness_revision(manifest: Mapping[str, ob
     if requested_revision and requested_revision != checksum:
         raise ValueError("revision_sha256 does not match immutable manifest")
     with _connect() as connection:
-        state = connection.execute("select baseline_id,generation,status,coverage_ready from readmodel.dataset_build_state where dataset_id=%s and dataset_version=%s", (DATASET_ID, version)).fetchone()
+        state = connection.execute("select status,coverage_ready from readmodel.dataset_build_state where dataset_id=%s and dataset_version=%s", (DATASET_ID, version)).fetchone()
         if state is None or str(state["status"]) != "online" or not bool(state["coverage_ready"]):
             raise RuntimeError("future_bar_1m immutable dataset is not online")
         current = current_dataset_version(DATASET_ID)

@@ -261,6 +261,43 @@ def test_activation_appends_an_event_without_updating_immutable_revision(monkeyp
     assert not any(call.lstrip().lower().startswith("update") for call in calls)
 
 
+def test_revision_publisher_uses_production_build_state_columns_and_rejects_before_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class _Result:
+        def fetchone(self) -> object:
+            return {"status": "coverage_pending", "coverage_ready": False}
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, query: str, _params: tuple[object, ...]) -> _Result:
+            calls.append(query)
+            return _Result()
+
+    manifest = {
+        "dataset_id": "future_bar_1m",
+        "dataset_version": VERSION,
+        "back_adjusted_series_state": _back_adjusted_series_state(),
+        "entries": [{
+            "product_code": "ag", "exchange": "SHFE", "series_type": "back_adjusted_continuous",
+            "status": "complete", "availability_ref": "listing:ag:v1", "session_rule_ref": "session:ag:2026w30",
+            "evidence_sha256": "d" * 64, "start_time": "2026-07-20 21:00:00", "end_time": "2026-07-20 21:01:00", "detail": {},
+        }],
+    }
+    monkeypatch.setattr(completeness, "_connect", lambda: _Connection())
+
+    with pytest.raises(RuntimeError, match="not online"):
+        completeness.publish_validated_futures_1m_completeness_revision(manifest)
+
+    assert calls == ["select status,coverage_ready from readmodel.dataset_build_state where dataset_id=%s and dataset_version=%s"]
+    assert not any("insert into" in query.lower() for query in calls)
+
+
 def test_schema_ddl_is_confined_to_explicit_bootstrap_seam() -> None:
     source = inspect.getsource(completeness)
 
