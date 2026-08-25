@@ -60,23 +60,38 @@ def test_non_intraday_capture_does_not_finalize_minute_coverage(monkeypatch) -> 
     assert calls == []
 
 
-@pytest.mark.parametrize(
-    ("series_type", "expected_capability"),
-    (
-        ("back_adjusted_continuous", "futures.quotes.back_adjusted_continuous.1m"),
-        ("main_continuous", "futures.quotes.main_continuous.1m"),
-    ),
-)
-def test_future_1m_repair_routes_by_explicit_series_type(monkeypatch, series_type: str, expected_capability: str) -> None:
+def test_future_1m_repair_routes_only_a_managed_registry_id(monkeypatch) -> None:
     _configure(monkeypatch)
 
-    result = admin_runtime.run_data_repair("future_bar_1m", "mhd-v1-test", {"series_type": series_type, "codes": ["ag"]})
+    result = admin_runtime.run_data_repair("future_bar_1m", "mhd-v1-test", {"repair_registry_id": "ag-repair-001"})
 
-    assert result["capability_id"] == expected_capability
+    assert result["capability_id"] == "futures.quotes.back_adjusted_continuous.1m"
     assert result["dataset_id"] == "future_bar_1m"
 
 
-@pytest.mark.parametrize("scope", ({}, {"series_type": "continuous"}, {"series_type": None}))
-def test_future_1m_repair_rejects_missing_or_unknown_series_type(scope: dict[str, object]) -> None:
-    with pytest.raises(ValueError, match="scope.series_type"):
+@pytest.mark.parametrize("scope", ({}, {"series_type": "main_continuous"}, {"repair_registry_id": "x", "artifact_path": "/tmp/x"}, {"repair_registry_id": ""}))
+def test_future_1m_repair_rejects_any_unmanaged_scope(scope: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="repair_registry_id"):
         admin_runtime.run_data_repair("future_bar_1m", "mhd-v1-test", scope)
+
+
+def test_capture_admin_wires_managed_evidence_and_registry_guard(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class Job:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    class Admin:
+        def __init__(self, *, job) -> None:
+            captured["job"] = job
+
+    monkeypatch.setattr(admin_runtime, "_CAPTURE_ADMIN", None)
+    monkeypatch.setattr(admin_runtime, "QuoteMuxCaptureJob", Job)
+    monkeypatch.setattr(admin_runtime, "QuoteMuxCaptureAdmin", Admin)
+    monkeypatch.setattr(admin_runtime, "require_current", lambda _capability, version: version)
+
+    admin_runtime._capture_admin()
+
+    assert captured["back_adjusted_repair_evidence"].__class__.__name__ == "ManagedBackAdjustedRepairEvidenceRegistry"
+    assert captured["dataset_version_guard"].require_current("futures.quotes.back_adjusted_continuous.1m", "mhd-v1-test") is not None

@@ -29,10 +29,13 @@ from quotemux.runtime_core.audit import read_fallback_summary, record_provider_e
 from quotemux.runtime_core.health import get_provider_metrics
 from quotemux.source_packages.registry import clear_loaded_source_package_modules, refresh_default_source_package_registry
 from quotemux.store.admin import CachePolicyUpdate, CapturePolicyPayload, QuoteMuxCacheAdmin, QuoteMuxCaptureAdmin
+from quotemux.store.capture import QuoteMuxCaptureJob
 from quotemux.store.default_update_policy import cache_enabled_from_ttl_days as default_cache_enabled_from_ttl_days, get_capability_update_policy_default, ttl_seconds_from_days as default_ttl_seconds_from_days
 from quotemux.store.postgres import CACHE_NEVER_EXPIRE_TTL_SECONDS, _coverage_mode_for_capability, _key_fields_for_capability, _request_scope_fields_for_capability, _time_field_for_capability
 from quotemux.store.timeout_admin import QuoteMuxTimeoutAdmin
 from services.minute_coverage_read_model import finalize_stock_1m_daily_coverage_state
+from services.dataset_versions import require_current
+from services.futures_repair_evidence import ManagedBackAdjustedRepairEvidenceRegistry
 from services.runtime_memory import run_with_memory_log
 
 
@@ -111,7 +114,15 @@ def _runtime():
 def _capture_admin():
     global _CAPTURE_ADMIN
     if _CAPTURE_ADMIN is None:
-        _CAPTURE_ADMIN = QuoteMuxCaptureAdmin()
+        class _DatasetVersionGuard:
+            @staticmethod
+            def require_current(capability_id: str, expected_version: str) -> str:
+                return require_current(capability_id, expected_version)
+
+        _CAPTURE_ADMIN = QuoteMuxCaptureAdmin(job=QuoteMuxCaptureJob(
+            back_adjusted_repair_evidence=ManagedBackAdjustedRepairEvidenceRegistry(),
+            dataset_version_guard=_DatasetVersionGuard(),
+        ))
     return _CAPTURE_ADMIN
 
 
@@ -1233,11 +1244,9 @@ _FUTURE_1M_REPAIR_CAPABILITIES = {
 
 def _repair_capability_id(dataset_id: str, scope: dict[str, object]) -> str:
     if dataset_id == "future_bar_1m":
-        series_type = scope.get("series_type")
-        if not isinstance(series_type, str) or series_type not in _FUTURE_1M_REPAIR_CAPABILITIES:
-            supported = ", ".join(_FUTURE_1M_REPAIR_CAPABILITIES)
-            raise ValueError(f"future_bar_1m repair scope.series_type 必须是: {supported}")
-        return _FUTURE_1M_REPAIR_CAPABILITIES[series_type]
+        if set(scope) != {"repair_registry_id"} or not str(scope.get("repair_registry_id", "")).strip():
+            raise ValueError("future_bar_1m repair scope must contain only repair_registry_id")
+        return _FUTURE_1M_REPAIR_CAPABILITIES["back_adjusted_continuous"]
     capability_id = _REPAIR_DATASET_CAPABILITIES.get(dataset_id)
     if capability_id is None:
         raise ValueError(f"数据集不支持自动 repair: {dataset_id}")
