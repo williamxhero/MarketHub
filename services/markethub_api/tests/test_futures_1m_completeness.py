@@ -28,6 +28,8 @@ class _Reader:
         self.calls.append((stage, params))
         if stage == "futures_1m_completeness_state":
             return QueryBatch(("coverage_ready", "status", "complete", "error_message"), ((True, "online", True, ""),))
+        if stage == "futures_1m_completeness_active_revision":
+            return QueryBatch(("revision_sha256",), ())
         return QueryBatch(
             ("product_code", "exchange", "series_type", "start_date", "end_date", "status", "availability_ref", "session_rule_ref", "detail_json"),
             self.intervals,
@@ -73,7 +75,9 @@ def test_ag_225_192_manifest_gap_returns_409_even_when_endpoints_match(monkeypat
 def test_explicit_pre_listing_or_known_no_bar_state_passes(monkeypatch: pytest.MonkeyPatch, status: str) -> None:
     _configure(monkeypatch, _interval(status))
 
-    assert completeness.validate_published_futures_1m_completeness("ag", "back_adjusted_continuous", "2026-02-02 09:01:00", "2026-02-02 15:00:00") == VERSION
+    assert completeness.validate_published_futures_1m_completeness(
+        "ag", "back_adjusted_continuous", "2026-02-02 09:01:00", "2026-02-02 15:00:00",
+    ) == completeness.Futures1mCompletenessEvidence(VERSION)
 
 
 def test_absent_interval_is_unknown_and_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,6 +88,19 @@ def test_absent_interval_is_unknown_and_fails_closed(monkeypatch: pytest.MonkeyP
 
     assert raised.value.detail["code"] == "DATA_INCOMPLETE"
     assert raised.value.detail["details"]["gap_sample"][0]["reason"] == "unknown"
+
+
+def test_partial_revision_cannot_make_the_original_23_product_history_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure(monkeypatch)
+    codes = "ag,al,AP,CF,cu,hc,i,j,m,MA,ni,p,ru,sc,T,TA,TF,v,y,lh,SA,ao,si"
+
+    with pytest.raises(HTTPException) as raised:
+        completeness.validate_published_futures_1m_completeness(
+            codes, "back_adjusted_continuous", "2012-01-01 00:00:00", "2026-08-11 23:59:59",
+        )
+
+    assert raised.value.detail["details"]["reason"] == "missing_or_unknown_interval"
+    assert len(raised.value.detail["details"]["gap_sample"]) == 23
 
 
 def test_limit_cannot_hide_a_gap_before_public_reader_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -112,6 +129,63 @@ def test_version_mismatch_is_data_incomplete_not_a_fallback(monkeypatch: pytest.
     assert raised.value.detail["details"]["reason"] == "dataset_version_mismatch"
 
 
+def test_public_utc_offset_timestamps_keep_the_strict_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure(monkeypatch)
+
+    with pytest.raises(HTTPException) as raised:
+        completeness.validate_published_futures_1m_completeness(
+            "ag", "back_adjusted_continuous", "2012-01-01 00:00:00+00:00", "2026-08-11 23:59:59+00:00",
+        )
+
+    assert raised.value.detail["details"]["reason"] == "missing_or_unknown_interval"
+
+
+def test_timestamp_revision_allows_only_exact_verified_window_and_returns_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    revision = "b" * 64
+    reader = _configure(monkeypatch)
+
+    def query_batch(sql: str, params: tuple[object, ...], *, stage: str) -> QueryBatch:
+        if stage == "futures_1m_completeness_state":
+            return QueryBatch(("coverage_ready", "status", "complete", "error_message"), ((True, "online", True, ""),))
+        if stage == "futures_1m_completeness_active_revision":
+            return QueryBatch(("revision_sha256",), ((revision,),))
+        assert stage == "futures_1m_completeness_revision_intervals"
+        return QueryBatch(
+            ("product_code", "exchange", "series_type", "start_time", "end_time", "status", "availability_ref", "session_rule_ref", "evidence_sha256", "detail_json"),
+            (("ag", "SHFE", "back_adjusted_continuous", "2026-07-20 21:00:00", "2026-07-21 02:30:00", "complete", "listing:ag:v1", "session:ag:2026w30", "c" * 64, {}),),
+        )
+
+    reader.query_batch = query_batch  # type: ignore[method-assign]
+    evidence = completeness.validate_published_futures_1m_completeness(
+        "ag", "back_adjusted_continuous", "2026-07-20 21:00:00", "2026-07-21 02:30:00", VERSION, revision,
+    )
+
+    assert evidence == completeness.Futures1mCompletenessEvidence(VERSION, revision)
+    with pytest.raises(HTTPException) as raised:
+        completeness.validate_published_futures_1m_completeness(
+            "ag", "back_adjusted_continuous", "2026-07-20 20:59:00", "2026-07-21 02:30:00", VERSION, revision,
+        )
+    assert raised.value.detail["details"]["reason"] == "missing_or_unknown_interval"
+
+
+def test_stale_expected_revision_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    revision = "b" * 64
+    reader = _configure(monkeypatch)
+    original = reader.query_batch
+
+    def query_batch(sql: str, params: tuple[object, ...], *, stage: str) -> QueryBatch:
+        if stage == "futures_1m_completeness_active_revision":
+            return QueryBatch(("revision_sha256",), ((revision,),))
+        return original(sql, params, stage=stage)
+
+    reader.query_batch = query_batch  # type: ignore[method-assign]
+    with pytest.raises(HTTPException) as raised:
+        completeness.validate_published_futures_1m_completeness(
+            "ag", "back_adjusted_continuous", "2026-07-20 21:00:00", "2026-07-21 02:30:00", VERSION, "a" * 64,
+        )
+    assert raised.value.detail["details"]["reason"] == "completeness_revision_mismatch"
+
+
 def test_manifest_validation_requires_refs_and_rejects_overlapping_intervals() -> None:
     base = {
         "product_code": "ag", "exchange": "SHFE", "series_type": "back_adjusted_continuous",
@@ -124,6 +198,54 @@ def test_manifest_validation_requires_refs_and_rejects_overlapping_intervals() -
         completeness._validated_entries([{**base, "availability_ref": ""}])
 
 
+def test_revision_manifest_requires_evidence_hash_and_rejects_timestamp_overlap() -> None:
+    base = {
+        "product_code": "ag", "exchange": "SHFE", "series_type": "back_adjusted_continuous", "status": "complete",
+        "availability_ref": "listing:ag:v1", "session_rule_ref": "session:ag:2026w30", "evidence_sha256": "d" * 64,
+        "start_time": "2026-07-20 21:00:00", "end_time": "2026-07-21 02:30:00",
+    }
+    with pytest.raises(ValueError, match="overlap"):
+        completeness._validated_revision_entries([base, {**base, "start_time": "2026-07-21 02:30:00", "end_time": "2026-07-21 02:31:00"}])
+    with pytest.raises(ValueError, match="SHA-256"):
+        completeness._validated_revision_entries([{**base, "evidence_sha256": "not-a-hash"}])
+
+
+def test_activation_appends_an_event_without_updating_immutable_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    revision = "e" * 64
+    calls: list[str] = []
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, sql: str, _params: tuple[object, ...]):
+            calls.append(sql)
+            if "from readmodel.future_1m_completeness_revision where" in sql:
+                return _Result({"revision_sha256": revision})
+            if "future_1m_completeness_active_revision" in sql:
+                return _Result(None)
+            assert "insert into readmodel.future_1m_completeness_revision_activation" in sql
+            return _Result({"activation_id": 7})
+
+    class _Result:
+        def __init__(self, row: object) -> None:
+            self.row = row
+
+        def fetchone(self) -> object:
+            return self.row
+
+    monkeypatch.setattr(completeness, "current_dataset_version", lambda _dataset: VERSION)
+    monkeypatch.setattr(completeness, "_connect", lambda: _Connection())
+    result = completeness.activate_futures_1m_completeness_revision(VERSION, revision)
+
+    assert result == {"dataset_id": "future_bar_1m", "dataset_version": VERSION, "revision_sha256": revision, "activation_id": 7, "idempotent": False}
+    assert any("insert into readmodel.future_1m_completeness_revision_activation" in call for call in calls)
+    assert not any(call.lstrip().lower().startswith("update") for call in calls)
+
+
 def test_schema_ddl_is_confined_to_explicit_bootstrap_seam() -> None:
     source = inspect.getsource(completeness)
 
@@ -131,6 +253,9 @@ def test_schema_ddl_is_confined_to_explicit_bootstrap_seam() -> None:
     assert "def bootstrap_futures_1m_completeness_schema()" in source
     assert "connection.executemany(" not in source
     assert "cursor.executemany(" in source
+    assert "future_1m_completeness_revision_activation" in source
+    assert "create or replace view readmodel.future_1m_completeness_active_revision" in source
+    assert "immutable futures completeness state already exists" in source
 
 
 @pytest.mark.parametrize(

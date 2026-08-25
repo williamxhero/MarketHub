@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from quotemux.models import ApiError
 from platform_models import FutureContractCatalogItem, FutureContractRealtimeQuoteItem, FutureMainContractMappingItem
 
@@ -34,14 +34,23 @@ def _load_and_dump(loader: Callable[..., list[object]], args: tuple[object, ...]
     ),
 )
 async def api_future_quotes_1m(
+    response: Response,
     codes: str = Query(..., min_length=1, description="期货品种代码，逗号分隔，如 IF,au。"),
     series_type: Literal["back_adjusted_continuous", "main_continuous"] = Query("main_continuous", description="明确的数据口径。"),
     start_time: str = Query("", description="起始 bar 结束时间。"),
     end_time: str = Query("", description="结束 bar 结束时间。"),
     limit: int = Query(10000, ge=1, le=500000),
     dataset_version: str = Query("", description="可选的 immutable future_bar_1m dataset version；分页时必须固定使用同一版本。"),
+    completeness_revision: str = Query("", description="可选的 active timestamp completeness revision；分页时必须固定使用同一 revision。"),
 ) -> list[dict[str, object]]:
-    return await run_data_task(_load_and_dump, futures.get_quotes_1m, (codes, series_type, start_time, end_time, limit, dataset_version))
+    items, evidence = await run_data_task(
+        futures.get_quotes_1m_with_evidence,
+        codes, series_type, start_time, end_time, limit, dataset_version, completeness_revision,
+    )
+    response.headers["X-MarketHub-Dataset-Version"] = evidence.dataset_version
+    if evidence.completeness_revision:
+        response.headers["X-MarketHub-Completeness-Revision"] = evidence.completeness_revision
+    return [item.model_dump() for item in items]
 
 
 @router.get(

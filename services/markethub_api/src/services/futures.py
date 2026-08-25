@@ -8,16 +8,21 @@ from platform_models import (
     FutureRealtimeQuoteItem,
 )
 from quotemux import QuoteMux, QuoteMuxPublicReader
-from services.futures_1m_completeness import validate_published_futures_1m_completeness
+from services.futures_1m_completeness import Futures1mCompletenessEvidence, validate_published_futures_1m_completeness
 
 
 _QUOTEMUX = QuoteMux()
 _PUBLIC_READER = QuoteMuxPublicReader()
 
 
-def get_quotes_1m(codes: str, series_type: str, start_time: str, end_time: str, limit: int, dataset_version: str = "") -> list[FutureBar1mItem]:
-    validate_published_futures_1m_completeness(codes, series_type, start_time, end_time, dataset_version)
-    return [
+def get_quotes_1m_with_evidence(
+    codes: str, series_type: str, start_time: str, end_time: str, limit: int,
+    dataset_version: str = "", completeness_revision: str = "",
+) -> tuple[list[FutureBar1mItem], Futures1mCompletenessEvidence]:
+    evidence = validate_published_futures_1m_completeness(
+        codes, series_type, start_time, end_time, dataset_version, completeness_revision,
+    )
+    items = [
         FutureBar1mItem.model_validate({
             **row,
             "bar_time": row["bar_time"].strftime("%Y-%m-%d %H:%M:%S")
@@ -32,6 +37,16 @@ def get_quotes_1m(codes: str, series_type: str, start_time: str, end_time: str, 
             limit=limit,
         ).as_dicts()
     ]
+    return items, evidence
+
+
+def get_quotes_1m(
+    codes: str, series_type: str, start_time: str, end_time: str, limit: int,
+    dataset_version: str = "", completeness_revision: str = "",
+) -> list[FutureBar1mItem]:
+    return get_quotes_1m_with_evidence(
+        codes, series_type, start_time, end_time, limit, dataset_version, completeness_revision,
+    )[0]
 
 
 def get_main_continuous_realtime(codes: str) -> list[FutureRealtimeQuoteItem]:
