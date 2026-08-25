@@ -20,7 +20,7 @@ DATASET_IDS = (
     "stock_research_daily",
 )
 STOCK_DAILY_DATASET_ID = "stock_daily_1d"
-READ_MODEL_DATASET_IDS = frozenset(("stock_daily_1d", "stock_bar_1m"))
+READ_MODEL_DATASET_IDS = frozenset(("stock_daily_1d", "stock_bar_1m", "future_bar_1m"))
 VERSION_CONTRACT = "markethub-dataset-vector-v1"
 ROUTE_DATASET_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "/api/stocks/catalog": ("stock_reference",),
@@ -31,6 +31,7 @@ ROUTE_DATASET_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "/api/stocks/quotes/daily-snapshot": ("stock_daily_1d",),
     "/api/stocks/quotes/daily-local-window": ("stock_daily_1d",),
     "/api/futures/coverage": ("future_bar_1m",),
+    "/api/futures/quotes/1m": ("future_bar_1m",),
     "/api/exports/stock_daily_1d/{dataset_version}/manifest": ("stock_daily_1d",),
     "/api/exports/stock_daily_1d/{dataset_version}/files/{relative_path}": ("stock_daily_1d",),
 }

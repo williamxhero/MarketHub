@@ -39,8 +39,9 @@ async def api_future_quotes_1m(
     start_time: str = Query("", description="起始 bar 结束时间。"),
     end_time: str = Query("", description="结束 bar 结束时间。"),
     limit: int = Query(10000, ge=1, le=500000),
+    dataset_version: str = Query("", description="可选的 immutable future_bar_1m dataset version；分页时必须固定使用同一版本。"),
 ) -> list[dict[str, object]]:
-    return await run_data_task(_load_and_dump, futures.get_quotes_1m, (codes, series_type, start_time, end_time, limit))
+    return await run_data_task(_load_and_dump, futures.get_quotes_1m, (codes, series_type, start_time, end_time, limit, dataset_version))
 
 
 @router.get(

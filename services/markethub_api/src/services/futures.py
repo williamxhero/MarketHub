@@ -8,13 +8,15 @@ from platform_models import (
     FutureRealtimeQuoteItem,
 )
 from quotemux import QuoteMux, QuoteMuxPublicReader
+from services.futures_1m_completeness import validate_published_futures_1m_completeness
 
 
 _QUOTEMUX = QuoteMux()
 _PUBLIC_READER = QuoteMuxPublicReader()
 
 
-def get_quotes_1m(codes: str, series_type: str, start_time: str, end_time: str, limit: int) -> list[FutureBar1mItem]:
+def get_quotes_1m(codes: str, series_type: str, start_time: str, end_time: str, limit: int, dataset_version: str = "") -> list[FutureBar1mItem]:
+    validate_published_futures_1m_completeness(codes, series_type, start_time, end_time, dataset_version)
     return [
         FutureBar1mItem.model_validate({
             **row,

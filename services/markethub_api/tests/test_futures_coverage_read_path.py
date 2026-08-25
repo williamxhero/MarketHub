@@ -43,6 +43,7 @@ def test_futures_quotes_use_strict_public_reader_without_provider_or_schema_writ
         return batch
 
     monkeypatch.setattr(futures._PUBLIC_READER, "get_futures_quotes_1m_batch", strict_read, raising=False)
+    monkeypatch.setattr(futures, "validate_published_futures_1m_completeness", lambda *_args: "mhd-v1-test")
     monkeypatch.setattr(
         futures._QUOTEMUX.futures,
         "get_quotes_1m",
