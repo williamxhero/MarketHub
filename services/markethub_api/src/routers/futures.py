@@ -10,7 +10,6 @@ from platform_models import FutureContractCatalogItem, FutureContractRealtimeQuo
 
 from data_threads import run_data_task
 from services import futures
-from services.futures_partial_publication import coverage_contract_sha256
 from services.dataset_versions import require_dataset_version
 
 
@@ -66,50 +65,42 @@ async def api_future_quotes_1m(
     "/api/futures/quotes/1m/partial",
     summary="查询已发布的期货 1 分钟 partial 数据集",
     description=(
-        "只读 source-specific immutable materialization。此接口显式返回 accepted、skipped 和 residual 区间；"
+        "只读 QuoteMux 已发布事实及其 immutable coverage identity。此接口显式返回 accepted、skipped 和 residual 区间；"
         "不改变 `/api/futures/quotes/1m` 的 strict completeness 409 合同，也不会用缺失分钟补零、插值或去重选赢家。"
     ),
 )
 async def api_future_quotes_1m_partial(
     response: Response,
     dataset_id: str = Query(..., min_length=1),
-    dataset_version: str = Query(..., min_length=1),
-    partial_completeness_revision: str = Query(..., min_length=64, max_length=64),
-    generation_pin: str = Query(..., min_length=1),
+    dataset_version: str = Query(..., min_length=71, max_length=71, pattern=r"^qmp-v1-[0-9a-f]{64}$"),
+    partial_completeness_revision: str = Query(..., min_length=71, max_length=71, pattern=r"^qmc-v1-[0-9a-f]{64}$"),
+    generation_pin: str = Query(..., min_length=71, max_length=71, pattern=r"^qmg-v1-[0-9a-f]{64}$"),
     codes: str = Query(..., min_length=1),
     start_time: str = Query(..., min_length=1),
     end_time: str = Query(..., min_length=1),
     limit: int = Query(10_000, ge=1, le=100_000),
     cursor: str = Query(""),
 ) -> dict[str, object]:
-    items, evidence, next_cursor = await run_data_task(
+    items, next_cursor = await run_data_task(
         futures.get_quotes_1m_partial, dataset_id, dataset_version, partial_completeness_revision,
         generation_pin, codes, start_time, end_time, limit, cursor,
     )
-    response.headers["X-MarketHub-Dataset-Version"] = evidence.dataset_version
-    response.headers["X-MarketHub-Partial-Completeness-Revision"] = evidence.partial_completeness_revision
-    response.headers["X-MarketHub-Generation-Pin"] = evidence.generation_pin
+    response.headers["X-MarketHub-Dataset-Version"] = dataset_version
+    response.headers["X-MarketHub-Partial-Completeness-Revision"] = partial_completeness_revision
+    response.headers["X-MarketHub-Generation-Pin"] = generation_pin
+    aggregate_sources = sorted({str(source) for item in items for source in item.get("source_keys", [])})
     return {
         "items": items,
         "meta": {
-            "dataset_id": evidence.dataset_id,
-            "dataset_version": evidence.dataset_version,
-            "partial_completeness_revision": evidence.partial_completeness_revision,
-            "generation_pin": evidence.generation_pin,
-            "source_id": evidence.source_id,
-            "series_type": evidence.read_series_type,
-            "source_lineage": evidence.source_lineage,
-            "catalog_version": evidence.source_lineage.get("catalog_version"),
-            "calendar_version": evidence.source_lineage.get("calendar_version"),
-            "session_contract": evidence.source_lineage.get("session_contract"),
-            "session_evidence_sha256": evidence.source_lineage.get("session_evidence_sha256"),
-            "timezone": evidence.source_lineage.get("timezone"),
-            "bar_label": evidence.source_lineage.get("bar_label"),
-            "units": evidence.source_lineage.get("units"),
-            "source_boundary": evidence.source_lineage.get("source_boundary"),
-            "missing_bar_semantics": evidence.source_lineage.get("missing_bar_semantics"),
-            "product_coverage": evidence.source_lineage.get("product_coverage"),
-            "coverage": {"endpoint": "/api/futures/quotes/1m/partial/coverage", "coverage_contract_sha256": coverage_contract_sha256(evidence,codes,start_time,end_time), "coverage_contract_scope":"immutable full-query clipping/synthetic-residual contract; request coverage endpoint for interval details"},
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
+            "partial_completeness_revision": partial_completeness_revision,
+            "generation_pin": generation_pin,
+            "aggregate_source_keys": aggregate_sources,
+            "source_boundary_contract": "items carry QuoteMux boundary_ids and source_keys",
+            "missing_bar_semantics": "skip",
+            "open_interest_availability": "nullable_unknown",
+            "coverage": {"endpoint": "/api/futures/quotes/1m/partial/coverage"},
             "next_cursor": next_cursor,
             "complete": None,
             "partial_contract_satisfied": True,
@@ -125,23 +116,23 @@ async def api_future_quotes_1m_partial(
 async def api_future_quotes_1m_partial_coverage(
     response: Response,
     dataset_id: str = Query(..., min_length=1),
-    dataset_version: str = Query(..., min_length=1),
-    partial_completeness_revision: str = Query(..., min_length=64, max_length=64),
-    generation_pin: str = Query(..., min_length=1),
+    dataset_version: str = Query(..., min_length=71, max_length=71, pattern=r"^qmp-v1-[0-9a-f]{64}$"),
+    partial_completeness_revision: str = Query(..., min_length=71, max_length=71, pattern=r"^qmc-v1-[0-9a-f]{64}$"),
+    generation_pin: str = Query(..., min_length=71, max_length=71, pattern=r"^qmg-v1-[0-9a-f]{64}$"),
     codes: str = Query(..., min_length=1),
     start_time: str = Query(..., min_length=1),
     end_time: str = Query(..., min_length=1),
     limit: int = Query(500, ge=1, le=10_000),
     cursor: str = Query(""),
 ) -> dict[str, object]:
-    items, evidence, next_cursor, summary = await run_data_task(
+    items, next_cursor = await run_data_task(
         futures.get_quotes_1m_partial_coverage, dataset_id, dataset_version, partial_completeness_revision,
         generation_pin, codes, start_time, end_time, limit, cursor,
     )
-    response.headers["X-MarketHub-Dataset-Version"] = evidence.dataset_version
-    response.headers["X-MarketHub-Partial-Completeness-Revision"] = evidence.partial_completeness_revision
-    response.headers["X-MarketHub-Generation-Pin"] = evidence.generation_pin
-    return {"items": items, "meta": {"dataset_id": evidence.dataset_id, "dataset_version": evidence.dataset_version, "partial_completeness_revision": evidence.partial_completeness_revision, "generation_pin": evidence.generation_pin, "next_cursor": next_cursor, "summary": summary, "complete": summary["excluded_count"] == 0 and summary["residual_count"] == 0, "partial_contract_satisfied": True}}
+    response.headers["X-MarketHub-Dataset-Version"] = dataset_version
+    response.headers["X-MarketHub-Partial-Completeness-Revision"] = partial_completeness_revision
+    response.headers["X-MarketHub-Generation-Pin"] = generation_pin
+    return {"items": items, "meta": {"dataset_id": dataset_id, "dataset_version": dataset_version, "partial_completeness_revision": partial_completeness_revision, "generation_pin": generation_pin, "next_cursor": next_cursor, "missing_bar_semantics": "skip", "complete": None, "partial_contract_satisfied": True}}
 
 
 @router.get(
