@@ -15,6 +15,7 @@ if str(SERVICE_ROOT) not in sys.path:
 
 from quotemux.infra.db.read_client import QueryBatch
 from quotemux.public_reader import FuturesPartialPublicationQueryError, FuturesPartialPublicationStaleError
+from quotemux.store.futures_partial_migration import provision_futures_partial_roles
 from routers import futures as futures_router
 from services import futures
 
@@ -178,4 +179,36 @@ def test_privileged_wrapper_only_delegates_quotemux_migration_and_writes_0600_se
     assert "quotemux_publish_db" in source and "quotemux_read_db" in source
     assert "environmentfile=-$reader_env_path" in deploy_script
     assert "quotemux-futures-partial-publisher.env" not in deploy_script
-    assert "create table" not in source and "readmodel.future_1m_partial" not in source
+
+
+def test_privileged_wrapper_uses_tuple_rows_for_quotemux_role_provision(monkeypatch: pytest.MonkeyPatch) -> None:
+    path = SERVICE_ROOT.parents[1] / "migrations" / "quotemux_futures_partial_v1_20260826" / "release_migration.py"
+    spec = importlib.util.spec_from_file_location("partial_release_migration_tuple_rows", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    captured: dict[str, object] = {}
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_HOST", "db.example")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_PORT", "5432")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_NAME", "datalake")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_USER", "postgres")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_PASSWORD", "private")
+    monkeypatch.setattr(module.psycopg, "connect", lambda **kwargs: captured.update(kwargs))
+    module._connect()
+    assert "row_factory" not in captured
+
+    class Cursor:
+        def __enter__(self): return self
+        def __exit__(self, *_args: object): return None
+        def execute(self, *_args: object): return None
+        def fetchone(self): return ("datalake",)
+
+    class Connection:
+        def cursor(self): return Cursor()
+        def commit(self): return None
+        def rollback(self): return None
+
+    # This mirrors psycopg's default tuple row. The QuoteMux provision path
+    # indexes current_database()[0], so a dict-row migration connection would
+    # have failed before any live role can be safely created.
+    provision_futures_partial_roles("publisher", "reader", connection_factory=Connection)

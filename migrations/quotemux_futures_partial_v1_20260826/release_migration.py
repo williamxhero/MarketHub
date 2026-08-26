@@ -16,7 +16,6 @@ from typing import Any
 from urllib.request import urlopen
 
 import psycopg
-from psycopg.rows import dict_row
 
 from quotemux.store.futures_partial_migration import (
     apply_futures_partial_migration,
@@ -44,7 +43,6 @@ def _connect() -> psycopg.Connection[Any]:
         user=_required("USER"),
         password=_required("PASSWORD"),
         connect_timeout=10,
-        row_factory=dict_row,
         application_name="markethub-quotemux-futures-partial-migration",
     )
 
