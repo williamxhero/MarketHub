@@ -5,7 +5,9 @@ param(
     [Parameter(Mandatory = $true)][string]$RemoteEnvPath,
     [Parameter(Mandatory = $true)][string]$ServiceName,
     [Parameter(Mandatory = $true)][string]$HealthUrl,
-    [string]$ServiceUser = ""
+    [string]$ServiceUser = "",
+    [string]$QuoteMuxSourceRoot = "",
+    [string]$QuoteMuxPackagesSourceRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,10 +21,26 @@ function Invoke-NativeCommand {
     }
 }
 
+function Get-PinnedCommit {
+    param([Parameter(Mandatory = $true)][string]$RepositoryPath)
+
+    $status = (& git -C $RepositoryPath status --porcelain=v1) -join "`n"
+    if (-not [string]::IsNullOrWhiteSpace($status)) {
+        throw "部署输入仓库必须是干净的已提交工作树: $RepositoryPath"
+    }
+    $commit = ((& git -C $RepositoryPath rev-parse HEAD) -replace "`0", "").Trim()
+    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
+        throw "无法固定部署输入 commit: $RepositoryPath"
+    }
+    return $commit
+}
+
 $marketHubRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $workspaceRoot = Split-Path $marketHubRoot -Parent
-$quoteMuxRoot = Join-Path $workspaceRoot "QuoteMux"
-$quoteMuxPackagesRoot = Join-Path $workspaceRoot "QuoteMux_Packages"
+$quoteMuxRoot = if ([string]::IsNullOrWhiteSpace($QuoteMuxSourceRoot)) { Join-Path $workspaceRoot "QuoteMux" } else { $QuoteMuxSourceRoot }
+$quoteMuxPackagesRoot = if ([string]::IsNullOrWhiteSpace($QuoteMuxPackagesSourceRoot)) { Join-Path $workspaceRoot "QuoteMux_Packages" } else { $QuoteMuxPackagesSourceRoot }
+$quoteMuxRoot = (Resolve-Path -LiteralPath $quoteMuxRoot).Path
+$quoteMuxPackagesRoot = (Resolve-Path -LiteralPath $quoteMuxPackagesRoot).Path
 foreach ($path in @($marketHubRoot, $quoteMuxRoot, $quoteMuxPackagesRoot)) {
     if (-not (Test-Path -LiteralPath $path -PathType Container)) {
         throw "缺少部署目录: $path"
@@ -36,13 +54,26 @@ if ([string]::IsNullOrWhiteSpace($ServiceUser)) { throw "无法确定远端 Mark
 
 $releaseName = "deploy_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
 $archivePath = Join-Path ([System.IO.Path]::GetTempPath()) "$releaseName.tgz"
-Invoke-NativeCommand -FilePath "tar.exe" -Arguments @(
-    "-czf", $archivePath,
-    "--exclude=.git", "--exclude=.pytest_cache", "--exclude=__pycache__",
-    "--exclude=.venv", "--exclude=build", "--exclude=*.egg-info", "--exclude=quotemux_packages.egg-info",
-    "--exclude=runtime", "--exclude=.runtime", "--exclude=.tmp", "--exclude=scratch", "--exclude=tests",
-    "-C", $workspaceRoot, "MarketHub", "QuoteMux", "QuoteMux_Packages"
-)
+$marketHubCommit = Get-PinnedCommit $marketHubRoot
+$quoteMuxCommit = Get-PinnedCommit $quoteMuxRoot
+$quoteMuxPackagesCommit = Get-PinnedCommit $quoteMuxPackagesRoot
+$stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) "$releaseName-source"
+New-Item -ItemType Directory -Path $stagingRoot -ErrorAction Stop | Out-Null
+try {
+    Copy-Item -LiteralPath $marketHubRoot -Destination (Join-Path $stagingRoot "MarketHub") -Recurse -Force
+    Copy-Item -LiteralPath $quoteMuxRoot -Destination (Join-Path $stagingRoot "QuoteMux") -Recurse -Force
+    Copy-Item -LiteralPath $quoteMuxPackagesRoot -Destination (Join-Path $stagingRoot "QuoteMux_Packages") -Recurse -Force
+    Invoke-NativeCommand -FilePath "tar.exe" -Arguments @(
+        "-czf", $archivePath,
+        "--exclude=.git", "--exclude=.pytest_cache", "--exclude=__pycache__",
+        "--exclude=.venv", "--exclude=build", "--exclude=*.egg-info", "--exclude=quotemux_packages.egg-info",
+        "--exclude=runtime", "--exclude=.runtime", "--exclude=.tmp", "--exclude=scratch", "--exclude=tests",
+        "-C", $stagingRoot, "MarketHub", "QuoteMux", "QuoteMux_Packages"
+    )
+}
+finally {
+    if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
+}
 
 $remoteArchive = "/tmp/$releaseName.tgz"
 Invoke-NativeCommand -FilePath "scp" -Arguments @($archivePath, ($HostName + ':' + $remoteArchive))
@@ -57,6 +88,9 @@ env_path="$5"
 service_name="$6"
 service_user="$7"
 health_url="$8"
+market_hub_commit="$9"
+quote_mux_commit="${10}"
+quote_mux_packages_commit="${11}"
 reader_env_path="$(dirname "$env_path")/quotemux-public-reader.env"
 release_root="$remote_root/releases/$release_name"
 previous_current="$(readlink -f "$remote_root/current" 2>/dev/null || true)"
@@ -101,6 +135,7 @@ fi
 test -f "$env_path"
 mkdir -p "$release_root" "$runtime_root"
 tar --no-same-owner -xzf "$remote_archive" -C "$release_root"
+printf '{"market_hub_commit":"%s","quote_mux_commit":"%s","quote_mux_packages_commit":"%s"}\n' "$market_hub_commit" "$quote_mux_commit" "$quote_mux_packages_commit" > "$release_root/release-inputs.json"
 find "$release_root/MarketHub" -type f -name '*.sh' -exec chmod 0755 {} +
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info" "$release_root/QuoteMux_Packages/build"
 service_group="$(id -gn "$service_user")"
@@ -212,7 +247,7 @@ echo "new MarketHub release failed health check; restoring previous current rele
 exit 1
 '@
 $encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
-$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl'"
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }
