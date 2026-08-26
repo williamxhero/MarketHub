@@ -17,7 +17,9 @@ param(
     [Nullable[int]]$ExpectedGeneration = $null,
     [ValidateSet("peer", "env")][string]$PrivilegedMigrationMode = "peer",
     [string]$PrivilegedEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env",
-    [string]$PublisherEnvPath = "/data/markethub/env/quotemux-futures-partial-publisher.env"
+    [string]$PublisherEnvPath = "/data/markethub/env/quotemux-futures-partial-publisher.env",
+    [ValidateRange(30, 1800)][int]$CaptureDrainTimeoutSeconds = 300,
+    [ValidateRange(1, 60)][int]$CaptureDrainRetrySeconds = 10
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,7 +37,7 @@ function Invoke-RemoteStage {
 
 if ($Action -eq "deploy") {
     $deploy = Join-Path $PSScriptRoot "deploy_yosef_server.ps1"
-    & $deploy -HostName $HostName -RemoteRoot $RemoteRoot -RemoteRuntimeRoot $RemoteRuntimeRoot -RemoteEnvPath $RemoteEnvPath -ServiceName $ServiceName -HealthUrl $HealthUrl -QuoteMuxSourceRoot $QuoteMuxSourceRoot -QuoteMuxPackagesSourceRoot $QuoteMuxPackagesSourceRoot -PrivilegedMigrationMode $PrivilegedMigrationMode -PrivilegedMigrationEnvPath $PrivilegedEnvPath
+    & $deploy -HostName $HostName -RemoteRoot $RemoteRoot -RemoteRuntimeRoot $RemoteRuntimeRoot -RemoteEnvPath $RemoteEnvPath -ServiceName $ServiceName -HealthUrl $HealthUrl -QuoteMuxSourceRoot $QuoteMuxSourceRoot -QuoteMuxPackagesSourceRoot $QuoteMuxPackagesSourceRoot -PrivilegedMigrationMode $PrivilegedMigrationMode -PrivilegedMigrationEnvPath $PrivilegedEnvPath -CaptureDrainTimeoutSeconds $CaptureDrainTimeoutSeconds -CaptureDrainRetrySeconds $CaptureDrainRetrySeconds
     if ($LASTEXITCODE -ne 0) { throw "部署失败" }
     Write-Output "部署完成；staged migration/role provisioning 已完成，未执行数据 import 或 partial publish。"
     exit 0

@@ -9,7 +9,9 @@ param(
     [string]$QuoteMuxSourceRoot = "",
     [string]$QuoteMuxPackagesSourceRoot = "",
     [ValidateSet("peer", "env")][string]$PrivilegedMigrationMode = "peer",
-    [string]$PrivilegedMigrationEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env"
+    [string]$PrivilegedMigrationEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env",
+    [ValidateRange(30, 1800)][int]$CaptureDrainTimeoutSeconds = 300,
+    [ValidateRange(1, 60)][int]$CaptureDrainRetrySeconds = 10
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,6 +104,8 @@ quote_mux_commit="${10}"
 quote_mux_packages_commit="${11}"
 migration_mode="${12}"
 migration_env_path="${13}"
+capture_drain_timeout_seconds="${14}"
+capture_drain_retry_seconds="${15}"
 reader_env_path="$(dirname "$env_path")/quotemux-public-reader.env"
 publisher_env_path="$(dirname "$env_path")/quotemux-futures-partial-publisher.env"
 release_root="$remote_root/releases/$release_name"
@@ -242,10 +246,26 @@ test -f "$publisher_env_path"
 test "$(stat -c %a "$publisher_env_path")" = 600
 test "$(stat -c %U "$publisher_env_path")" = "$service_user"
 test "$(stat -c %G "$publisher_env_path")" = "$service_group"
-# 旧 API 仍在线时进行 staged install 和 privileged migration。这里只会处理
-# 已无所属进程、且 advisory lock 可取得的历史 capture；活锁保持 fail-closed。
-capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
-printf 'capture run reconciliation: %s\n' "$capture_reconcile_json"
+# 旧 API 仍在线时进行 staged install 和 privileged migration。只等待当前
+# 合法持锁 capture 自行完成；到时仍有锁则 fail-closed，不 kill、不覆盖。
+capture_drain_deadline=$((SECONDS + capture_drain_timeout_seconds))
+while true; do
+  set +e
+  capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
+  capture_reconcile_status=$?
+  set -e
+  printf 'capture run reconciliation: %s\n' "$capture_reconcile_json"
+  if [ "$capture_reconcile_status" = 0 ]; then break; fi
+  if [ "$capture_reconcile_status" != 20 ]; then
+    echo "capture reconciliation failed with status $capture_reconcile_status" >&2
+    exit "$capture_reconcile_status"
+  fi
+  if [ "$SECONDS" -ge "$capture_drain_deadline" ]; then
+    echo "active QuoteMux capture locks did not drain within ${capture_drain_timeout_seconds}s; keeping old release active" >&2
+    exit 20
+  fi
+  sleep "$capture_drain_retry_seconds"
+done
 # 某些构建后端会在源码包目录重新生成 egg-info；发布产物不允许带入 root-owned 构建目录。
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"
 rm -rf "$release_root/QuoteMux_Packages/build"
@@ -332,7 +352,7 @@ echo "new MarketHub release failed health check; restoring previous current rele
 exit 1
 '@
 $encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
-$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath'"
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath' '$CaptureDrainTimeoutSeconds' '$CaptureDrainRetrySeconds'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }

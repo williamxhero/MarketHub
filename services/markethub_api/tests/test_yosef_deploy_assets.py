@@ -107,6 +107,20 @@ def test_deploy_peer_migration_never_requires_or_persists_admin_password() -> No
     assert 'test "$(stat -c %U "$reader_env_path")" = "$service_user"' in source
 
 
+def test_deploy_waits_for_live_capture_locks_without_overriding_them() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert '[ValidateRange(30, 1800)][int]$CaptureDrainTimeoutSeconds = 300' in source
+    assert '[ValidateRange(1, 60)][int]$CaptureDrainRetrySeconds = 10' in source
+    assert 'capture_drain_deadline=$((SECONDS + capture_drain_timeout_seconds))' in source
+    assert 'if [ "$capture_reconcile_status" != 20 ]; then' in source
+    assert 'active QuoteMux capture locks did not drain within ${capture_drain_timeout_seconds}s; keeping old release active' in source
+    assert 'sleep "$capture_drain_retry_seconds"' in source
+    capture_gate = source[source.index('capture_drain_deadline='):source.index('rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"')]
+    assert 'systemctl kill' not in capture_gate
+    assert 'systemctl stop' not in capture_gate
+
+
 def test_runner_arguments_match_real_quotemux_cli_contract() -> None:
     environment = os.environ | {"PYTHONPATH": str(_quotemux_source_root())}
     importer = subprocess.run(
