@@ -109,7 +109,7 @@ def _health_snapshot() -> dict[str, object]:
 def main() -> int:
     publisher_env = _env_path("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_PUBLISHER_ENV", _PUBLISHER_ENV)
     reader_env = _env_path("MARKETHUB_QUOTEMUX_PUBLIC_READER_ENV", _READER_ENV)
-    publisher_secret = _secret_from_env_file(publisher_env, "QUOTEMUX_FUTURES_PARTIAL_PUBLISHER_DB_PASSWORD") or secrets.token_urlsafe(48)
+    publisher_secret = _secret_from_env_file(publisher_env, "QUOTEMUX_PUBLISH_DB_PASSWORD") or secrets.token_urlsafe(48)
     reader_secret = _secret_from_env_file(reader_env, "QUOTEMUX_READ_DB_PASSWORD") or secrets.token_urlsafe(48)
 
     # Persist generated secrets before changing PostgreSQL. A process crash can

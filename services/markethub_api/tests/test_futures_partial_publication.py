@@ -118,6 +118,14 @@ def test_privileged_wrapper_only_delegates_quotemux_migration_and_writes_0600_se
     assert "QUOTEMUX_READ_DB_NAME=datalake" in text
     assert "QUOTEMUX_READ_DB_USER=quotemux_public_reader" in text
     assert text.endswith("QUOTEMUX_READ_DB_PASSWORD=secret\n")
+    # An interrupted first run leaves the durable publisher secret in place;
+    # the retry must read the exact key that the wrapper originally wrote.
+    publisher_env = tmp_path / "publisher.env"
+    module._write_secret_env(publisher_env, (
+        "QUOTEMUX_PUBLISH_DB_USER=quotemux_futures_partial_publisher",
+        "QUOTEMUX_PUBLISH_DB_PASSWORD=retry-secret",
+    ))
+    assert module._secret_from_env_file(publisher_env, "QUOTEMUX_PUBLISH_DB_PASSWORD") == "retry-secret"
     if os.name != "nt":
         assert os.stat(secret_env).st_mode & 0o777 == 0o600
     source = path.read_text(encoding="utf-8").lower()
