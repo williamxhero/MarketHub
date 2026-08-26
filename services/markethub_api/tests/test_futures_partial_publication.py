@@ -104,10 +104,26 @@ def test_privileged_wrapper_only_delegates_quotemux_migration_and_writes_0600_se
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     secret_env = tmp_path / "reader.env"
-    module._write_secret_env(secret_env, ("QUOTEMUX_READ_DB_USER=quotemux_public_reader", "QUOTEMUX_READ_DB_PASSWORD=secret"))
-    assert secret_env.read_text(encoding="utf-8").endswith("QUOTEMUX_READ_DB_PASSWORD=secret\n")
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_HOST", "db.example")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_PORT", "5432")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_NAME", "datalake")
+    try:
+        module._write_secret_env(secret_env, module._database_env_lines("QUOTEMUX_READ_DB", "quotemux_public_reader", "secret"))
+    finally:
+        monkeypatch.undo()
+    text = secret_env.read_text(encoding="utf-8")
+    assert "QUOTEMUX_READ_DB_HOST=db.example" in text
+    assert "QUOTEMUX_READ_DB_PORT=5432" in text
+    assert "QUOTEMUX_READ_DB_NAME=datalake" in text
+    assert "QUOTEMUX_READ_DB_USER=quotemux_public_reader" in text
+    assert text.endswith("QUOTEMUX_READ_DB_PASSWORD=secret\n")
     if os.name != "nt":
         assert os.stat(secret_env).st_mode & 0o777 == 0o600
     source = path.read_text(encoding="utf-8").lower()
+    deploy_script = (SERVICE_ROOT.parents[1] / "scripts" / "local" / "deploy_yosef_server.ps1").read_text(encoding="utf-8").lower()
     assert "provision_futures_partial_roles" in source and "os.chmod(path, 0o600)" in source
+    assert "quotemux_publish_db" in source and "quotemux_read_db" in source
+    assert "environmentfile=-$reader_env_path" in deploy_script
+    assert "quotemux-futures-partial-publisher.env" not in deploy_script
     assert "create table" not in source and "readmodel.future_1m_partial" not in source

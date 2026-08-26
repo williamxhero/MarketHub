@@ -57,6 +57,7 @@ env_path="$5"
 service_name="$6"
 service_user="$7"
 health_url="$8"
+reader_env_path="$(dirname "$env_path")/quotemux-public-reader.env"
 release_root="$remote_root/releases/$release_name"
 previous_current="$(readlink -f "$remote_root/current" 2>/dev/null || true)"
 current_switched=0
@@ -160,6 +161,11 @@ User=$service_user
 Group=$service_group
 WorkingDirectory=$remote_root/current/MarketHub/services/markethub_api
 EnvironmentFile=$env_path
+# The QuoteMux partial reader has a distinct least-privilege credential.  The
+# leading dash keeps ordinary legacy deployments bootable until the privileged
+# QuoteMux migration has generated this 0600 file; public reads then fail
+# closed instead of borrowing the API writer identity.
+EnvironmentFile=-$reader_env_path
 Environment=MARKETHUB_RUNTIME_ROOT=$runtime_root
 Environment=MARKETHUB_DATA_ROOT=$runtime_root/store
 Environment=MARKETHUB_RELEASE=$release_name
