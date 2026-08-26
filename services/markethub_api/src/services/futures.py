@@ -95,7 +95,7 @@ def _partial_metadata(dataset_id: str, qmp_id: str, qmc_id: str, qmg_id: str) ->
 def get_quotes_1m_partial(
     dataset_id: str, dataset_version: str, partial_completeness_revision: str, generation_pin: str,
     codes: str, start_time: str, end_time: str, limit: int, cursor: str = "",
-) -> tuple[list[dict[str, object]], dict[str, object], str]:
+) -> tuple[list[dict[str, object]], dict[str, object], str | None]:
     """Delegate the entire partial contract to QuoteMux's public reader."""
     metadata = _partial_metadata(dataset_id, dataset_version, partial_completeness_revision, generation_pin)
     try:
@@ -109,13 +109,13 @@ def get_quotes_1m_partial(
         )
     except ValueError as exc:
         raise _partial_query_error(exc, coverage=False) from exc
-    return list(batch.as_dicts()), metadata, next_cursor or ""
+    return list(batch.as_dicts()), metadata, next_cursor
 
 
 def get_quotes_1m_partial_coverage(
     dataset_id: str, dataset_version: str, partial_completeness_revision: str, generation_pin: str,
     codes: str, start_time: str, end_time: str, limit: int, cursor: str = "",
-) -> tuple[list[dict[str, object]], dict[str, object], str]:
+) -> tuple[list[dict[str, object]], dict[str, object], str | None]:
     """QuoteMux owns interval identity, clipping, cursor order, and residuals."""
     metadata = _partial_metadata(dataset_id, dataset_version, partial_completeness_revision, generation_pin)
     try:
@@ -129,7 +129,7 @@ def get_quotes_1m_partial_coverage(
         )
     except ValueError as exc:
         raise _partial_query_error(exc, coverage=True) from exc
-    return list(batch.as_dicts()), metadata, next_cursor or ""
+    return list(batch.as_dicts()), metadata, next_cursor
 
 
 def get_main_continuous_realtime(codes: str) -> list[FutureRealtimeQuoteItem]:

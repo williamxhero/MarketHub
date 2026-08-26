@@ -7,6 +7,7 @@ import os
 import sys
 
 import pytest
+from fastapi.testclient import TestClient
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -27,15 +28,16 @@ DATASET = "future_1m_partial_s000012_quotemux"
 
 
 class _Reader:
-    def __init__(self) -> None:
+    def __init__(self, *, terminal: bool = False) -> None:
         self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+        self.terminal = terminal
 
-    def read_futures_1m_partial_page(self, *args: object, **kwargs: object) -> tuple[QueryBatch, str]:
+    def read_futures_1m_partial_page(self, *args: object, **kwargs: object) -> tuple[QueryBatch, str | None]:
         self.calls.append(("page", args, kwargs))
         return QueryBatch(
             ("product_code", "exchange", "series_type", "bar_time", "open", "high", "low", "close", "volume", "open_interest", "adjustment_offset", "boundary_ids", "source_keys"),
             (("ag", "SHFE", "back_adjusted_continuous", "2026-07-14 09:01:00", 1.0, 2.0, 1.0, 1.5, 3.0, None, 0.0, ["boundary-1"], ["pyramid_back_adjusted_20260714"]),),
-        ), "next"
+        ), None if self.terminal else "next"
 
     def get_futures_1m_partial_metadata(self, *, qmp_id: str, qmc_id: str, qmg_id: str) -> dict[str, object]:
         self.calls.append(("metadata", (qmp_id, qmc_id, qmg_id), {}))
@@ -52,12 +54,12 @@ class _Reader:
             "lineage_limitations": ["fixture"],
         }
 
-    def read_futures_1m_partial_coverage_page(self, *args: object, **kwargs: object) -> tuple[QueryBatch, str]:
+    def read_futures_1m_partial_coverage_page(self, *args: object, **kwargs: object) -> tuple[QueryBatch, str | None]:
         self.calls.append(("coverage", args, kwargs))
         return QueryBatch(
             ("product_code", "exchange", "start_time", "end_time", "status", "observed_count", "interval_id", "residual_json"),
             (("ag", "SHFE", "2026-07-14 09:01:00", "2026-07-14 09:01:00", "accepted", 1, "interval-1", {}),),
-        ), "coverage-next"
+        ), None if self.terminal else "coverage-next"
 
 
 def test_partial_facade_delegates_all_partial_identity_and_cursor_to_quotemux(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -76,6 +78,54 @@ def test_partial_facade_delegates_all_partial_identity_and_cursor_to_quotemux(mo
             continue
         assert args == ("ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00")
         assert kwargs["qmp_id"] == QMP and kwargs["qmc_id"] == QMC and kwargs["qmg_id"] == QMG
+
+
+def test_partial_facade_preserves_quotemux_terminal_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    reader = _Reader(terminal=True)
+    monkeypatch.setattr(futures, "_PUBLIC_READER", reader)
+
+    _, _, cursor = futures.get_quotes_1m_partial(
+        DATASET, QMP, QMC, QMG, "ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00", 10,
+    )
+    _, _, coverage_cursor = futures.get_quotes_1m_partial_coverage(
+        DATASET, QMP, QMC, QMG, "ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00", 10,
+    )
+
+    assert cursor is None
+    assert coverage_cursor is None
+
+
+def test_partial_router_serializes_terminal_cursor_as_json_null_and_passes_opaque_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    import main
+
+    reader = _Reader(terminal=True)
+    monkeypatch.setattr(futures, "_PUBLIC_READER", reader)
+
+    async def run_inline(task, *args):
+        return task(*args)
+
+    monkeypatch.setattr(futures_router, "run_data_task", run_inline)
+    params = {
+        "dataset_id": DATASET,
+        "dataset_version": QMP,
+        "partial_completeness_revision": QMC,
+        "generation_pin": QMG,
+        "codes": "ag",
+        "start_time": "2026-07-14 09:01:00",
+        "end_time": "2026-07-14 09:01:00",
+    }
+    client = TestClient(main.app)
+    bars = client.get("/api/futures/quotes/1m/partial", params={**params, "cursor": "opaque-bars"})
+    coverage = client.get("/api/futures/quotes/1m/partial/coverage", params={**params, "cursor": "opaque-coverage"})
+
+    assert bars.status_code == 200 and coverage.status_code == 200
+    assert bars.json()["meta"]["next_cursor"] is None
+    assert coverage.json()["meta"]["next_cursor"] is None
+    assert b'"next_cursor":null' in bars.content
+    assert b'"next_cursor":null' in coverage.content
+    calls = {kind: kwargs for kind, _args, kwargs in reader.calls if kind != "metadata"}
+    assert calls["page"]["cursor"] == "opaque-bars"
+    assert calls["coverage"]["cursor"] == "opaque-coverage"
 
 
 def test_partial_facade_rejects_unknown_dataset_without_calling_quotemux(monkeypatch: pytest.MonkeyPatch) -> None:
