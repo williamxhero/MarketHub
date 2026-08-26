@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory = $true)][ValidateSet("deploy", "migrate", "classify", "import", "partial-plan", "partial-publish", "verify")][string]$Action,
+    [Parameter(Mandatory = $true)][ValidateSet("deploy", "classify", "import", "partial-plan", "partial-publish", "verify")][string]$Action,
     [Parameter(Mandatory = $true)][string]$HostName,
     [string]$RemoteRoot = "/data/MarketHub2",
     [string]$RemoteRuntimeRoot = "/data/markethub",
@@ -15,6 +15,7 @@ param(
     [string]$QmiId = "",
     [string]$CatalogIdentity = "",
     [Nullable[int]]$ExpectedGeneration = $null,
+    [ValidateSet("peer", "env")][string]$PrivilegedMigrationMode = "peer",
     [string]$PrivilegedEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env",
     [string]$PublisherEnvPath = "/data/markethub/env/quotemux-futures-partial-publisher.env"
 )
@@ -34,7 +35,7 @@ function Invoke-RemoteStage {
 
 if ($Action -eq "deploy") {
     $deploy = Join-Path $PSScriptRoot "deploy_yosef_server.ps1"
-    & $deploy -HostName $HostName -RemoteRoot $RemoteRoot -RemoteRuntimeRoot $RemoteRuntimeRoot -RemoteEnvPath $RemoteEnvPath -ServiceName $ServiceName -HealthUrl $HealthUrl -QuoteMuxSourceRoot $QuoteMuxSourceRoot -QuoteMuxPackagesSourceRoot $QuoteMuxPackagesSourceRoot -PrivilegedMigrationEnvPath $PrivilegedEnvPath
+    & $deploy -HostName $HostName -RemoteRoot $RemoteRoot -RemoteRuntimeRoot $RemoteRuntimeRoot -RemoteEnvPath $RemoteEnvPath -ServiceName $ServiceName -HealthUrl $HealthUrl -QuoteMuxSourceRoot $QuoteMuxSourceRoot -QuoteMuxPackagesSourceRoot $QuoteMuxPackagesSourceRoot -PrivilegedMigrationMode $PrivilegedMigrationMode -PrivilegedMigrationEnvPath $PrivilegedEnvPath
     if ($LASTEXITCODE -ne 0) { throw "部署失败" }
     Write-Output "部署完成；staged migration/role provisioning 已完成，未执行数据 import 或 partial publish。"
     exit 0
@@ -48,9 +49,6 @@ if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) { throw "非 deploy 阶段必须
 $python = "$RemoteRuntimeRoot/.venv/bin/python"
 $base = "PYTHONPATH=$ReleaseRoot/QuoteMux/src:$ReleaseRoot/MarketHub/services/markethub_api/src $python"
 switch ($Action) {
-    "migrate" {
-        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PrivilegedEnvPath'; set +a; $base '$ReleaseRoot/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py'"
-    }
     "classify" {
         if (!$BundlePath -or !$ImportPlanPath) { throw "classify requires -BundlePath and -ImportPlanPath" }
         Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_pyramid_import classify --bundle '$BundlePath' --plan '$ImportPlanPath'"

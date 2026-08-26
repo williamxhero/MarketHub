@@ -8,6 +8,7 @@ param(
     [string]$ServiceUser = "",
     [string]$QuoteMuxSourceRoot = "",
     [string]$QuoteMuxPackagesSourceRoot = "",
+    [ValidateSet("peer", "env")][string]$PrivilegedMigrationMode = "peer",
     [string]$PrivilegedMigrationEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env"
 )
 
@@ -99,12 +100,17 @@ health_url="$8"
 market_hub_commit="$9"
 quote_mux_commit="${10}"
 quote_mux_packages_commit="${11}"
-migration_env_path="${12}"
+migration_mode="${12}"
+migration_env_path="${13}"
 reader_env_path="$(dirname "$env_path")/quotemux-public-reader.env"
+publisher_env_path="$(dirname "$env_path")/quotemux-futures-partial-publisher.env"
 release_root="$remote_root/releases/$release_name"
 previous_current="$(readlink -f "$remote_root/current" 2>/dev/null || true)"
 current_switched=0
 service_stopped=0
+migration_stage=""
+publisher_target_stage=""
+reader_target_stage=""
 env_backup="/tmp/${service_name}-${release_name}.env.bak"
 unit_path="/etc/systemd/system/$service_name.service"
 unit_backup="/tmp/${service_name}-${release_name}.service.bak"
@@ -117,6 +123,9 @@ if test -d "$runtime_root/scripts"; then cp -a "$runtime_root/scripts" "$shared_
 if test -d "$runtime_root/publisher"; then cp -a "$runtime_root/publisher" "$shared_backup/publisher"; publisher_existed=1; fi
 if sudo -n test -f /usr/local/sbin/markethub-storage-governance; then sudo -n cp /usr/local/sbin/markethub-storage-governance "$shared_backup/governance"; governance_existed=1; fi
 restart_on_exit() {
+  if [ -n "$migration_stage" ]; then sudo -n rm -rf "$migration_stage" || true; fi
+  if [ -n "$publisher_target_stage" ]; then sudo -n rm -f "$publisher_target_stage" || true; fi
+  if [ -n "$reader_target_stage" ]; then sudo -n rm -f "$reader_target_stage" || true; fi
   if [ "$current_switched" = 1 ] && [ -n "$previous_current" ]; then
     ln -sfn "$previous_current" "$remote_root/current.next"
     mv -Tf "$remote_root/current.next" "$remote_root/current"
@@ -175,13 +184,64 @@ sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/type=cache" || true
 sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/package_venvs" || true
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/install_all_packages.py"
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/bootstrap_database.py"
-test -f "$migration_env_path"
-set -a
-. "$migration_env_path"
-set +a
-MARKETHUB_HEALTH_URL="$health_url" "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"
+publisher_stage=""
+reader_stage=""
+case "$migration_mode" in
+  peer)
+    sudo -n -u postgres true
+    : "${MARKETHUB_DB_HOST:?MARKETHUB_DB_HOST is required for TCP role probes}"
+    : "${MARKETHUB_DB_PORT:?MARKETHUB_DB_PORT is required for peer migration}"
+    : "${MARKETHUB_DB_NAME:?MARKETHUB_DB_NAME is required for peer migration}"
+    sudo -n -u postgres test -S "/var/run/postgresql/.s.PGSQL.$MARKETHUB_DB_PORT"
+    migration_stage="$(mktemp -d "/tmp/${service_name}-${release_name}-quotemux.XXXXXX")"
+    publisher_stage="$migration_stage/publisher.env"
+    reader_stage="$migration_stage/reader.env"
+    mkdir -p "$migration_stage/code"
+    cp -a "$release_root/QuoteMux/src/quotemux" "$migration_stage/code/quotemux"
+    install -m 0644 "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py" "$migration_stage/code/release_migration.py"
+    if test -f "$publisher_env_path"; then cp "$publisher_env_path" "$publisher_stage"; fi
+    if test -f "$reader_env_path"; then cp "$reader_env_path" "$reader_stage"; fi
+    sudo -n chown -R postgres:postgres "$migration_stage"
+    sudo -n chmod 0700 "$migration_stage"
+    sudo -n -u postgres env \
+      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_PEER=1 \
+      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_SOCKET_DIR=/var/run/postgresql \
+      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_HOST="$MARKETHUB_DB_HOST" \
+      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_PORT="$MARKETHUB_DB_PORT" \
+      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_NAME="$MARKETHUB_DB_NAME" \
+      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_PUBLISHER_ENV="$publisher_stage" \
+      MARKETHUB_QUOTEMUX_PUBLIC_READER_ENV="$reader_stage" \
+      MARKETHUB_HEALTH_URL="$health_url" \
+      PYTHONPATH="$migration_stage/code" \
+      "$runtime_root/.venv/bin/python" "$migration_stage/code/release_migration.py"
+    publisher_target_stage="${publisher_env_path}.${release_name}.new"
+    reader_target_stage="${reader_env_path}.${release_name}.new"
+    sudo -n install -o "$service_user" -g "$service_group" -m 0600 "$publisher_stage" "$publisher_target_stage"
+    sudo -n install -o "$service_user" -g "$service_group" -m 0600 "$reader_stage" "$reader_target_stage"
+    sudo -n mv -Tf "$publisher_target_stage" "$publisher_env_path"
+    publisher_target_stage=""
+    sudo -n mv -Tf "$reader_target_stage" "$reader_env_path"
+    reader_target_stage=""
+    sudo -n rm -rf "$migration_stage"
+    migration_stage=""
+    ;;
+  env)
+    test -f "$migration_env_path"
+    set -a
+    . "$migration_env_path"
+    set +a
+    MARKETHUB_HEALTH_URL="$health_url" "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"
+    ;;
+  *) echo "unsupported QuoteMux privileged migration mode: $migration_mode" >&2; exit 2 ;;
+esac
 test -f "$reader_env_path"
 test "$(stat -c %a "$reader_env_path")" = 600
+test "$(stat -c %U "$reader_env_path")" = "$service_user"
+test "$(stat -c %G "$reader_env_path")" = "$service_group"
+test -f "$publisher_env_path"
+test "$(stat -c %a "$publisher_env_path")" = 600
+test "$(stat -c %U "$publisher_env_path")" = "$service_user"
+test "$(stat -c %G "$publisher_env_path")" = "$service_group"
 # 旧 API 仍在线时进行 staged install 和 privileged migration。这里只会处理
 # 已无所属进程、且 advisory lock 可取得的历史 capture；活锁保持 fail-closed。
 capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
@@ -272,7 +332,7 @@ echo "new MarketHub release failed health check; restoring previous current rele
 exit 1
 '@
 $encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
-$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationEnvPath'"
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }

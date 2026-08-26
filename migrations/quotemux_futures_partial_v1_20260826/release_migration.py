@@ -1,8 +1,9 @@
 """Privileged entrypoint for the QuoteMux-owned S000012 partial migration.
 
 This wrapper deliberately contains no MarketHub DDL, data publication, or
-secret values. Operators supply its privileged connection through the
-out-of-repository environment file; the public API never imports this module.
+secret values. It supports either an explicitly supplied admin DSN or the
+server's audited ``sudo -u postgres`` Unix-socket peer mode; the public API
+never imports this module.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from quotemux.store.futures_partial_migration import (
 _PREFIX = "MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_"
 _PUBLISHER_ENV = Path("/data/markethub/env/quotemux-futures-partial-publisher.env")
 _READER_ENV = Path("/data/markethub/env/quotemux-public-reader.env")
+_PEER_MODE = "MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_PEER"
 
 
 def _required(name: str) -> str:
@@ -36,6 +38,15 @@ def _required(name: str) -> str:
 
 
 def _connect() -> psycopg.Connection[Any]:
+    if os.getenv(_PEER_MODE, "").strip() == "1":
+        return psycopg.connect(
+            host=os.getenv(_PREFIX + "SOCKET_DIR", "/var/run/postgresql"),
+            port=int(_required("PORT")),
+            dbname=_required("NAME"),
+            user="postgres",
+            connect_timeout=10,
+            application_name="markethub-quotemux-futures-partial-peer-migration",
+        )
     return psycopg.connect(
         host=_required("HOST"),
         port=int(_required("PORT")),

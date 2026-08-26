@@ -179,7 +179,7 @@ def test_privileged_wrapper_only_delegates_quotemux_migration_and_writes_0600_se
     assert "quotemux_publish_db" in source and "quotemux_read_db" in source
     assert "environmentfile=$reader_env_path" in deploy_script
     assert "environmentfile=-$reader_env_path" not in deploy_script
-    assert "quotemux-futures-partial-publisher.env" not in deploy_script
+    assert "environmentfile=$publisher_env_path" not in deploy_script
 
 
 def test_privileged_wrapper_uses_tuple_rows_for_quotemux_role_provision(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,6 +213,28 @@ def test_privileged_wrapper_uses_tuple_rows_for_quotemux_role_provision(monkeypa
     # indexes current_database()[0], so a dict-row migration connection would
     # have failed before any live role can be safely created.
     provision_futures_partial_roles("publisher", "reader", connection_factory=Connection)
+
+
+def test_privileged_wrapper_peer_mode_uses_socket_without_admin_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    path = SERVICE_ROOT.parents[1] / "migrations" / "quotemux_futures_partial_v1_20260826" / "release_migration.py"
+    spec = importlib.util.spec_from_file_location("partial_release_migration_peer", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    captured: dict[str, object] = {}
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_PEER", "1")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_SOCKET_DIR", "/run/postgresql")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_PORT", "55432")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_NAME", "datalake")
+    monkeypatch.setattr(module.psycopg, "connect", lambda **kwargs: captured.update(kwargs))
+
+    module._connect()
+
+    assert captured["host"] == "/run/postgresql"
+    assert captured["port"] == 55432
+    assert captured["dbname"] == "datalake"
+    assert captured["user"] == "postgres"
+    assert "password" not in captured
 
 
 def test_privileged_wrapper_probes_publisher_and_reader_without_writing(monkeypatch: pytest.MonkeyPatch) -> None:

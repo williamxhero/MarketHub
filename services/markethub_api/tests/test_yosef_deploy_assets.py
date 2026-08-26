@@ -66,11 +66,12 @@ def test_deploy_accepts_a_pinned_quotemux_worktree_and_records_release_inputs() 
 def test_partial_runbook_has_explicit_stages_and_deploy_never_publishes_data() -> None:
     source = PARTIAL_RUNBOOK.read_text(encoding="utf-8")
 
-    assert 'ValidateSet("deploy", "migrate", "classify", "import", "partial-plan", "partial-publish", "verify")' in source
+    assert 'ValidateSet("deploy", "classify", "import", "partial-plan", "partial-publish", "verify")' in source
     assert 'staged migration/role provisioning 已完成，未执行数据 import 或 partial publish。' in source
     assert 'quotemux-futures-partial-publisher.env' in source
     assert 'quotemux-futures-partial-migration.env' in source
     assert 'RemoteEnvPath = "/data/markethub/env/markethub.env"' in source
+    assert '"migrate" {' not in source
 
 
 def test_deploy_keeps_old_service_alive_until_migration_creates_required_reader_env() -> None:
@@ -85,6 +86,25 @@ def test_deploy_keeps_old_service_alive_until_migration_creates_required_reader_
     assert 'urllib.parse.quote(value, safe="")' in source
     assert '/api/stocks/quotes?code=600000&freq=1d&count=1&data_version=$stock_data_version' in source
     assert 'strict futures readiness expected HTTP 409' in source
+
+
+def test_deploy_peer_migration_never_requires_or_persists_admin_password() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert '[ValidateSet("peer", "env")][string]$PrivilegedMigrationMode = "peer"' in source
+    assert 'sudo -n -u postgres true' in source
+    assert 'MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_PEER=1' in source
+    assert 'MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_SOCKET_DIR=/var/run/postgresql' in source
+    assert 'MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_HOST="$MARKETHUB_DB_HOST"' in source
+    assert 'MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_PUBLISHER_ENV="$publisher_stage"' in source
+    assert 'MARKETHUB_QUOTEMUX_PUBLIC_READER_ENV="$reader_stage"' in source
+    assert 'cp -a "$release_root/QuoteMux/src/quotemux" "$migration_stage/code/quotemux"' in source
+    assert 'install -m 0644 "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py" "$migration_stage/code/release_migration.py"' in source
+    assert 'PYTHONPATH="$migration_stage/code"' in source
+    assert '"$runtime_root/.venv/bin/python" "$migration_stage/code/release_migration.py"' in source
+    assert 'install -o "$service_user" -g "$service_group" -m 0600 "$publisher_stage" "$publisher_target_stage"' in source
+    assert 'mv -Tf "$reader_target_stage" "$reader_env_path"' in source
+    assert 'test "$(stat -c %U "$reader_env_path")" = "$service_user"' in source
 
 
 def test_runner_arguments_match_real_quotemux_cli_contract() -> None:
