@@ -237,6 +237,17 @@ def test_privileged_wrapper_peer_mode_uses_socket_without_admin_password(monkeyp
     assert "password" not in captured
 
 
+def test_privileged_wrapper_can_skip_health_only_when_service_is_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
+    path = SERVICE_ROOT.parents[1] / "migrations" / "quotemux_futures_partial_v1_20260826" / "release_migration.py"
+    spec = importlib.util.spec_from_file_location("partial_release_migration_health_skip", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT", "1")
+
+    assert module._health_snapshot() == {"skipped": "service deliberately stopped for atomic release handoff"}
+
+
 def test_privileged_wrapper_probes_publisher_and_reader_without_writing(monkeypatch: pytest.MonkeyPatch) -> None:
     path = SERVICE_ROOT.parents[1] / "migrations" / "quotemux_futures_partial_v1_20260826" / "release_migration.py"
     spec = importlib.util.spec_from_file_location("partial_release_migration_role_probe", path)

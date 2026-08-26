@@ -104,6 +104,8 @@ def _database_env_lines(prefix: str, user: str, password: str) -> tuple[str, ...
 
 
 def _health_snapshot() -> dict[str, object]:
+    if os.getenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT", "").strip() == "1":
+        return {"skipped": "service deliberately stopped for atomic release handoff"}
     url = os.getenv("MARKETHUB_HEALTH_URL", "http://127.0.0.1:8803/api/health")
     with urlopen(url, timeout=5) as response:  # nosec B310 -- operator-configured private health endpoint
         payload = json.loads(response.read().decode("utf-8"))

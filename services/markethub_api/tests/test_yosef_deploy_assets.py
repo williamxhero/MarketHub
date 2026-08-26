@@ -74,13 +74,19 @@ def test_partial_runbook_has_explicit_stages_and_deploy_never_publishes_data() -
     assert '"migrate" {' not in source
 
 
-def test_deploy_keeps_old_service_alive_until_migration_creates_required_reader_env() -> None:
+def test_deploy_drains_then_stops_before_migration_creates_required_reader_env() -> None:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'MARKETHUB_HEALTH_URL="$health_url" "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"' in source
+    capture_drain = source.index('capture_drain_deadline=')
+    controlled_stop = source.index('if [ "$service_stopped" != 1 ]; then', capture_drain)
+    migration_run = source.index('run_privileged_migration\n#')
+    switch = source.index('ln -sfn "$release_root" "$remote_root/current.next"')
+
+    assert 'run_privileged_migration() {' in source
+    assert capture_drain < controlled_stop < migration_run < switch
+    assert 'MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT=1' in source
     assert 'EnvironmentFile=$reader_env_path' in source
     assert 'EnvironmentFile=-$reader_env_path' not in source
-    assert source.index('release_migration.py') < source.index('systemctl stop "$service_name.service"')
     assert 'api_base="${health_url%/api/health}"' in source
     assert 'json.load(sys.stdin).get("data_version")' in source
     assert 'urllib.parse.quote(value, safe="")' in source
@@ -116,9 +122,9 @@ def test_deploy_waits_for_live_capture_locks_without_overriding_them() -> None:
     assert 'if [ "$capture_reconcile_status" != 20 ]; then' in source
     assert 'active QuoteMux capture locks did not drain within ${capture_drain_timeout_seconds}s; keeping old release active' in source
     assert 'sleep "$capture_drain_retry_seconds"' in source
-    capture_gate = source[source.index('capture_drain_deadline='):source.index('rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"')]
-    assert 'systemctl kill' not in capture_gate
-    assert 'systemctl stop' not in capture_gate
+    default_capture_gate = source[source.index('capture_drain_deadline='):source.index('if [ "$allow_capture_drain_service_stop" != 1 ]; then')]
+    assert 'systemctl kill' not in default_capture_gate
+    assert 'systemctl stop' not in default_capture_gate
 
 
 def test_deploy_requires_explicit_authorization_before_stopping_for_capture_drain() -> None:
@@ -131,7 +137,7 @@ def test_deploy_requires_explicit_authorization_before_stopping_for_capture_drai
     assert 'operator-authorized controlled service stop begins' in source
     assert 'if ! sudo -n systemctl stop "$service_name.service"; then' in source
     assert 'capture locks persisted after controlled service stop; restoring old release' in source
-    maintenance_gate = source[source.index('capture drain timeout reached'):source.index('rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"')]
+    maintenance_gate = source[source.index('capture drain timeout reached'):source.index('run_privileged_migration\n#')]
     assert 'systemctl kill' not in maintenance_gate
     assert 'pg_terminate' not in source
     assert '[switch]$AllowCaptureDrainServiceStop' in runner

@@ -190,6 +190,7 @@ sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/type=cache" || true
 sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/package_venvs" || true
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/install_all_packages.py"
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/bootstrap_database.py"
+run_privileged_migration() {
 publisher_stage=""
 reader_stage=""
 case "$migration_mode" in
@@ -218,6 +219,7 @@ case "$migration_mode" in
       MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_PUBLISHER_ENV="$publisher_stage" \
       MARKETHUB_QUOTEMUX_PUBLIC_READER_ENV="$reader_stage" \
       MARKETHUB_HEALTH_URL="$health_url" \
+      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT=1 \
       PYTHONPATH="$migration_stage/code" \
       "$runtime_root/.venv/bin/python" "$migration_stage/code/release_migration.py"
     publisher_target_stage="${publisher_env_path}.${release_name}.new"
@@ -233,10 +235,30 @@ case "$migration_mode" in
     ;;
   env)
     test -f "$migration_env_path"
+    migration_stage="$(mktemp -d "/tmp/${service_name}-${release_name}-quotemux.XXXXXX")"
+    publisher_stage="$migration_stage/publisher.env"
+    reader_stage="$migration_stage/reader.env"
+    if test -f "$publisher_env_path"; then cp "$publisher_env_path" "$publisher_stage"; fi
+    if test -f "$reader_env_path"; then cp "$reader_env_path" "$reader_stage"; fi
+    chmod 0700 "$migration_stage"
     set -a
     . "$migration_env_path"
     set +a
-    MARKETHUB_HEALTH_URL="$health_url" "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"
+    MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_PUBLISHER_ENV="$publisher_stage" \
+      MARKETHUB_QUOTEMUX_PUBLIC_READER_ENV="$reader_stage" \
+      MARKETHUB_HEALTH_URL="$health_url" \
+      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT=1 \
+      "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"
+    publisher_target_stage="${publisher_env_path}.${release_name}.new"
+    reader_target_stage="${reader_env_path}.${release_name}.new"
+    sudo -n install -o "$service_user" -g "$service_group" -m 0600 "$publisher_stage" "$publisher_target_stage"
+    sudo -n install -o "$service_user" -g "$service_group" -m 0600 "$reader_stage" "$reader_target_stage"
+    sudo -n mv -Tf "$publisher_target_stage" "$publisher_env_path"
+    publisher_target_stage=""
+    sudo -n mv -Tf "$reader_target_stage" "$reader_env_path"
+    reader_target_stage=""
+    rm -rf "$migration_stage"
+    migration_stage=""
     ;;
   *) echo "unsupported QuoteMux privileged migration mode: $migration_mode" >&2; exit 2 ;;
 esac
@@ -248,8 +270,9 @@ test -f "$publisher_env_path"
 test "$(stat -c %a "$publisher_env_path")" = 600
 test "$(stat -c %U "$publisher_env_path")" = "$service_user"
 test "$(stat -c %G "$publisher_env_path")" = "$service_group"
-# 旧 API 仍在线时进行 staged install 和 privileged migration。先等待当前
-# 合法持锁 capture 自行完成；默认到时仍有锁就 fail-closed。
+}
+# 旧 API 仍在线时完成 staged install 并等待当前合法持锁 capture 自行完成；
+# 只有停旧服务阻断新 capture 后才执行 privileged migration。
 reconcile_capture_once() {
   set +e
   capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
@@ -292,21 +315,23 @@ while true; do
   fi
   sleep "$capture_drain_retry_seconds"
 done
+# Confirm the old release is healthy before deliberately stopping it; post-start
+# health is checked after the atomic current switch below.
+curl -fsS "$health_url" >/dev/null
+if [ "$service_stopped" != 1 ]; then
+  if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
+    echo "controlled service stop failed before privileged migration; restoring old release" >&2
+    exit 1
+  fi
+  service_stopped=1
+fi
+run_privileged_migration
 # 某些构建后端会在源码包目录重新生成 egg-info；发布产物不允许带入 root-owned 构建目录。
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"
 rm -rf "$release_root/QuoteMux_Packages/build"
 rm -rf "$release_root/QuoteMux/src/quotemux.egg-info"
 rm -rf "$release_root/QuoteMux/build"
 sudo -n chown -R "$service_user:$service_group" "$release_root"
-if [ "$service_stopped" != 1 ]; then
-  if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
-    # A source worker can keep Uvicorn's background task alive past TimeoutStopSec.
-    # systemd may already have killed it; make the release handoff deterministic.
-    sudo -n systemctl kill --kill-who=all --signal=KILL "$service_name.service" >/dev/null 2>&1 || true
-    sudo -n systemctl reset-failed "$service_name.service" >/dev/null 2>&1 || true
-  fi
-  service_stopped=1
-fi
 ln -sfn "$release_root" "$remote_root/current.next"
 mv -Tf "$remote_root/current.next" "$remote_root/current"
 current_switched=1
