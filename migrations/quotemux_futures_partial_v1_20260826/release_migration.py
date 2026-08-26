@@ -62,10 +62,7 @@ def _secret_from_env_file(path: Path, key: str) -> str | None:
         for line in path.read_text(encoding="utf-8").splitlines()
         if "=" in line and not line.lstrip().startswith("#")
     )
-    value = values.get(key, "")
-    if value == "":
-        raise RuntimeError(f"existing {path} lacks {key}; refusing to rotate an unknown credential")
-    return value
+    return values.get(key) or None
 
 
 def _write_secret_env(path: Path, lines: tuple[str, ...]) -> None:
@@ -114,15 +111,15 @@ def main() -> int:
 
     # Persist generated secrets before changing PostgreSQL. A process crash can
     # therefore be resumed with the same credentials instead of rotating a role
-    # to a value that was never recoverably stored. Secrets are never printed.
-    if not publisher_env.exists():
-        _write_secret_env(publisher_env, _database_env_lines(
-            "QUOTEMUX_PUBLISH_DB", "quotemux_futures_partial_publisher", publisher_secret,
-        ))
-    if not reader_env.exists():
-        _write_secret_env(reader_env, _database_env_lines(
-            "QUOTEMUX_READ_DB", "quotemux_public_reader", reader_secret,
-        ))
+    # to a value that was never recoverably stored. Rewrite every metadata key
+    # atomically on retries, retaining an extant secret rather than leaving a
+    # truncated or stale DSN that the strict QuoteMux clients will reject.
+    _write_secret_env(publisher_env, _database_env_lines(
+        "QUOTEMUX_PUBLISH_DB", "quotemux_futures_partial_publisher", publisher_secret,
+    ))
+    _write_secret_env(reader_env, _database_env_lines(
+        "QUOTEMUX_READ_DB", "quotemux_public_reader", reader_secret,
+    ))
     before = _health_snapshot()
     connection = _connect()
     try:

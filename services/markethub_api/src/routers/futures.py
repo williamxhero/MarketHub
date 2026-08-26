@@ -81,14 +81,14 @@ async def api_future_quotes_1m_partial(
     limit: int = Query(10_000, ge=1, le=100_000),
     cursor: str = Query(""),
 ) -> dict[str, object]:
-    items, next_cursor = await run_data_task(
+    items, metadata, next_cursor = await run_data_task(
         futures.get_quotes_1m_partial, dataset_id, dataset_version, partial_completeness_revision,
         generation_pin, codes, start_time, end_time, limit, cursor,
     )
     response.headers["X-MarketHub-Dataset-Version"] = dataset_version
     response.headers["X-MarketHub-Partial-Completeness-Revision"] = partial_completeness_revision
     response.headers["X-MarketHub-Generation-Pin"] = generation_pin
-    aggregate_sources = sorted({str(source) for item in items for source in item.get("source_keys", [])})
+    page_source_keys = sorted({str(source) for item in items for source in item.get("source_keys", [])})
     return {
         "items": items,
         "meta": {
@@ -96,14 +96,24 @@ async def api_future_quotes_1m_partial(
             "dataset_version": dataset_version,
             "partial_completeness_revision": partial_completeness_revision,
             "generation_pin": generation_pin,
-            "aggregate_source_keys": aggregate_sources,
+            "catalog_identity": metadata["catalog_identity"],
+            "qmi_id": metadata["qmi_id"],
+            "source_manifests": metadata["sources"],
+            "source_boundary_manifest_count": metadata["source_boundary_manifest_count"],
+            "source_boundary_manifest_sha256": metadata["source_boundary_manifest_sha256"],
+            "page_source_keys": page_source_keys,
             "source_boundary_contract": "items carry QuoteMux boundary_ids and source_keys",
-            "missing_bar_semantics": "skip",
-            "open_interest_availability": "nullable_unknown",
-            "coverage": {"endpoint": "/api/futures/quotes/1m/partial/coverage"},
+            "timezone": metadata["timezone"],
+            "interval_bounds": metadata["interval_bounds"],
+            "missing_bar_semantics": metadata["missing_bar_semantics"],
+            "session_grid": metadata["session_grid"],
+            "open_interest_availability": metadata["open_interest"],
+            "warmup": metadata["warmup"],
+            "coverage": {"endpoint": "/api/futures/quotes/1m/partial/coverage", "semantics": metadata["coverage_semantics"], "residual_semantics": metadata["residual_semantics"]},
+            "lineage_limitations": metadata["lineage_limitations"],
             "next_cursor": next_cursor,
             "complete": None,
-            "partial_contract_satisfied": True,
+            "partial_contract_satisfied": metadata["publication_verified"],
         },
     }
 
@@ -125,14 +135,14 @@ async def api_future_quotes_1m_partial_coverage(
     limit: int = Query(500, ge=1, le=10_000),
     cursor: str = Query(""),
 ) -> dict[str, object]:
-    items, next_cursor = await run_data_task(
+    items, metadata, next_cursor = await run_data_task(
         futures.get_quotes_1m_partial_coverage, dataset_id, dataset_version, partial_completeness_revision,
         generation_pin, codes, start_time, end_time, limit, cursor,
     )
     response.headers["X-MarketHub-Dataset-Version"] = dataset_version
     response.headers["X-MarketHub-Partial-Completeness-Revision"] = partial_completeness_revision
     response.headers["X-MarketHub-Generation-Pin"] = generation_pin
-    return {"items": items, "meta": {"dataset_id": dataset_id, "dataset_version": dataset_version, "partial_completeness_revision": partial_completeness_revision, "generation_pin": generation_pin, "next_cursor": next_cursor, "missing_bar_semantics": "skip", "complete": None, "partial_contract_satisfied": True}}
+    return {"items": items, "meta": {"dataset_id": dataset_id, "dataset_version": dataset_version, "partial_completeness_revision": partial_completeness_revision, "generation_pin": generation_pin, "catalog_identity": metadata["catalog_identity"], "warmup": metadata["warmup"], "missing_bar_semantics": metadata["missing_bar_semantics"], "coverage_semantics": metadata["coverage_semantics"], "residual_semantics": metadata["residual_semantics"], "next_cursor": next_cursor, "complete": None, "partial_contract_satisfied": metadata["publication_verified"]}}
 
 
 @router.get(

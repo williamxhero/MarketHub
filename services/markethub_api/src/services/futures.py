@@ -70,13 +70,34 @@ def _partial_query_error(exc: ValueError, *, coverage: bool) -> HTTPException:
     )
 
 
+def _partial_metadata(dataset_id: str, qmp_id: str, qmc_id: str, qmg_id: str) -> dict[str, object]:
+    if dataset_id != "future_1m_partial_s000012_quotemux":
+        raise _partial_error(409, "PARTIAL_PUBLICATION_STALE_OR_INVALID", "期货 partial publication 身份已过期或不可用", ValueError("unknown dataset_id"))
+    try:
+        metadata = _PUBLIC_READER.get_futures_1m_partial_metadata(qmp_id, qmc_id, qmg_id)
+    except ValueError as exc:
+        raise _partial_query_error(exc, coverage=False) from exc
+    required = {
+        "dataset_id": dataset_id,
+        "qmp_id": qmp_id,
+        "qmc_id": qmc_id,
+        "qmg_id": qmg_id,
+        "publication_verified": True,
+        "missing_bar_semantics": "skip",
+        "coverage_semantics": "observed_admitted_runs_only",
+        "residual_semantics": "excluded_or_missing_rows_are_skipped",
+    }
+    if not isinstance(metadata, dict) or any(metadata.get(key) != value for key, value in required.items()):
+        raise _partial_error(409, "PARTIAL_PUBLICATION_UNVERIFIED", "QuoteMux partial publication 元数据未通过一致性验证", ValueError("publication metadata is incomplete or incoherent"))
+    return metadata
+
+
 def get_quotes_1m_partial(
     dataset_id: str, dataset_version: str, partial_completeness_revision: str, generation_pin: str,
     codes: str, start_time: str, end_time: str, limit: int, cursor: str = "",
-) -> tuple[list[dict[str, object]], str]:
+) -> tuple[list[dict[str, object]], dict[str, object], str]:
     """Delegate the entire partial contract to QuoteMux's public reader."""
-    if dataset_id != "future_1m_partial_s000012_quotemux":
-        raise _partial_error(409, "PARTIAL_PUBLICATION_STALE_OR_INVALID", "期货 partial publication 身份已过期或不可用", ValueError("unknown dataset_id"))
+    metadata = _partial_metadata(dataset_id, dataset_version, partial_completeness_revision, generation_pin)
     try:
         batch, next_cursor = _PUBLIC_READER.read_futures_1m_partial_page(
             codes, start_time, end_time,
@@ -88,16 +109,15 @@ def get_quotes_1m_partial(
         )
     except ValueError as exc:
         raise _partial_query_error(exc, coverage=False) from exc
-    return list(batch.as_dicts()), next_cursor or ""
+    return list(batch.as_dicts()), metadata, next_cursor or ""
 
 
 def get_quotes_1m_partial_coverage(
     dataset_id: str, dataset_version: str, partial_completeness_revision: str, generation_pin: str,
     codes: str, start_time: str, end_time: str, limit: int, cursor: str = "",
-) -> tuple[list[dict[str, object]], str]:
+) -> tuple[list[dict[str, object]], dict[str, object], str]:
     """QuoteMux owns interval identity, clipping, cursor order, and residuals."""
-    if dataset_id != "future_1m_partial_s000012_quotemux":
-        raise _partial_error(409, "PARTIAL_PUBLICATION_STALE_OR_INVALID", "期货 partial publication 身份已过期或不可用", ValueError("unknown dataset_id"))
+    metadata = _partial_metadata(dataset_id, dataset_version, partial_completeness_revision, generation_pin)
     try:
         batch, next_cursor = _PUBLIC_READER.read_futures_1m_partial_coverage_page(
             codes, start_time, end_time,
@@ -109,7 +129,7 @@ def get_quotes_1m_partial_coverage(
         )
     except ValueError as exc:
         raise _partial_query_error(exc, coverage=True) from exc
-    return list(batch.as_dicts()), next_cursor or ""
+    return list(batch.as_dicts()), metadata, next_cursor or ""
 
 
 def get_main_continuous_realtime(codes: str) -> list[FutureRealtimeQuoteItem]:

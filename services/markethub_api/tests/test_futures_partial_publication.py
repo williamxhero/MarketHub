@@ -36,6 +36,21 @@ class _Reader:
             (("ag", "SHFE", "back_adjusted_continuous", "2026-07-14 09:01:00", 1.0, 2.0, 1.0, 1.5, 3.0, None, 0.0, ["boundary-1"], ["pyramid_back_adjusted_20260714"]),),
         ), "next"
 
+    def get_futures_1m_partial_metadata(self, qmp_id: str, qmc_id: str, qmg_id: str) -> dict[str, object]:
+        self.calls.append(("metadata", (qmp_id, qmc_id, qmg_id), {}))
+        return {
+            "dataset_id": DATASET, "qmp_id": qmp_id, "qmc_id": qmc_id, "qmg_id": qmg_id,
+            "qmi_id": "qmi-v1-test", "catalog_identity": "catalog-v1-test", "publication_verified": True,
+            "timezone": "Asia/Shanghai", "interval_bounds": "inclusive_local_naive",
+            "missing_bar_semantics": "skip", "session_grid": "not_asserted_complete",
+            "open_interest": "null_or_unavailable", "sources": [],
+            "source_boundary_manifest_count": 1, "source_boundary_manifest_sha256": "a" * 64,
+            "warmup": {"ag": {"start_time": "2026-07-14 09:01:00"}},
+            "coverage_semantics": "observed_admitted_runs_only",
+            "residual_semantics": "excluded_or_missing_rows_are_skipped",
+            "lineage_limitations": ["fixture"],
+        }
+
     def read_futures_1m_partial_coverage_page(self, *args: object, **kwargs: object) -> tuple[QueryBatch, str]:
         self.calls.append(("coverage", args, kwargs))
         return QueryBatch(
@@ -48,13 +63,16 @@ def test_partial_facade_delegates_all_partial_identity_and_cursor_to_quotemux(mo
     reader = _Reader()
     monkeypatch.setattr(futures, "_PUBLIC_READER", reader)
 
-    items, cursor = futures.get_quotes_1m_partial(DATASET, QMP, QMC, QMG, "ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00", 10)
-    coverage, coverage_cursor = futures.get_quotes_1m_partial_coverage(DATASET, QMP, QMC, QMG, "ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00", 10)
+    items, metadata, cursor = futures.get_quotes_1m_partial(DATASET, QMP, QMC, QMG, "ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00", 10)
+    coverage, coverage_metadata, coverage_cursor = futures.get_quotes_1m_partial_coverage(DATASET, QMP, QMC, QMG, "ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00", 10)
 
     assert items[0]["source_keys"] == ["pyramid_back_adjusted_20260714"]
     assert coverage[0]["interval_id"] == "interval-1"
+    assert metadata["publication_verified"] and coverage_metadata["catalog_identity"] == "catalog-v1-test"
     assert (cursor, coverage_cursor) == ("next", "coverage-next")
-    for _, args, kwargs in reader.calls:
+    for kind, args, kwargs in reader.calls:
+        if kind == "metadata":
+            continue
         assert args == ("ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00")
         assert kwargs["qmp_id"] == QMP and kwargs["qmc_id"] == QMC and kwargs["qmg_id"] == QMG
 
@@ -75,14 +93,24 @@ def test_partial_error_mapping_distinguishes_stale_identity_from_bad_cursor() ->
     assert malformed.status_code == 400 and malformed.detail["code"] == "PARTIAL_COVERAGE_BAD_QUERY"
 
 
+def test_partial_facade_refuses_page_when_metadata_is_not_verified(monkeypatch: pytest.MonkeyPatch) -> None:
+    reader = _Reader()
+    monkeypatch.setattr(futures, "_PUBLIC_READER", reader)
+    monkeypatch.setattr(reader, "get_futures_1m_partial_metadata", lambda *_ids: {"publication_verified": False})
+    with pytest.raises(Exception) as raised:
+        futures.get_quotes_1m_partial(DATASET, QMP, QMC, QMG, "ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00", 10)
+    assert getattr(raised.value, "status_code") == 409
+    assert reader.calls == []
+
+
 def test_router_accepts_prefixed_quote_mux_ids_and_never_derives_complete_from_a_page() -> None:
     source = inspect.getsource(futures_router)
     assert "^qmp-v1-[0-9a-f]{64}$" in source
     assert "^qmc-v1-[0-9a-f]{64}$" in source
     assert "^qmg-v1-[0-9a-f]{64}$" in source
     assert '"complete": None' in source
-    assert '"partial_contract_satisfied": True' in source
-    assert "aggregate_source_keys" in source and "boundary_ids" in source
+    assert '"partial_contract_satisfied": metadata["publication_verified"]' in source
+    assert "page_source_keys" in source and "source_manifests" in source and "boundary_ids" in source
 
 
 def test_markethub_contains_no_partial_fact_ddl_or_reader_sql() -> None:
@@ -122,10 +150,26 @@ def test_privileged_wrapper_only_delegates_quotemux_migration_and_writes_0600_se
     # the retry must read the exact key that the wrapper originally wrote.
     publisher_env = tmp_path / "publisher.env"
     module._write_secret_env(publisher_env, (
-        "QUOTEMUX_PUBLISH_DB_USER=quotemux_futures_partial_publisher",
+        "QUOTEMUX_PUBLISH_DB_HOST=stale-host",
         "QUOTEMUX_PUBLISH_DB_PASSWORD=retry-secret",
     ))
     assert module._secret_from_env_file(publisher_env, "QUOTEMUX_PUBLISH_DB_PASSWORD") == "retry-secret"
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_HOST", "db.example")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_PORT", "5432")
+    monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_NAME", "datalake")
+    try:
+        module._write_secret_env(publisher_env, module._database_env_lines(
+            "QUOTEMUX_PUBLISH_DB", "quotemux_futures_partial_publisher", "retry-secret",
+        ))
+    finally:
+        monkeypatch.undo()
+    publisher_text = publisher_env.read_text(encoding="utf-8")
+    assert "QUOTEMUX_PUBLISH_DB_HOST=db.example" in publisher_text
+    assert "QUOTEMUX_PUBLISH_DB_PORT=5432" in publisher_text
+    assert "QUOTEMUX_PUBLISH_DB_NAME=datalake" in publisher_text
+    assert "QUOTEMUX_PUBLISH_DB_USER=quotemux_futures_partial_publisher" in publisher_text
+    assert publisher_text.endswith("QUOTEMUX_PUBLISH_DB_PASSWORD=retry-secret\n")
     if os.name != "nt":
         assert os.stat(secret_env).st_mode & 0o777 == 0o600
     source = path.read_text(encoding="utf-8").lower()
