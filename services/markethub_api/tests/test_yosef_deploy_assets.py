@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 
 DEPLOY_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "local" / "deploy_yosef_server.ps1"
 PARTIAL_RUNBOOK = Path(__file__).resolve().parents[3] / "scripts" / "local" / "run_quotemux_futures_partial_release.ps1"
+QUOTEMUX_SRC = Path(__file__).resolve().parents[4] / "s000012-quotemux" / "src"
 
 
 def test_deploy_installs_health_gated_parquet_publisher() -> None:
@@ -56,3 +60,42 @@ def test_partial_runbook_has_explicit_stages_and_deploy_never_publishes_data() -
     assert '部署完成；未执行 migration/import/partial publish。' in source
     assert 'quotemux-futures-partial-publisher.env' in source
     assert 'quotemux-futures-partial-migration.env' in source
+    assert 'RemoteEnvPath = "/data/markethub/env/markethub.env"' in source
+
+
+def test_deploy_keeps_old_service_alive_until_migration_creates_required_reader_env() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'MARKETHUB_HEALTH_URL="$health_url" "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"' in source
+    assert 'EnvironmentFile=$reader_env_path' in source
+    assert 'EnvironmentFile=-$reader_env_path' not in source
+    assert source.index('release_migration.py') < source.index('systemctl stop "$service_name.service"')
+    assert 'api_base="${health_url%/api/health}"' in source
+    assert '/api/stocks/quotes?code=600000&freq=1d&count=1' in source
+    assert 'strict futures readiness expected HTTP 409' in source
+
+
+def test_runner_arguments_match_real_quotemux_cli_contract() -> None:
+    assert QUOTEMUX_SRC.is_dir(), "focused MarketHub integration test requires sibling QuoteMux source worktree"
+    environment = os.environ | {"PYTHONPATH": str(QUOTEMUX_SRC)}
+    importer = subprocess.run(
+        [sys.executable, "-m", "quotemux.store.futures_pyramid_import", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    partial = subprocess.run(
+        [sys.executable, "-m", "quotemux.store.futures_partial_publication", "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert "--bundle BUNDLE" in importer.stdout
+    assert "--plan PLAN" in importer.stdout
+    assert "--plan PLAN" in partial.stdout
+    assert "--qmi-id" in partial.stdout
+    assert "--catalog-identity" in partial.stdout
+    assert "--manifest" not in importer.stdout + partial.stdout

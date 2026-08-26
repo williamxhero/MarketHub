@@ -65,7 +65,8 @@ async def api_future_quotes_1m(
     "/api/futures/quotes/1m/partial",
     summary="查询已发布的期货 1 分钟 partial 数据集",
     description=(
-        "只读 QuoteMux 已发布事实及其 immutable coverage identity。此接口显式返回 accepted、skipped 和 residual 区间；"
+        "只读 QuoteMux 已发布事实及其 immutable coverage identity。coverage 接口列出 accepted observed runs；"
+        "未接纳、缺失的分钟按 skip 语义排除而不逐条枚举。"
         "不改变 `/api/futures/quotes/1m` 的 strict completeness 409 合同，也不会用缺失分钟补零、插值或去重选赢家。"
     ),
 )

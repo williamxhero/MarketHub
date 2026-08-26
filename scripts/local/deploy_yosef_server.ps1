@@ -7,7 +7,8 @@ param(
     [Parameter(Mandatory = $true)][string]$HealthUrl,
     [string]$ServiceUser = "",
     [string]$QuoteMuxSourceRoot = "",
-    [string]$QuoteMuxPackagesSourceRoot = ""
+    [string]$QuoteMuxPackagesSourceRoot = "",
+    [string]$PrivilegedMigrationEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env"
 )
 
 $ErrorActionPreference = "Stop"
@@ -91,10 +92,12 @@ health_url="$8"
 market_hub_commit="$9"
 quote_mux_commit="${10}"
 quote_mux_packages_commit="${11}"
+migration_env_path="${12}"
 reader_env_path="$(dirname "$env_path")/quotemux-public-reader.env"
 release_root="$remote_root/releases/$release_name"
 previous_current="$(readlink -f "$remote_root/current" 2>/dev/null || true)"
 current_switched=0
+service_stopped=0
 env_backup="/tmp/${service_name}-${release_name}.env.bak"
 unit_path="/etc/systemd/system/$service_name.service"
 unit_backup="/tmp/${service_name}-${release_name}.service.bak"
@@ -117,20 +120,15 @@ restart_on_exit() {
   if [ "$scripts_existed" = 1 ]; then cp -a "$shared_backup/scripts" "$runtime_root/scripts"; fi
   if [ "$publisher_existed" = 1 ]; then cp -a "$shared_backup/publisher" "$runtime_root/publisher"; fi
   if [ "$governance_existed" = 1 ]; then sudo -n cp "$shared_backup/governance" /usr/local/sbin/markethub-storage-governance; else sudo -n rm -f /usr/local/sbin/markethub-storage-governance; fi
-  sudo -n systemctl daemon-reload || true
-  sudo -n systemctl restart "$service_name.service" >/dev/null 2>&1 || true
-  if ! curl -fsS "$health_url" >/dev/null; then
-    echo "rollback failed: previous release health check also failed" >&2
+  if [ "$service_stopped" = 1 ] || [ "$current_switched" = 1 ]; then
+    sudo -n systemctl daemon-reload || true
+    sudo -n systemctl restart "$service_name.service" >/dev/null 2>&1 || true
+    if ! curl -fsS "$health_url" >/dev/null; then
+      echo "rollback failed: previous release health check also failed" >&2
+    fi
   fi
 }
 trap restart_on_exit EXIT
-if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
-  # A source worker can keep Uvicorn's background task alive past TimeoutStopSec.
-  # systemd may already have killed it; make the release handoff deterministic
-  # instead of abandoning the deployment after a timed-out graceful stop.
-  sudo -n systemctl kill --kill-who=all --signal=KILL "$service_name.service" >/dev/null 2>&1 || true
-  sudo -n systemctl reset-failed "$service_name.service" >/dev/null 2>&1 || true
-fi
 
 test -f "$env_path"
 mkdir -p "$release_root" "$runtime_root"
@@ -170,9 +168,15 @@ sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/type=cache" || true
 sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/package_venvs" || true
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/install_all_packages.py"
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/bootstrap_database.py"
-# 此时旧 API 已停止，任何仍为 running 且 advisory lock 可取得的 capture
-# 都是上个进程遗留状态。通过 QuoteMux 正式维护入口修复，避免 Task Center
-# 把部署中断误判为永久运行；锁仍被占用时 fail closed，不强制覆盖活任务。
+test -f "$migration_env_path"
+set -a
+. "$migration_env_path"
+set +a
+MARKETHUB_HEALTH_URL="$health_url" "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"
+test -f "$reader_env_path"
+test "$(stat -c %a "$reader_env_path")" = 600
+# 旧 API 仍在线时进行 staged install 和 privileged migration。这里只会处理
+# 已无所属进程、且 advisory lock 可取得的历史 capture；活锁保持 fail-closed。
 capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
 printf 'capture run reconciliation: %s\n' "$capture_reconcile_json"
 # 某些构建后端会在源码包目录重新生成 egg-info；发布产物不允许带入 root-owned 构建目录。
@@ -181,6 +185,13 @@ rm -rf "$release_root/QuoteMux_Packages/build"
 rm -rf "$release_root/QuoteMux/src/quotemux.egg-info"
 rm -rf "$release_root/QuoteMux/build"
 sudo -n chown -R "$service_user:$service_group" "$release_root"
+if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
+  # A source worker can keep Uvicorn's background task alive past TimeoutStopSec.
+  # systemd may already have killed it; make the release handoff deterministic.
+  sudo -n systemctl kill --kill-who=all --signal=KILL "$service_name.service" >/dev/null 2>&1 || true
+  sudo -n systemctl reset-failed "$service_name.service" >/dev/null 2>&1 || true
+fi
+service_stopped=1
 ln -sfn "$release_root" "$remote_root/current.next"
 mv -Tf "$remote_root/current.next" "$remote_root/current"
 current_switched=1
@@ -196,11 +207,9 @@ User=$service_user
 Group=$service_group
 WorkingDirectory=$remote_root/current/MarketHub/services/markethub_api
 EnvironmentFile=$env_path
-# The QuoteMux partial reader has a distinct least-privilege credential.  The
-# leading dash keeps ordinary legacy deployments bootable until the privileged
-# QuoteMux migration has generated this 0600 file; public reads then fail
-# closed instead of borrowing the API writer identity.
-EnvironmentFile=-$reader_env_path
+# The QuoteMux partial reader has a distinct least-privilege credential and
+# is generated by the staged privileged migration before this atomic switch.
+EnvironmentFile=$reader_env_path
 Environment=MARKETHUB_RUNTIME_ROOT=$runtime_root
 Environment=MARKETHUB_DATA_ROOT=$runtime_root/store
 Environment=MARKETHUB_RELEASE=$release_name
@@ -227,6 +236,13 @@ sudo -n systemctl enable "$service_name.service"
 sudo -n systemctl restart "$service_name.service"
 for attempt in $(seq 1 20); do
   if curl -fsS "$health_url" >/dev/null; then
+    api_base="${health_url%/api/health}"
+    curl -fsS "$api_base/api/stocks/quotes?code=600000&freq=1d&count=1" >/dev/null
+    strict_status="$(curl -sS -o /tmp/markethub-strict-futures.json -w '%{http_code}' "$api_base/api/futures/quotes/1m?codes=ag,al,AP,CF,cu,hc,i,j,m,MA,ni,p,ru,sc,T,TA,TF,v,y,lh,SA,ao,si&series_type=back_adjusted_continuous&start_time=2012-01-01%2009%3A01%3A00&end_time=2026-08-11%2015%3A00%3A00")"
+    if [ "$strict_status" != 409 ]; then
+      echo "strict futures readiness expected HTTP 409, got $strict_status" >&2
+      exit 1
+    fi
     mkdir -p "$runtime_root/scripts" "$runtime_root/publisher"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update.sh" "$runtime_root/scripts/global-data-update.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update-with-health.sh" "$runtime_root/scripts/global-data-update-with-health.sh"
@@ -247,7 +263,7 @@ echo "new MarketHub release failed health check; restoring previous current rele
 exit 1
 '@
 $encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
-$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit'"
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationEnvPath'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }

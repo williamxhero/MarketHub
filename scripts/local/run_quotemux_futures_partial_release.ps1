@@ -3,14 +3,18 @@ param(
     [Parameter(Mandatory = $true)][string]$HostName,
     [string]$RemoteRoot = "/data/MarketHub2",
     [string]$RemoteRuntimeRoot = "/data/markethub",
-    [string]$RemoteEnvPath = "/data/markethub/env/markethub-api.env",
+    [string]$RemoteEnvPath = "/data/markethub/env/markethub.env",
     [string]$ServiceName = "markethub-api",
     [string]$HealthUrl = "http://127.0.0.1:8803/api/health",
     [string]$QuoteMuxSourceRoot = "",
     [string]$QuoteMuxPackagesSourceRoot = "",
     [string]$ReleaseRoot = "",
     [string]$BundlePath = "",
-    [string]$ManifestPath = "",
+    [string]$ImportPlanPath = "",
+    [string]$PartialPlanPath = "",
+    [string]$QmiId = "",
+    [string]$CatalogIdentity = "",
+    [Nullable[int]]$ExpectedGeneration = $null,
     [string]$PrivilegedEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env",
     [string]$PublisherEnvPath = "/data/markethub/env/quotemux-futures-partial-publisher.env"
 )
@@ -30,13 +34,13 @@ function Invoke-RemoteStage {
 
 if ($Action -eq "deploy") {
     $deploy = Join-Path $PSScriptRoot "deploy_yosef_server.ps1"
-    & $deploy -HostName $HostName -RemoteRoot $RemoteRoot -RemoteRuntimeRoot $RemoteRuntimeRoot -RemoteEnvPath $RemoteEnvPath -ServiceName $ServiceName -HealthUrl $HealthUrl -QuoteMuxSourceRoot $QuoteMuxSourceRoot -QuoteMuxPackagesSourceRoot $QuoteMuxPackagesSourceRoot
+    & $deploy -HostName $HostName -RemoteRoot $RemoteRoot -RemoteRuntimeRoot $RemoteRuntimeRoot -RemoteEnvPath $RemoteEnvPath -ServiceName $ServiceName -HealthUrl $HealthUrl -QuoteMuxSourceRoot $QuoteMuxSourceRoot -QuoteMuxPackagesSourceRoot $QuoteMuxPackagesSourceRoot -PrivilegedMigrationEnvPath $PrivilegedEnvPath
     if ($LASTEXITCODE -ne 0) { throw "部署失败" }
     Write-Output "部署完成；未执行 migration/import/partial publish。"
     exit 0
 }
 
-foreach ($item in @($ReleaseRoot, $RemoteRuntimeRoot, $PrivilegedEnvPath, $PublisherEnvPath, $BundlePath, $ManifestPath)) {
+foreach ($item in @($ReleaseRoot, $RemoteRuntimeRoot, $PrivilegedEnvPath, $PublisherEnvPath, $BundlePath, $ImportPlanPath, $PartialPlanPath, $QmiId, $CatalogIdentity)) {
     if (-not [string]::IsNullOrWhiteSpace($item)) { Assert-RemoteToken $item "remote path" }
 }
 if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) { throw "非 deploy 阶段必须指定 -ReleaseRoot" }
@@ -48,23 +52,25 @@ switch ($Action) {
         Invoke-RemoteStage "set -euo pipefail; set -a; . '$PrivilegedEnvPath'; set +a; $base '$ReleaseRoot/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py'"
     }
     "classify" {
-        if (!$BundlePath) { throw "classify requires -BundlePath" }
-        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_pyramid_import classify --bundle '$BundlePath'"
+        if (!$BundlePath -or !$ImportPlanPath) { throw "classify requires -BundlePath and -ImportPlanPath" }
+        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_pyramid_import classify --bundle '$BundlePath' --plan '$ImportPlanPath'"
     }
     "import" {
-        if (!$BundlePath) { throw "import requires -BundlePath" }
-        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_pyramid_import publish --bundle '$BundlePath'"
+        if (!$BundlePath -or !$ImportPlanPath) { throw "import requires -BundlePath and -ImportPlanPath" }
+        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_pyramid_import publish --bundle '$BundlePath' --plan '$ImportPlanPath'"
     }
     "partial-plan" {
-        if (!$ManifestPath) { throw "partial-plan requires -ManifestPath" }
-        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_partial_publication plan --manifest '$ManifestPath'"
+        if (!$PartialPlanPath -or !$QmiId) { throw "partial-plan requires -PartialPlanPath and -QmiId" }
+        $generationArgument = if ($null -eq $ExpectedGeneration) { "" } else { " --expected-generation $ExpectedGeneration" }
+        $catalogArgument = if ([string]::IsNullOrWhiteSpace($CatalogIdentity)) { "" } else { " --catalog-identity '$CatalogIdentity'" }
+        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_partial_publication plan --qmi-id '$QmiId'$catalogArgument$generationArgument --plan '$PartialPlanPath'"
     }
     "partial-publish" {
-        if (!$ManifestPath) { throw "partial-publish requires -ManifestPath" }
-        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_partial_publication publish --manifest '$ManifestPath'"
+        if (!$PartialPlanPath) { throw "partial-publish requires -PartialPlanPath" }
+        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_partial_publication publish --plan '$PartialPlanPath'"
     }
     "verify" {
-        if (!$ManifestPath) { throw "verify requires -ManifestPath" }
-        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_partial_publication verify --manifest '$ManifestPath'"
+        if (!$PartialPlanPath) { throw "verify requires -PartialPlanPath" }
+        Invoke-RemoteStage "set -euo pipefail; set -a; . '$PublisherEnvPath'; set +a; $base -m quotemux.store.futures_partial_publication verify --plan '$PartialPlanPath'"
     }
 }

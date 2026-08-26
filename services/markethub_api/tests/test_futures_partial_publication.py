@@ -177,7 +177,8 @@ def test_privileged_wrapper_only_delegates_quotemux_migration_and_writes_0600_se
     deploy_script = (SERVICE_ROOT.parents[1] / "scripts" / "local" / "deploy_yosef_server.ps1").read_text(encoding="utf-8").lower()
     assert "provision_futures_partial_roles" in source and "os.chmod(path, 0o600)" in source
     assert "quotemux_publish_db" in source and "quotemux_read_db" in source
-    assert "environmentfile=-$reader_env_path" in deploy_script
+    assert "environmentfile=$reader_env_path" in deploy_script
+    assert "environmentfile=-$reader_env_path" not in deploy_script
     assert "quotemux-futures-partial-publisher.env" not in deploy_script
 
 
