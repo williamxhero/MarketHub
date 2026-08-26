@@ -36,7 +36,7 @@ class _Reader:
             (("ag", "SHFE", "back_adjusted_continuous", "2026-07-14 09:01:00", 1.0, 2.0, 1.0, 1.5, 3.0, None, 0.0, ["boundary-1"], ["pyramid_back_adjusted_20260714"]),),
         ), "next"
 
-    def get_futures_1m_partial_metadata(self, qmp_id: str, qmc_id: str, qmg_id: str) -> dict[str, object]:
+    def get_futures_1m_partial_metadata(self, *, qmp_id: str, qmc_id: str, qmg_id: str) -> dict[str, object]:
         self.calls.append(("metadata", (qmp_id, qmc_id, qmg_id), {}))
         return {
             "dataset_id": DATASET, "qmp_id": qmp_id, "qmc_id": qmc_id, "qmg_id": qmg_id,
@@ -96,7 +96,7 @@ def test_partial_error_mapping_distinguishes_stale_identity_from_bad_cursor() ->
 def test_partial_facade_refuses_page_when_metadata_is_not_verified(monkeypatch: pytest.MonkeyPatch) -> None:
     reader = _Reader()
     monkeypatch.setattr(futures, "_PUBLIC_READER", reader)
-    monkeypatch.setattr(reader, "get_futures_1m_partial_metadata", lambda *_ids: {"publication_verified": False})
+    monkeypatch.setattr(reader, "get_futures_1m_partial_metadata", lambda **_ids: {"publication_verified": False})
     with pytest.raises(Exception) as raised:
         futures.get_quotes_1m_partial(DATASET, QMP, QMC, QMG, "ag", "2026-07-14 09:01:00", "2026-07-14 09:01:00", 10)
     assert getattr(raised.value, "status_code") == 409

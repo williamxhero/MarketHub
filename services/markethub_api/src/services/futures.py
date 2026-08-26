@@ -74,7 +74,7 @@ def _partial_metadata(dataset_id: str, qmp_id: str, qmc_id: str, qmg_id: str) ->
     if dataset_id != "future_1m_partial_s000012_quotemux":
         raise _partial_error(409, "PARTIAL_PUBLICATION_STALE_OR_INVALID", "期货 partial publication 身份已过期或不可用", ValueError("unknown dataset_id"))
     try:
-        metadata = _PUBLIC_READER.get_futures_1m_partial_metadata(qmp_id, qmc_id, qmg_id)
+        metadata = _PUBLIC_READER.get_futures_1m_partial_metadata(qmp_id=qmp_id, qmc_id=qmc_id, qmg_id=qmg_id)
     except ValueError as exc:
         raise _partial_query_error(exc, coverage=False) from exc
     required = {
