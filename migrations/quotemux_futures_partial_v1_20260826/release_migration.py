@@ -101,6 +101,39 @@ def _health_snapshot() -> dict[str, object]:
     return {"release": os.getenv("MARKETHUB_RELEASE", ""), "data_version": payload.get("data_version", "")}
 
 
+def _probe_role(user: str, password: str, *, reader: bool) -> None:
+    """Prove the newly issued credential and its non-mutating ACL before use."""
+    connection = psycopg.connect(
+        host=_required("HOST"), port=int(_required("PORT")), dbname=_required("NAME"),
+        user=user, password=password, connect_timeout=10,
+        application_name="markethub-quotemux-futures-partial-role-probe",
+    )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("begin read only")
+            cursor.execute(
+                "select current_user,has_table_privilege(current_user,'fact.future_bar_1m','select'),"
+                "has_table_privilege(current_user,'fact.future_bar_1m','insert'),"
+                "has_table_privilege(current_user,'fact.future_bar_1m','update'),"
+                "has_table_privilege(current_user,'fact.future_bar_1m','delete'),"
+                "has_table_privilege(current_user,'fact.future_bar_1m','truncate')"
+            )
+            row = cursor.fetchone()
+        connection.rollback()
+    finally:
+        connection.close()
+    if row is None:
+        raise RuntimeError("QuoteMux role privilege probe returned no row")
+    actual_user, can_select, can_insert, can_update, can_delete, can_truncate = row
+    expected_user = "quotemux_public_reader" if reader else "quotemux_futures_partial_publisher"
+    if actual_user != expected_user or not bool(can_select) or bool(can_update) or bool(can_delete) or bool(can_truncate):
+        raise RuntimeError("QuoteMux role probe found unexpected identity or write privilege")
+    if reader and bool(can_insert):
+        raise RuntimeError("QuoteMux public reader unexpectedly has INSERT")
+    if not reader and not bool(can_insert):
+        raise RuntimeError("QuoteMux partial publisher lacks required INSERT")
+
+
 def main() -> int:
     publisher_env = _env_path("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_PUBLISHER_ENV", _PUBLISHER_ENV)
     reader_env = _env_path("MARKETHUB_QUOTEMUX_PUBLIC_READER_ENV", _READER_ENV)
@@ -125,6 +158,8 @@ def main() -> int:
         provision_futures_partial_roles(publisher_secret, reader_secret, connection_factory=lambda: connection)
     finally:
         connection.close()
+    _probe_role("quotemux_futures_partial_publisher", publisher_secret, reader=False)
+    _probe_role("quotemux_public_reader", reader_secret, reader=True)
     after = _health_snapshot()
     print(json.dumps({"status": "provisioned", "reader_env": str(reader_env), "publisher_env": str(publisher_env), "health_before": before, "health_after": after}, ensure_ascii=False, sort_keys=True))
     return 0

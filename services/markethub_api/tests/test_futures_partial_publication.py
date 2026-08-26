@@ -204,7 +204,7 @@ def test_privileged_wrapper_uses_tuple_rows_for_quotemux_role_provision(monkeypa
         def fetchone(self): return ("datalake",)
 
     class Connection:
-        def cursor(self): return Cursor()
+        def cursor(self, **_kwargs: object): return Cursor()
         def commit(self): return None
         def rollback(self): return None
 
@@ -212,3 +212,32 @@ def test_privileged_wrapper_uses_tuple_rows_for_quotemux_role_provision(monkeypa
     # indexes current_database()[0], so a dict-row migration connection would
     # have failed before any live role can be safely created.
     provision_futures_partial_roles("publisher", "reader", connection_factory=Connection)
+
+
+def test_privileged_wrapper_probes_publisher_and_reader_without_writing(monkeypatch: pytest.MonkeyPatch) -> None:
+    path = SERVICE_ROOT.parents[1] / "migrations" / "quotemux_futures_partial_v1_20260826" / "release_migration.py"
+    spec = importlib.util.spec_from_file_location("partial_release_migration_role_probe", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for key, value in (("HOST", "db.example"), ("PORT", "5432"), ("NAME", "datalake")):
+        monkeypatch.setenv("MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_" + key, value)
+    executed: list[str] = []
+
+    class Cursor:
+        def __init__(self, user: str) -> None: self.user = user
+        def __enter__(self): return self
+        def __exit__(self, *_args: object): return None
+        def execute(self, query: str): executed.append(query)
+        def fetchone(self): return (self.user, True, self.user.endswith("publisher"), False, False, False)
+
+    class Connection:
+        def __init__(self, user: str) -> None: self.user = user
+        def cursor(self): return Cursor(self.user)
+        def rollback(self): return None
+        def close(self): return None
+
+    monkeypatch.setattr(module.psycopg, "connect", lambda **kwargs: Connection(str(kwargs["user"])))
+    module._probe_role("quotemux_futures_partial_publisher", "publisher-secret", reader=False)
+    module._probe_role("quotemux_public_reader", "reader-secret", reader=True)
+    assert executed.count("begin read only") == 2
