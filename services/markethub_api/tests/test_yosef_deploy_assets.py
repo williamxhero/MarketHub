@@ -121,6 +121,23 @@ def test_deploy_waits_for_live_capture_locks_without_overriding_them() -> None:
     assert 'systemctl stop' not in capture_gate
 
 
+def test_deploy_requires_explicit_authorization_before_stopping_for_capture_drain() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    runner = PARTIAL_RUNBOOK.read_text(encoding="utf-8")
+
+    assert '[switch]$AllowCaptureDrainServiceStop' in source
+    assert '$captureDrainServiceStopFlag = if ($AllowCaptureDrainServiceStop) { "1" } else { "0" }' in source
+    assert 'if [ "$allow_capture_drain_service_stop" != 1 ]; then' in source
+    assert 'operator-authorized controlled service stop begins' in source
+    assert 'if ! sudo -n systemctl stop "$service_name.service"; then' in source
+    assert 'capture locks persisted after controlled service stop; restoring old release' in source
+    maintenance_gate = source[source.index('capture drain timeout reached'):source.index('rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"')]
+    assert 'systemctl kill' not in maintenance_gate
+    assert 'pg_terminate' not in source
+    assert '[switch]$AllowCaptureDrainServiceStop' in runner
+    assert '-AllowCaptureDrainServiceStop:$AllowCaptureDrainServiceStop' in runner
+
+
 def test_runner_arguments_match_real_quotemux_cli_contract() -> None:
     environment = os.environ | {"PYTHONPATH": str(_quotemux_source_root())}
     importer = subprocess.run(

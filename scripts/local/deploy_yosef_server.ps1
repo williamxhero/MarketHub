@@ -11,7 +11,8 @@ param(
     [ValidateSet("peer", "env")][string]$PrivilegedMigrationMode = "peer",
     [string]$PrivilegedMigrationEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env",
     [ValidateRange(30, 1800)][int]$CaptureDrainTimeoutSeconds = 300,
-    [ValidateRange(1, 60)][int]$CaptureDrainRetrySeconds = 10
+    [ValidateRange(1, 60)][int]$CaptureDrainRetrySeconds = 10,
+    [switch]$AllowCaptureDrainServiceStop
 )
 
 $ErrorActionPreference = "Stop"
@@ -106,6 +107,7 @@ migration_mode="${12}"
 migration_env_path="${13}"
 capture_drain_timeout_seconds="${14}"
 capture_drain_retry_seconds="${15}"
+allow_capture_drain_service_stop="${16}"
 reader_env_path="$(dirname "$env_path")/quotemux-public-reader.env"
 publisher_env_path="$(dirname "$env_path")/quotemux-futures-partial-publisher.env"
 release_root="$remote_root/releases/$release_name"
@@ -246,23 +248,47 @@ test -f "$publisher_env_path"
 test "$(stat -c %a "$publisher_env_path")" = 600
 test "$(stat -c %U "$publisher_env_path")" = "$service_user"
 test "$(stat -c %G "$publisher_env_path")" = "$service_group"
-# 旧 API 仍在线时进行 staged install 和 privileged migration。只等待当前
-# 合法持锁 capture 自行完成；到时仍有锁则 fail-closed，不 kill、不覆盖。
-capture_drain_deadline=$((SECONDS + capture_drain_timeout_seconds))
-while true; do
+# 旧 API 仍在线时进行 staged install 和 privileged migration。先等待当前
+# 合法持锁 capture 自行完成；默认到时仍有锁就 fail-closed。
+reconcile_capture_once() {
   set +e
   capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
   capture_reconcile_status=$?
   set -e
   printf 'capture run reconciliation: %s\n' "$capture_reconcile_json"
-  if [ "$capture_reconcile_status" = 0 ]; then break; fi
+  return "$capture_reconcile_status"
+}
+capture_drain_deadline=$((SECONDS + capture_drain_timeout_seconds))
+while true; do
+  if reconcile_capture_once; then break; else capture_reconcile_status=$?; fi
   if [ "$capture_reconcile_status" != 20 ]; then
     echo "capture reconciliation failed with status $capture_reconcile_status" >&2
     exit "$capture_reconcile_status"
   fi
   if [ "$SECONDS" -ge "$capture_drain_deadline" ]; then
-    echo "active QuoteMux capture locks did not drain within ${capture_drain_timeout_seconds}s; keeping old release active" >&2
-    exit 20
+    if [ "$allow_capture_drain_service_stop" != 1 ]; then
+      echo "active QuoteMux capture locks did not drain within ${capture_drain_timeout_seconds}s; keeping old release active" >&2
+      exit 20
+    fi
+    echo "capture drain timeout reached; operator-authorized controlled service stop begins" >&2
+    if ! sudo -n systemctl stop "$service_name.service"; then
+      echo "controlled service stop failed; keeping old release active" >&2
+      exit 1
+    fi
+    service_stopped=1
+    capture_post_stop_deadline=$((SECONDS + capture_drain_timeout_seconds))
+    while true; do
+      if reconcile_capture_once; then break 2; else capture_reconcile_status=$?; fi
+      if [ "$capture_reconcile_status" != 20 ]; then
+        echo "post-stop capture reconciliation failed with status $capture_reconcile_status" >&2
+        exit "$capture_reconcile_status"
+      fi
+      if [ "$SECONDS" -ge "$capture_post_stop_deadline" ]; then
+        echo "capture locks persisted after controlled service stop; restoring old release" >&2
+        exit 20
+      fi
+      sleep "$capture_drain_retry_seconds"
+    done
   fi
   sleep "$capture_drain_retry_seconds"
 done
@@ -272,13 +298,15 @@ rm -rf "$release_root/QuoteMux_Packages/build"
 rm -rf "$release_root/QuoteMux/src/quotemux.egg-info"
 rm -rf "$release_root/QuoteMux/build"
 sudo -n chown -R "$service_user:$service_group" "$release_root"
-if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
-  # A source worker can keep Uvicorn's background task alive past TimeoutStopSec.
-  # systemd may already have killed it; make the release handoff deterministic.
-  sudo -n systemctl kill --kill-who=all --signal=KILL "$service_name.service" >/dev/null 2>&1 || true
-  sudo -n systemctl reset-failed "$service_name.service" >/dev/null 2>&1 || true
+if [ "$service_stopped" != 1 ]; then
+  if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
+    # A source worker can keep Uvicorn's background task alive past TimeoutStopSec.
+    # systemd may already have killed it; make the release handoff deterministic.
+    sudo -n systemctl kill --kill-who=all --signal=KILL "$service_name.service" >/dev/null 2>&1 || true
+    sudo -n systemctl reset-failed "$service_name.service" >/dev/null 2>&1 || true
+  fi
+  service_stopped=1
 fi
-service_stopped=1
 ln -sfn "$release_root" "$remote_root/current.next"
 mv -Tf "$remote_root/current.next" "$remote_root/current"
 current_switched=1
@@ -352,7 +380,8 @@ echo "new MarketHub release failed health check; restoring previous current rele
 exit 1
 '@
 $encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
-$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath' '$CaptureDrainTimeoutSeconds' '$CaptureDrainRetrySeconds'"
+$captureDrainServiceStopFlag = if ($AllowCaptureDrainServiceStop) { "1" } else { "0" }
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath' '$CaptureDrainTimeoutSeconds' '$CaptureDrainRetrySeconds' '$captureDrainServiceStopFlag'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }
