@@ -36,7 +36,7 @@ if ($Action -eq "deploy") {
     $deploy = Join-Path $PSScriptRoot "deploy_yosef_server.ps1"
     & $deploy -HostName $HostName -RemoteRoot $RemoteRoot -RemoteRuntimeRoot $RemoteRuntimeRoot -RemoteEnvPath $RemoteEnvPath -ServiceName $ServiceName -HealthUrl $HealthUrl -QuoteMuxSourceRoot $QuoteMuxSourceRoot -QuoteMuxPackagesSourceRoot $QuoteMuxPackagesSourceRoot -PrivilegedMigrationEnvPath $PrivilegedEnvPath
     if ($LASTEXITCODE -ne 0) { throw "部署失败" }
-    Write-Output "部署完成；未执行 migration/import/partial publish。"
+    Write-Output "部署完成；staged migration/role provisioning 已完成，未执行数据 import 或 partial publish。"
     exit 0
 }
 

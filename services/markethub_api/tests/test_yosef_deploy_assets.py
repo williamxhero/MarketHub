@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 DEPLOY_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "local" / "deploy_yosef_server.ps1"
 PARTIAL_RUNBOOK = Path(__file__).resolve().parents[3] / "scripts" / "local" / "run_quotemux_futures_partial_release.ps1"
-QUOTEMUX_SRC = Path(__file__).resolve().parents[4] / "s000012-quotemux" / "src"
+
+
+def _quotemux_source_root() -> Path:
+    spec = importlib.util.find_spec("quotemux")
+    if spec is None or spec.origin is None:
+        pytest.skip("QuoteMux is not installed; CLI contract test requires the release dependency")
+    return Path(spec.origin).resolve().parents[1]
 
 
 def test_deploy_installs_health_gated_parquet_publisher() -> None:
@@ -47,8 +56,9 @@ def test_deploy_accepts_a_pinned_quotemux_worktree_and_records_release_inputs() 
 
     assert "[string]$QuoteMuxSourceRoot" in source
     assert "Get-PinnedCommit" in source
-    assert '"部署输入仓库必须是干净的已提交工作树' in source
-    assert 'Join-Path $stagingRoot "QuoteMux"' in source
+    assert '"部署输入仓库不能有已跟踪的未提交改动' in source
+    assert 'Invoke-NativeCommand -FilePath "git" -Arguments @("-C", $source.Path, "archive"' in source
+    assert 'Copy-Item -LiteralPath $quoteMuxRoot' not in source
     assert 'release-inputs.json' in source
     assert "'$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit'" in source
 
@@ -57,7 +67,7 @@ def test_partial_runbook_has_explicit_stages_and_deploy_never_publishes_data() -
     source = PARTIAL_RUNBOOK.read_text(encoding="utf-8")
 
     assert 'ValidateSet("deploy", "migrate", "classify", "import", "partial-plan", "partial-publish", "verify")' in source
-    assert '部署完成；未执行 migration/import/partial publish。' in source
+    assert 'staged migration/role provisioning 已完成，未执行数据 import 或 partial publish。' in source
     assert 'quotemux-futures-partial-publisher.env' in source
     assert 'quotemux-futures-partial-migration.env' in source
     assert 'RemoteEnvPath = "/data/markethub/env/markethub.env"' in source
@@ -71,13 +81,14 @@ def test_deploy_keeps_old_service_alive_until_migration_creates_required_reader_
     assert 'EnvironmentFile=-$reader_env_path' not in source
     assert source.index('release_migration.py') < source.index('systemctl stop "$service_name.service"')
     assert 'api_base="${health_url%/api/health}"' in source
-    assert '/api/stocks/quotes?code=600000&freq=1d&count=1' in source
+    assert 'json.load(sys.stdin).get("data_version")' in source
+    assert 'urllib.parse.quote(value, safe="")' in source
+    assert '/api/stocks/quotes?code=600000&freq=1d&count=1&data_version=$stock_data_version' in source
     assert 'strict futures readiness expected HTTP 409' in source
 
 
 def test_runner_arguments_match_real_quotemux_cli_contract() -> None:
-    assert QUOTEMUX_SRC.is_dir(), "focused MarketHub integration test requires sibling QuoteMux source worktree"
-    environment = os.environ | {"PYTHONPATH": str(QUOTEMUX_SRC)}
+    environment = os.environ | {"PYTHONPATH": str(_quotemux_source_root())}
     importer = subprocess.run(
         [sys.executable, "-m", "quotemux.store.futures_pyramid_import", "--help"],
         check=True,
@@ -99,3 +110,13 @@ def test_runner_arguments_match_real_quotemux_cli_contract() -> None:
     assert "--qmi-id" in partial.stdout
     assert "--catalog-identity" in partial.stdout
     assert "--manifest" not in importer.stdout + partial.stdout
+
+
+def test_stock_smoke_uses_the_health_discovered_required_data_version() -> None:
+    from main import app
+
+    parameters = app.openapi()["paths"]["/api/stocks/quotes"]["get"]["parameters"]
+    data_version = next(parameter for parameter in parameters if parameter["name"] == "data_version")
+
+    assert data_version["required"] is True
+    assert data_version["schema"]["minLength"] == 1

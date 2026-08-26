@@ -25,9 +25,9 @@ function Invoke-NativeCommand {
 function Get-PinnedCommit {
     param([Parameter(Mandatory = $true)][string]$RepositoryPath)
 
-    $status = (& git -C $RepositoryPath status --porcelain=v1) -join "`n"
-    if (-not [string]::IsNullOrWhiteSpace($status)) {
-        throw "部署输入仓库必须是干净的已提交工作树: $RepositoryPath"
+    $trackedChanges = @((& git -C $RepositoryPath status --porcelain=v1) | Where-Object { $_ -notmatch '^\?\?' })
+    if ($trackedChanges.Count -ne 0) {
+        throw "部署输入仓库不能有已跟踪的未提交改动: $RepositoryPath"
     }
     $commit = ((& git -C $RepositoryPath rev-parse HEAD) -replace "`0", "").Trim()
     if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
@@ -61,9 +61,16 @@ $quoteMuxPackagesCommit = Get-PinnedCommit $quoteMuxPackagesRoot
 $stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) "$releaseName-source"
 New-Item -ItemType Directory -Path $stagingRoot -ErrorAction Stop | Out-Null
 try {
-    Copy-Item -LiteralPath $marketHubRoot -Destination (Join-Path $stagingRoot "MarketHub") -Recurse -Force
-    Copy-Item -LiteralPath $quoteMuxRoot -Destination (Join-Path $stagingRoot "QuoteMux") -Recurse -Force
-    Copy-Item -LiteralPath $quoteMuxPackagesRoot -Destination (Join-Path $stagingRoot "QuoteMux_Packages") -Recurse -Force
+    foreach ($source in @(
+        @{ Path = $marketHubRoot; Commit = $marketHubCommit; Name = "MarketHub" },
+        @{ Path = $quoteMuxRoot; Commit = $quoteMuxCommit; Name = "QuoteMux" },
+        @{ Path = $quoteMuxPackagesRoot; Commit = $quoteMuxPackagesCommit; Name = "QuoteMux_Packages" }
+    )) {
+        $sourceArchive = Join-Path $stagingRoot ("$($source.Name).tar")
+        Invoke-NativeCommand -FilePath "git" -Arguments @("-C", $source.Path, "archive", "--format=tar", "--prefix=$($source.Name)/", "--output=$sourceArchive", $source.Commit)
+        Invoke-NativeCommand -FilePath "tar.exe" -Arguments @("-xf", $sourceArchive, "-C", $stagingRoot)
+        Remove-Item -LiteralPath $sourceArchive -Force
+    }
     Invoke-NativeCommand -FilePath "tar.exe" -Arguments @(
         "-czf", $archivePath,
         "--exclude=.git", "--exclude=.pytest_cache", "--exclude=__pycache__",
@@ -237,7 +244,9 @@ sudo -n systemctl restart "$service_name.service"
 for attempt in $(seq 1 20); do
   if curl -fsS "$health_url" >/dev/null; then
     api_base="${health_url%/api/health}"
-    curl -fsS "$api_base/api/stocks/quotes?code=600000&freq=1d&count=1" >/dev/null
+    health_payload="$(curl -fsS "$health_url")"
+    stock_data_version="$(printf '%s' "$health_payload" | "$runtime_root/.venv/bin/python" -c 'import json, sys, urllib.parse; value = json.load(sys.stdin).get("data_version"); assert isinstance(value, str) and value; print(urllib.parse.quote(value, safe=""))')"
+    curl -fsS "$api_base/api/stocks/quotes?code=600000&freq=1d&count=1&data_version=$stock_data_version" >/dev/null
     strict_status="$(curl -sS -o /tmp/markethub-strict-futures.json -w '%{http_code}' "$api_base/api/futures/quotes/1m?codes=ag,al,AP,CF,cu,hc,i,j,m,MA,ni,p,ru,sc,T,TA,TF,v,y,lh,SA,ao,si&series_type=back_adjusted_continuous&start_time=2012-01-01%2009%3A01%3A00&end_time=2026-08-11%2015%3A00%3A00")"
     if [ "$strict_status" != 409 ]; then
       echo "strict futures readiness expected HTTP 409, got $strict_status" >&2
