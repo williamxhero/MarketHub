@@ -44,7 +44,7 @@ class _Reader:
             "timezone": "Asia/Shanghai", "interval_bounds": "inclusive_local_naive",
             "missing_bar_semantics": "skip", "session_grid": "not_asserted_complete",
             "open_interest": "null_or_unavailable", "sources": [],
-            "source_boundary_manifest_count": 1, "source_boundary_manifest_sha256": "a" * 64,
+            "source_boundary_manifest": {"count": 1, "sha256": "a" * 64},
             "warmup": {"ag": {"start_time": "2026-07-14 09:01:00"}},
             "coverage_semantics": "observed_admitted_runs_only",
             "residual_semantics": "excluded_or_missing_rows_are_skipped",
