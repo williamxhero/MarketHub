@@ -8,7 +8,7 @@ from quotemux.models import ApiError
 from quotemux.futures import FutureContractCatalogIncompleteError
 from platform_models import FutureContractCatalogItem, FutureContractRealtimeQuoteItem, FutureMainContractMappingItem
 
-from data_threads import run_data_task
+from data_threads import run_data_task, run_futures_partial_task
 from services import futures
 from services.dataset_versions import require_dataset_version
 
@@ -82,7 +82,7 @@ async def api_future_quotes_1m_partial(
     limit: int = Query(10_000, ge=1, le=100_000),
     cursor: str = Query(""),
 ) -> dict[str, object]:
-    items, metadata, next_cursor = await run_data_task(
+    items, metadata, next_cursor = await run_futures_partial_task(
         futures.get_quotes_1m_partial, dataset_id, dataset_version, partial_completeness_revision,
         generation_pin, codes, start_time, end_time, limit, cursor,
     )
@@ -135,7 +135,7 @@ async def api_future_quotes_1m_partial_coverage(
     limit: int = Query(500, ge=1, le=10_000),
     cursor: str = Query(""),
 ) -> dict[str, object]:
-    items, metadata, next_cursor = await run_data_task(
+    items, metadata, next_cursor = await run_futures_partial_task(
         futures.get_quotes_1m_partial_coverage, dataset_id, dataset_version, partial_completeness_revision,
         generation_pin, codes, start_time, end_time, limit, cursor,
     )

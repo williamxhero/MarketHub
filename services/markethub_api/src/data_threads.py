@@ -24,6 +24,7 @@ def _positive_int_env(name: str, default: int) -> int:
 
 DATA_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_DATA_ROUTE_TOKENS", 64)
 QUOTE_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_QUOTE_ROUTE_TOKENS", 6)
+FUTURES_PARTIAL_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_FUTURES_PARTIAL_ROUTE_TOKENS", 1)
 QUOTE_ROUTE_POLL_SECONDS = 0.2
 _RESULT = TypeVar("_RESULT")
 
@@ -31,6 +32,9 @@ _RESULT = TypeVar("_RESULT")
 DATA_ROUTE_LIMITER = anyio.CapacityLimiter(DATA_ROUTE_THREAD_TOKENS)
 # 行情接口可能触发长区间补洞和大批量查询，必须和其它数据接口隔离。
 QUOTE_ROUTE_LIMITER = anyio.CapacityLimiter(QUOTE_ROUTE_THREAD_TOKENS)
+# Partial bars 和 coverage 共用 QuoteMux public reader/DB pool。同步 psycopg
+# 查询不能在 HTTP 客户端断开后可靠取消，因此超额请求必须排队而不能开始新的读取。
+FUTURES_PARTIAL_ROUTE_LIMITER = anyio.CapacityLimiter(FUTURES_PARTIAL_ROUTE_THREAD_TOKENS)
 _QUOTE_TASKS: set[asyncio.Task[object]] = set()
 
 
@@ -61,6 +65,17 @@ async def run_data_task(func: Callable[..., _RESULT], *args: object) -> _RESULT:
         return _strict_public_call(func, args)
 
     return await anyio.to_thread.run_sync(execute, limiter=DATA_ROUTE_LIMITER)
+
+
+async def run_futures_partial_task(func: Callable[..., _RESULT], *args: object) -> _RESULT:
+    """Run a partial bars or coverage read within the shared DB-read budget."""
+    queued_at = time.monotonic()
+
+    def execute() -> _RESULT:
+        record_stage_ms("queue", (time.monotonic() - queued_at) * 1_000)
+        return _strict_public_call(func, args)
+
+    return await anyio.to_thread.run_sync(execute, limiter=FUTURES_PARTIAL_ROUTE_LIMITER)
 
 
 async def run_quote_task(

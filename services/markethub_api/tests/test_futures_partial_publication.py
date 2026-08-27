@@ -104,7 +104,7 @@ def test_partial_router_serializes_terminal_cursor_as_json_null_and_passes_opaqu
     async def run_inline(task, *args):
         return task(*args)
 
-    monkeypatch.setattr(futures_router, "run_data_task", run_inline)
+    monkeypatch.setattr(futures_router, "run_futures_partial_task", run_inline)
     params = {
         "dataset_id": DATASET,
         "dataset_version": QMP,
