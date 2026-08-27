@@ -317,8 +317,8 @@ while true; do
 done
 # Confirm the old release is healthy before deliberately stopping it; post-start
 # health is checked after the atomic current switch below.
-curl -fsS "$health_url" >/dev/null
 if [ "$service_stopped" != 1 ]; then
+  curl -fsS "$health_url" >/dev/null
   if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
     echo "controlled service stop failed before privileged migration; restoring old release" >&2
     exit 1

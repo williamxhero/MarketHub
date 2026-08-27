@@ -94,6 +94,16 @@ def test_deploy_drains_then_stops_before_migration_creates_required_reader_env()
     assert 'strict futures readiness expected HTTP 409' in source
 
 
+def test_authorized_capture_stop_skips_old_service_health_check_before_migration() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    old_health_check = source.index('curl -fsS "$health_url" >/dev/null\n  if ! sudo -n systemctl stop')
+    migration_run = source.index('run_privileged_migration\n#')
+
+    assert 'if [ "$service_stopped" != 1 ]; then\n  curl -fsS "$health_url" >/dev/null' in source
+    assert old_health_check < migration_run
+
+
 def test_deploy_peer_migration_never_requires_or_persists_admin_password() -> None:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
