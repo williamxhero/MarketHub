@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
+import logging
 import os
 import shutil
+import time
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -20,6 +23,8 @@ from services.daily_coverage_read_model import ensure_current_stock_daily_covera
 
 DATASET_ID = "stock_daily_1d"
 SCHEMA_VERSION = "markethub-stock-daily-parquet-v1"
+PUBLISH_LOCK_NAME = "markethub-stock-daily-parquet-publish"
+LOGGER = logging.getLogger(__name__)
 
 BARS_SCHEMA = pa.schema(
     [
@@ -53,7 +58,20 @@ with catalog as materialized (
     where (case when market='BJSE' then greatest(listed_date,date '2021-11-15') else listed_date end) < %s::date
       and (delisted_date is null or delisted_date > %s::date)
       and (case when market='BJSE' then greatest(listed_date,date '2021-11-15') else listed_date end) < coalesce(delisted_date,date 'infinity')
-      and ((market='SHSE' and left(code,1)='6') or (market='SZSE' and left(code,1) in ('0','3')) or (market='BJSE' and left(code,1) in ('4','8','9')))
+      and (
+        (market='SHSE' and left(code,1)='6')
+        or (market='SZSE' and left(code,1) in ('0','3'))
+        or (
+            market='BJSE'
+            and (
+                left(code,3)='920'
+                or exists (
+                    select 1 from ref.stock_code_migration migration
+                    where migration.old_market='BJSE' and migration.old_code=ref.stock.code
+                )
+            )
+        )
+      )
 ), open_dates as materialized (
     select trade_date from ref.trade_calendar
     where exchange='SHSE' and is_open and trade_date >= %s::date and trade_date < %s::date
@@ -89,7 +107,20 @@ select b.market,b.code,b.trade_date,b.open,b.high,b.low,b.close,b.volume,b.amoun
 from fact.stock_daily_1d b
 join catalog s on s.market=b.market and s.code=b.code
 where b.trade_date >= %s::date and b.trade_date < %s::date
-  and ((b.market='SHSE' and left(b.code,1)='6') or (b.market='SZSE' and left(b.code,1) in ('0','3')) or (b.market='BJSE' and left(b.code,1) in ('4','8','9')))
+  and (
+    (b.market='SHSE' and left(b.code,1)='6')
+    or (b.market='SZSE' and left(b.code,1) in ('0','3'))
+    or (
+        b.market='BJSE'
+        and (
+            left(b.code,3)='920'
+            or exists (
+                select 1 from ref.stock_code_migration migration
+                where migration.old_market='BJSE' and migration.old_code=b.code
+            )
+        )
+    )
+  )
   and (
     coalesce(b.is_suspended,false)=true
     or (b.open is not null and b.high is not null and b.low is not null and b.close is not null and b.volume is not null)
@@ -111,6 +142,40 @@ def _connect(*, autocommit: bool = False) -> psycopg.Connection[Any]:
         password=os.environ["MARKETHUB_DB_PASSWORD"], connect_timeout=10,
         row_factory=dict_row, autocommit=autocommit, application_name="markethub-stock-daily-publisher",
     )
+
+
+def _publish_lock_timeout_seconds() -> float:
+    timeout = float(os.getenv("MARKETHUB_PARQUET_PUBLISH_LOCK_TIMEOUT_SECONDS", "60"))
+    if timeout < 0 or timeout > 3600:
+        raise ValueError("MARKETHUB_PARQUET_PUBLISH_LOCK_TIMEOUT_SECONDS must be between 0 and 3600")
+    return timeout
+
+
+@contextmanager
+def _publication_lock() -> Iterator[None]:
+    timeout = _publish_lock_timeout_seconds()
+    deadline = time.monotonic() + timeout
+    with _connect(autocommit=True) as connection:
+        while True:
+            row = connection.execute(
+                "select pg_try_advisory_lock(hashtext(%s)) as acquired",
+                (PUBLISH_LOCK_NAME,),
+            ).fetchone()
+            if bool(row["acquired"]):
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"stock daily Parquet publication lock timeout after {timeout:.3f}s; another publisher is active"
+                )
+            LOGGER.warning("waiting for stock daily Parquet publication lock remaining_seconds=%.3f", remaining)
+            time.sleep(min(1.0, remaining))
+        try:
+            LOGGER.info("acquired stock daily Parquet publication lock")
+            yield
+        finally:
+            connection.execute("select pg_advisory_unlock(hashtext(%s))", (PUBLISH_LOCK_NAME,))
+            LOGGER.info("released stock daily Parquet publication lock")
 
 
 def _version(dataset_id: str, baseline_id: str, generation: int) -> str:
@@ -225,6 +290,18 @@ def _record_mapping(dataset_version: str, market_version: str, manifest_sha256: 
 
 
 def publish(
+    export_root: Path,
+    compression: str,
+    row_group_target_bytes: int,
+    *,
+    start: date | None = None,
+    end: date | None = None,
+) -> dict[str, object]:
+    with _publication_lock():
+        return _publish_locked(export_root, compression, row_group_target_bytes, start=start, end=end)
+
+
+def _publish_locked(
     export_root: Path,
     compression: str,
     row_group_target_bytes: int,
