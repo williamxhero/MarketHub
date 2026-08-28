@@ -17,9 +17,11 @@ MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
 MARKETHUB_CODE_ROOT="${MARKETHUB_CODE_ROOT:-}"
 MARKETHUB_EXPORT_ROOT="${MARKETHUB_EXPORT_ROOT:-/data/MarketHub2/exports}"
 MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH="${MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH:-0}"
-# Long-running catch-up captures must not block the health and publisher chain.
-# The accepted background run remains observable through /api/admin/capture-runs.
-MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"
+# The publication gate must observe the generation produced by the completed
+# capture run. An asynchronous acceptance response would let the publisher run
+# before capture advances the dataset version and leave the new version without
+# an exact-current read model.
+MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due}"
 
 log() {
     printf '[%s] %s\n' "$(date '+%F %T')" "$1"
