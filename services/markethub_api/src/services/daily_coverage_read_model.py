@@ -66,7 +66,7 @@ with catalog as materialized (
         or (
             market='BJSE'
             and (
-                left(code,3)='920'
+                (left(code,3)='920' and listed_date >= date '2024-04-22')
                 or exists (
                     select 1 from ref.stock_code_migration migration
                     where migration.old_market='BJSE' and migration.old_code=ref.stock.code

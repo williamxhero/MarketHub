@@ -31,6 +31,7 @@ def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
     assert "Parquet publication lock timeout" in content
     assert "ref.stock_code_migration migration" in content
     assert "left(code,3)='920'" in content
+    assert "listed_date >= date '2024-04-22'" in content
     assert "MARKETHUB_STOCK_DAILY_EXPORT_START" in content
     assert "d.trade_date<u.delisted_date" in content
     assert tuple(field.name for field in MODULE.BARS_SCHEMA) == (

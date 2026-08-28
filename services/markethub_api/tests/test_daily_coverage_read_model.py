@@ -10,6 +10,7 @@ from services import daily_coverage_read_model as read_model
 def test_coverage_universe_requires_auditable_bse_identity() -> None:
     assert "ref.stock_code_migration migration" in read_model._CREATE_STATE_SQL
     assert "left(code,3)='920'" in read_model._CREATE_STATE_SQL
+    assert "listed_date >= date '2024-04-22'" in read_model._CREATE_STATE_SQL
 
 
 def test_daily_read_model_builder_materializes_sparse_gaps_and_day_summaries() -> None:
