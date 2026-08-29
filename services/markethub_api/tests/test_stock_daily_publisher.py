@@ -32,6 +32,7 @@ def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
     assert "resuming stock daily Parquet publication" in content
     assert "retained resumable staging" in content
     assert "stock daily Parquet publication checkpoint" in content
+    assert "part.mkdir(parents=True, exist_ok=True)" in content
     assert "ref.stock_code_migration migration" in content
     assert "left(code,3)='920'" in content
     assert "listed_date >= date '2024-04-22'" in content

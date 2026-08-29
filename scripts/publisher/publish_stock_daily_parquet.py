@@ -408,7 +408,7 @@ def _publish_locked(
                     partitions.append(checkpoint_partition)
                     continue
                 part = staging / f"year={month_start.year:04d}" / f"month={month_start.month:02d}"
-                part.mkdir(parents=True)
+                part.mkdir(parents=True, exist_ok=True)
                 coverage_path = part / "coverage.parquet"
                 coverage_rows, expected_bars = _coverage(snapshot, coverage_path, month_start, month_end, compression)
                 bars_path = part / "bars.parquet"
