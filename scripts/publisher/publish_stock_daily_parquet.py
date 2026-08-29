@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 import time
 import uuid
 from datetime import date, datetime, timezone
@@ -289,6 +288,61 @@ def _record_mapping(dataset_version: str, market_version: str, manifest_sha256: 
         )
 
 
+def _staged_month(
+    staging: Path,
+    month_start: date,
+    month_end: date,
+    dataset_version: str,
+) -> tuple[list[dict[str, object]], dict[str, object]] | None:
+    """Return one fully written monthly checkpoint, or make it eligible for rewrite."""
+    part = staging / f"year={month_start.year:04d}" / f"month={month_start.month:02d}"
+    bars_path, coverage_path = part / "bars.parquet", part / "coverage.parquet"
+    if not bars_path.is_file() or not coverage_path.is_file():
+        return None
+    try:
+        bars_rows = int(pq.ParquetFile(bars_path).metadata.num_rows)
+        coverage_rows = int(pq.ParquetFile(coverage_path).metadata.num_rows)
+    except (OSError, pa.ArrowException):
+        LOGGER.warning("discarding unreadable stock daily publication checkpoint month=%s staging=%s", month_start, staging)
+        return None
+    files = [
+        _file_record(staging, bars_path, bars_rows, dataset_version),
+        _file_record(staging, coverage_path, coverage_rows, dataset_version),
+    ]
+    return files, {"start": month_start, "end_exclusive": month_end, "rows": bars_rows}
+
+
+def _resume_staging(
+    staging_parent: Path,
+    dataset_version: str,
+    first: date,
+    last: date,
+) -> tuple[Path, dict[date, tuple[list[dict[str, object]], dict[str, object]]]]:
+    """Reuse the most complete unfinalized staging directory for this version."""
+    candidates: list[tuple[Path, dict[date, tuple[list[dict[str, object]], dict[str, object]]]]] = []
+    for candidate in staging_parent.glob(f"{dataset_version}-*"):
+        if not candidate.is_dir() or (candidate / "manifest.json").exists():
+            continue
+        completed: dict[date, tuple[list[dict[str, object]], dict[str, object]]] = {}
+        for month_start, month_end in _months(first, last):
+            checkpoint = _staged_month(candidate, month_start, month_end, dataset_version)
+            if checkpoint is not None:
+                completed[month_start] = checkpoint
+        candidates.append((candidate, completed))
+    if candidates:
+        staging, completed = max(candidates, key=lambda item: (len(item[1]), item[0].stat().st_mtime_ns))
+        LOGGER.info(
+            "resuming stock daily Parquet publication dataset_version=%s staging=%s completed_months=%s",
+            dataset_version,
+            staging,
+            len(completed),
+        )
+        return staging, completed
+    staging = staging_parent / f"{dataset_version}-{uuid.uuid4().hex}"
+    staging.mkdir()
+    return staging, {}
+
+
 def publish(
     export_root: Path,
     compression: str,
@@ -342,12 +396,17 @@ def _publish_locked(
             _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
             mark_stock_daily_publication_ready(dataset_version)
             return json.loads(manifest_path.read_text(encoding="utf-8"))
-        staging = staging_parent / f"{dataset_version}-{uuid.uuid4().hex}"
-        staging.mkdir()
+        staging, completed_months = _resume_staging(staging_parent, dataset_version, first, last)
         files: list[dict[str, object]] = []
         partitions: list[dict[str, object]] = []
         try:
             for month_start, month_end in _months(first, last):
+                checkpoint = completed_months.get(month_start)
+                if checkpoint is not None:
+                    checkpoint_files, checkpoint_partition = checkpoint
+                    files.extend(checkpoint_files)
+                    partitions.append(checkpoint_partition)
+                    continue
                 part = staging / f"year={month_start.year:04d}" / f"month={month_start.month:02d}"
                 part.mkdir(parents=True)
                 coverage_path = part / "coverage.parquet"
@@ -363,6 +422,12 @@ def _publish_locked(
                     )
                 )
                 partitions.append({"start": month_start, "end_exclusive": month_end, "rows": bars_rows})
+                LOGGER.info(
+                    "stock daily Parquet publication checkpoint dataset_version=%s month=%s rows=%s",
+                    dataset_version,
+                    month_start,
+                    bars_rows,
+                )
             snapshot.rollback()
             with _connect() as current:
                 current.execute("set transaction isolation level repeatable read read only")
@@ -385,7 +450,11 @@ def _publish_locked(
             mark_stock_daily_publication_ready(dataset_version)
             return manifest
         except BaseException:
-            shutil.rmtree(staging, ignore_errors=True)
+            LOGGER.error(
+                "stock daily Parquet publication retained resumable staging dataset_version=%s staging=%s",
+                dataset_version,
+                staging,
+            )
             raise
 
 
