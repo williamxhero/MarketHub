@@ -17,6 +17,7 @@ MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
 MARKETHUB_CODE_ROOT="${MARKETHUB_CODE_ROOT:-}"
 MARKETHUB_EXPORT_ROOT="${MARKETHUB_EXPORT_ROOT:-/data/MarketHub2/exports}"
 MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH="${MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH:-0}"
+MARKETHUB_DATA_HEALTH_FAILURE_POLICY="${MARKETHUB_DATA_HEALTH_FAILURE_POLICY:-warn}"
 MARKETHUB_GLOBAL_UPDATE_LOCK_PATH="${MARKETHUB_GLOBAL_UPDATE_LOCK_PATH:-$RUNTIME_ROOT/locks/global-data-update.lock}"
 MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS="${MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS:-60}"
 # The publisher waits only for its declared dependency.  `run-due` can include
@@ -57,7 +58,31 @@ run_once() {
         MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES" \
         "$GLOBAL_DATA_UPDATE_SCRIPT"
     log "全局数据更新完成，开始数据健康检查和覆盖构建"
-    "$DATA_HEALTH_SCRIPT"
+    case "$MARKETHUB_DATA_HEALTH_FAILURE_POLICY" in
+        warn|fail)
+            ;;
+        *)
+            log "无效的 MARKETHUB_DATA_HEALTH_FAILURE_POLICY=$MARKETHUB_DATA_HEALTH_FAILURE_POLICY"
+            return 64
+            ;;
+    esac
+    if "$DATA_HEALTH_SCRIPT"; then
+        log "global_update_health_outcome=passed policy=$MARKETHUB_DATA_HEALTH_FAILURE_POLICY"
+    else
+        health_status=$?
+        # A platform-wide health report contains durable quality alerts outside
+        # this run's declared publication dependencies.  Keep that alert
+        # observable, but do not make a successful serialized capture look
+        # failed merely because unrelated historical remediation remains.
+        log "global_update_health_outcome=alert policy=$MARKETHUB_DATA_HEALTH_FAILURE_POLICY status=$health_status retry_semantics=health_remediation"
+        if [ "$MARKETHUB_DATA_HEALTH_FAILURE_POLICY" = "fail" ]; then
+            return "$health_status"
+        fi
+        if [ "$MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH" = "1" ]; then
+            log "global_update_publication_outcome=blocked reason=data_health_alert"
+            return "$health_status"
+        fi
+    fi
     if [ "$MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH" = "1" ]; then
         log "数据健康检查通过，开始发布版本化 stock_daily_1d Parquet"
         if [ -z "$MARKETHUB_CODE_ROOT" ]; then

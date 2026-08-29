@@ -30,6 +30,16 @@ def test_health_gated_update_waits_for_due_capture_and_serializes_runs() -> None
     assert "global_update_outcome=skipped reason=lock_busy retry_semantics=next_timer" in source
 
 
+def test_health_alert_is_observable_without_failing_unrelated_capture() -> None:
+    source = (SCRIPT_DIR / "global-data-update-with-health.sh").read_text(encoding="utf-8")
+
+    assert 'MARKETHUB_DATA_HEALTH_FAILURE_POLICY="${MARKETHUB_DATA_HEALTH_FAILURE_POLICY:-warn}"' in source
+    assert 'warn|fail)' in source
+    assert 'global_update_health_outcome=alert policy=$MARKETHUB_DATA_HEALTH_FAILURE_POLICY' in source
+    assert 'global_update_publication_outcome=blocked reason=data_health_alert' in source
+    assert '[ "$MARKETHUB_DATA_HEALTH_FAILURE_POLICY" = "fail" ]' in source
+
+
 def test_global_update_bounds_due_enqueue_and_waits_only_for_declared_dependencies() -> None:
     source = (SCRIPT_DIR / "global-data-update.sh").read_text(encoding="utf-8")
 
