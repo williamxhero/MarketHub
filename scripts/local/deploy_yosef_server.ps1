@@ -73,7 +73,7 @@ try {
         $sourceArchive = Join-Path $stagingRoot ("$($source.Name).tar")
         Invoke-NativeCommand -FilePath "git" -Arguments @("-C", $source.Path, "archive", "--format=tar", "--prefix=$($source.Name)/", "--output=$sourceArchive", $source.Commit)
         Invoke-NativeCommand -FilePath "tar.exe" -Arguments @("-xf", $sourceArchive, "-C", $stagingRoot)
-        Remove-Item -LiteralPath $sourceArchive -Force
+        Microsoft.PowerShell.Management\Remove-Item -LiteralPath $sourceArchive -Force
     }
     Invoke-NativeCommand -FilePath "tar.exe" -Arguments @(
         "-czf", $archivePath,
@@ -84,7 +84,7 @@ try {
     )
 }
 finally {
-    if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
+    if (Test-Path -LiteralPath $stagingRoot) { Microsoft.PowerShell.Management\Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
 }
 
 $remoteArchive = "/tmp/$releaseName.tgz"
