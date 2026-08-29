@@ -10,6 +10,7 @@ param(
     [string]$QuoteMuxPackagesSourceRoot = "",
     [ValidateSet("peer", "env")][string]$PrivilegedMigrationMode = "peer",
     [string]$PrivilegedMigrationEnvPath = "/data/markethub/env/quotemux-futures-partial-migration.env",
+    [string]$ReusePackageVenvRoot = "",
     [ValidateRange(30, 1800)][int]$CaptureDrainTimeoutSeconds = 300,
     [ValidateRange(1, 60)][int]$CaptureDrainRetrySeconds = 10,
     [switch]$AllowCaptureDrainServiceStop
@@ -108,9 +109,18 @@ migration_env_path="${13}"
 capture_drain_timeout_seconds="${14}"
 capture_drain_retry_seconds="${15}"
 allow_capture_drain_service_stop="${16}"
+reuse_package_venv_root="${17}"
 reader_env_path="$(dirname "$env_path")/quotemux-public-reader.env"
 publisher_env_path="$(dirname "$env_path")/quotemux-futures-partial-publisher.env"
 release_root="$remote_root/releases/$release_name"
+package_venv_root="$runtime_root/package_venvs/$release_name"
+if [ -n "$reuse_package_venv_root" ]; then
+  if ! test -d "$reuse_package_venv_root"; then
+    echo "requested reusable package venv root does not exist: $reuse_package_venv_root" >&2
+    exit 64
+  fi
+  package_venv_root="$reuse_package_venv_root"
+fi
 previous_current="$(readlink -f "$remote_root/current" 2>/dev/null || true)"
 current_switched=0
 service_stopped=0
@@ -170,7 +180,7 @@ python3 "$release_root/MarketHub/migrations/storage_v2_20260823/sync_runtime_env
   --app-root "$remote_root" \
   --runtime-root "$runtime_root" \
   --release-root "$release_root" \
-  --package-venv-root "$runtime_root/package_venvs/$release_name"
+  --package-venv-root "$package_venv_root"
 sudo -n chmod 0600 "$env_path"
 sudo -n chown "$service_user:$service_group" "$env_path"
 set -a
@@ -181,7 +191,7 @@ export QUOTEMUX_PACKAGE_REPO_SPEC="$release_root/QuoteMux_Packages"
 export MARKETHUB_RUNTIME_ROOT="$runtime_root"
 export MARKETHUB_ENV_PATH="$env_path"
 export MARKETHUB_VENV_ROOT="$runtime_root/.venv"
-export QUOTEMUX_PACKAGE_VENV_ROOT="$runtime_root/package_venvs/$release_name"
+export QUOTEMUX_PACKAGE_VENV_ROOT="$package_venv_root"
 export QUOTEMUX_ALLOW_LOCAL_PACKAGE_REPO=true
 export PYTHONPATH="$release_root/QuoteMux/src:$release_root/MarketHub/services/markethub_api/src"
 mkdir -p "$runtime_root/type=cache"
@@ -358,7 +368,7 @@ Environment=MARKETHUB_RELEASE=$release_name
 Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime
 Environment=PYTHONPATH=$remote_root/current/QuoteMux/src:$remote_root/current/MarketHub/services/markethub_api/src
 Environment=QUOTEMUX_PACKAGE_REPO_SPEC=$remote_root/current/QuoteMux_Packages
-Environment=QUOTEMUX_PACKAGE_VENV_ROOT=$runtime_root/package_venvs/$release_name
+Environment=QUOTEMUX_PACKAGE_VENV_ROOT=$package_venv_root
 ExecStart=$runtime_root/.venv/bin/python $remote_root/current/MarketHub/services/markethub_api/app.py
 Restart=always
 RestartSec=5
@@ -408,7 +418,7 @@ exit 1
 '@
 $encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
 $captureDrainServiceStopFlag = if ($AllowCaptureDrainServiceStop) { "1" } else { "0" }
-$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath' '$CaptureDrainTimeoutSeconds' '$CaptureDrainRetrySeconds' '$captureDrainServiceStopFlag'"
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath' '$CaptureDrainTimeoutSeconds' '$CaptureDrainRetrySeconds' '$captureDrainServiceStopFlag' '$ReusePackageVenvRoot'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }
