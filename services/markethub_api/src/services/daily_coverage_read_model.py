@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date
 import hashlib
 import json
+import logging
 import os
+import time
 from typing import Any
 
 from fastapi import HTTPException
@@ -34,6 +36,23 @@ on conflict(dataset_id,dataset_version) do update set
 """
 
 
+LOGGER = logging.getLogger(__name__)
+
+
+class DatasetVersionChanged(RuntimeError):
+    """The capture transaction advanced the source version while coverage was built."""
+
+
+def _coverage_retry_config() -> tuple[int, float]:
+    attempts = int(os.getenv("MARKETHUB_COVERAGE_BUILD_MAX_ATTEMPTS", "3"))
+    backoff_seconds = float(os.getenv("MARKETHUB_COVERAGE_BUILD_BACKOFF_SECONDS", "1"))
+    if attempts < 1 or attempts > 10:
+        raise ValueError("MARKETHUB_COVERAGE_BUILD_MAX_ATTEMPTS must be between 1 and 10")
+    if backoff_seconds < 0 or backoff_seconds > 60:
+        raise ValueError("MARKETHUB_COVERAGE_BUILD_BACKOFF_SECONDS must be between 0 and 60")
+    return attempts, backoff_seconds
+
+
 _CREATE_STATE_SQL = """
 create temporary table query_read_daily_state on commit drop as
 with catalog as materialized (
@@ -44,7 +63,16 @@ with catalog as materialized (
     where code<>'000000'
       and ((market='SHSE' and left(code,1)='6')
         or (market='SZSE' and left(code,1) in ('0','3'))
-        or (market='BJSE' and left(code,1) in ('4','8','9')))
+        or (
+            market='BJSE'
+            and (
+                (left(code,3)='920' and listed_date >= date '2024-04-22')
+                or exists (
+                    select 1 from ref.stock_code_migration migration
+                    where migration.old_market='BJSE' and migration.old_code=ref.stock.code
+                )
+            )
+        ))
     order by code,(delisted_date is null) desc,listed_date desc,market
 ), open_dates as materialized (
     select trade_date from ref.trade_calendar
@@ -167,7 +195,7 @@ def _set_build_state(
         )
 
 
-def build_current_stock_daily_coverage(start: date | None = None, end: date | None = None) -> dict[str, object]:
+def _build_current_stock_daily_coverage_once(start: date | None = None, end: date | None = None) -> dict[str, object]:
     with _connect() as probe:
         _, generation, dataset_version = _dataset_state(probe)
         bounds = probe.execute(
@@ -187,7 +215,7 @@ def build_current_stock_daily_coverage(start: date | None = None, end: date | No
             connection.execute("set transaction isolation level repeatable read")
             _, snapshot_generation, snapshot_version = _dataset_state(connection)
             if snapshot_version != dataset_version:
-                raise RuntimeError(f"dataset changed before coverage build: {dataset_version} -> {snapshot_version}")
+                raise DatasetVersionChanged(f"dataset changed before coverage build: {dataset_version} -> {snapshot_version}")
             connection.execute("delete from readmodel.stock_daily_coverage_day where dataset_version=%s", (dataset_version,))
             connection.execute("delete from readmodel.stock_daily_coverage_gap where dataset_version=%s", (dataset_version,))
             connection.execute(_CREATE_STATE_SQL, (first, last))
@@ -229,7 +257,7 @@ def build_current_stock_daily_coverage(start: date | None = None, end: date | No
         if current_version != dataset_version:
             error = f"dataset changed during coverage build: {dataset_version} -> {current_version}"
             _set_build_state(dataset_version, generation, "failed", coverage_ready=False, complete=False, error=error)
-            raise RuntimeError(error)
+            raise DatasetVersionChanged(error)
         return {
             "dataset_id": STOCK_DAILY_DATASET_ID,
             "dataset_version": dataset_version,
@@ -245,6 +273,32 @@ def build_current_stock_daily_coverage(start: date | None = None, end: date | No
     except BaseException as exc:
         _set_build_state(dataset_version, generation, "failed", coverage_ready=False, complete=False, error=str(exc))
         raise
+
+
+def build_current_stock_daily_coverage(start: date | None = None, end: date | None = None) -> dict[str, object]:
+    attempts, base_backoff_seconds = _coverage_retry_config()
+    retryable = (DatasetVersionChanged, psycopg.errors.SerializationFailure)
+    for attempt in range(1, attempts + 1):
+        try:
+            result = _build_current_stock_daily_coverage_once(start, end)
+            if attempt > 1:
+                LOGGER.info("daily coverage build recovered attempt=%s/%s dataset_version=%s", attempt, attempts, result["dataset_version"])
+            return result
+        except retryable as exc:
+            if attempt == attempts:
+                message = f"daily coverage build exhausted retry budget attempts={attempts}: {exc}"
+                LOGGER.error(message)
+                raise RuntimeError(message) from exc
+            delay = base_backoff_seconds * (2 ** (attempt - 1))
+            LOGGER.warning(
+                "daily coverage build retry attempt=%s/%s delay_seconds=%.3f reason=%s",
+                attempt,
+                attempts,
+                delay,
+                exc,
+            )
+            time.sleep(delay)
+    raise AssertionError("coverage retry loop unexpectedly exited")
 
 
 def ensure_current_stock_daily_coverage() -> dict[str, object]:

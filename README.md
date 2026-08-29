@@ -21,7 +21,7 @@ MarketHub 提供由 TqSdk 驱动的中国期货引用与实时接口：实际合
 
 ## 安装
 
-请使用 AI 安装并跑通本项目，提示词示例：“阅读 https://github.com/williamxhero/MarketHub/AIREADME.md 并在 本机 D:\MarketHub\ 目录中安装这个项目”
+请使用 AI 安装并跑通本项目，提示词示例：“阅读 https://github.com/williamxhero/MarketHub/blob/main/AIREADME.md 并在 本机 D:\MarketHub\ 目录中安装这个项目”
 
 
 
