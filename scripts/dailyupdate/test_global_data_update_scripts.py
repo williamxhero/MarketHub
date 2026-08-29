@@ -12,7 +12,7 @@ import pytest
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-def test_global_update_keeps_async_default_for_non_health_schedules() -> None:
+def test_global_update_retains_opt_in_async_due_endpoint() -> None:
     source = (SCRIPT_DIR / "global-data-update.sh").read_text(encoding="utf-8")
 
     assert 'MARKETHUB_CAPTURE_ENDPOINT="${MARKETHUB_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"' in source
@@ -44,12 +44,14 @@ def test_global_update_bounds_due_enqueue_and_waits_only_for_declared_dependenci
     source = (SCRIPT_DIR / "global-data-update.sh").read_text(encoding="utf-8")
 
     assert 'MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="${MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES:-}"' in source
+    assert 'MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE="${MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE:-0}"' in source
     assert 'MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-3600' in source
     assert 'MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60' in source
     assert 'capture_event=required_started capability_id=$capability_id' in source
     assert 'capture_event=required_failed capability_id=$capability_id reason=$reason' in source
     assert 'capture_event=due_enqueue_started endpoint=$MARKETHUB_CAPTURE_ENDPOINT' in source
     assert 'capture_event=due_enqueue_failed endpoint=$MARKETHUB_CAPTURE_ENDPOINT reason=$reason' in source
+    assert 'capture_event=due_enqueue_skipped reason=declared_dependencies_completed' in source
     assert '[ "$status" -eq 28 ] && reason="timeout"' in source
 
 

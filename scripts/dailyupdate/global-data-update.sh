@@ -20,6 +20,7 @@ MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
 # while unrelated historical backlog is replayed.
 MARKETHUB_CAPTURE_ENDPOINT="${MARKETHUB_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"
 MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="${MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES:-}"
+MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE="${MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE:-0}"
 RUN_ROOT="${MARKETHUB_DATA_UPDATE_ROOT:-$RUNTIME_ROOT/data-update}"
 LOG_ROOT="${MARKETHUB_LOG_ROOT:-$RUNTIME_ROOT/logs}"
 RUN_ID="$(date '+%Y%m%d_%H%M%S')"
@@ -73,16 +74,28 @@ print(f"capture_event=required_completed capability_id={capability_id} capture_r
 PY
     done
 
-    log "capture_event=due_enqueue_started endpoint=$MARKETHUB_CAPTURE_ENDPOINT timeout_seconds=${MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60}"
-    curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60}" \
-        -X POST "$MARKETHUB_BASE_URL$MARKETHUB_CAPTURE_ENDPOINT" \
-        -o "$RESULT_PATH" || {
-            local status=$?
-            local reason="curl_exit_$status"
-            [ "$status" -eq 28 ] && reason="timeout"
-            log "capture_event=due_enqueue_failed endpoint=$MARKETHUB_CAPTURE_ENDPOINT reason=$reason"
-            return "$status"
-        }
+    case "$MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE" in
+        0)
+            printf '%s\n' '{"accepted":true,"skipped":true,"reason":"declared_dependencies_completed"}' > "$RESULT_PATH"
+            log "capture_event=due_enqueue_skipped reason=declared_dependencies_completed"
+            ;;
+        1)
+            log "capture_event=due_enqueue_started endpoint=$MARKETHUB_CAPTURE_ENDPOINT timeout_seconds=${MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60}"
+            curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60}" \
+                -X POST "$MARKETHUB_BASE_URL$MARKETHUB_CAPTURE_ENDPOINT" \
+                -o "$RESULT_PATH" || {
+                    local status=$?
+                    local reason="curl_exit_$status"
+                    [ "$status" -eq 28 ] && reason="timeout"
+                    log "capture_event=due_enqueue_failed endpoint=$MARKETHUB_CAPTURE_ENDPOINT reason=$reason"
+                    return "$status"
+                }
+            ;;
+        *)
+            log "invalid MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE=$MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE"
+            return 64
+            ;;
+    esac
 }
 
 postprocess() {
