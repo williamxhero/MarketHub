@@ -279,7 +279,7 @@ reconcile_capture_once() {
   capture_reconcile_status=$?
   set -e
   printf 'capture run reconciliation: %s\n' "$capture_reconcile_json"
-  return "$capture_reconcile_status"
+  [ "$capture_reconcile_status" -eq 0 ]
 }
 capture_drain_deadline=$((SECONDS + capture_drain_timeout_seconds))
 while true; do
