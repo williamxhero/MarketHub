@@ -53,7 +53,9 @@ core_execute() {
             -X POST "$MARKETHUB_BASE_URL/api/admin/capture-runs/$capability_id" \
             -o "$capture_path" || {
                 local status=$?
-                log "capture_event=required_failed capability_id=$capability_id reason=curl_exit_$status"
+                local reason="curl_exit_$status"
+                [ "$status" -eq 28 ] && reason="timeout"
+                log "capture_event=required_failed capability_id=$capability_id reason=$reason"
                 return "$status"
             }
         "$MARKETHUB_PYTHON" - "$capture_path" "$capability_id" <<'PY'
@@ -76,7 +78,9 @@ PY
         -X POST "$MARKETHUB_BASE_URL$MARKETHUB_CAPTURE_ENDPOINT" \
         -o "$RESULT_PATH" || {
             local status=$?
-            log "capture_event=due_enqueue_failed endpoint=$MARKETHUB_CAPTURE_ENDPOINT reason=curl_exit_$status"
+            local reason="curl_exit_$status"
+            [ "$status" -eq 28 ] && reason="timeout"
+            log "capture_event=due_enqueue_failed endpoint=$MARKETHUB_CAPTURE_ENDPOINT reason=$reason"
             return "$status"
         }
 }

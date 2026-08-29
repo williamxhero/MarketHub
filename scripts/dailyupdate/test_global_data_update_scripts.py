@@ -37,7 +37,10 @@ def test_global_update_bounds_due_enqueue_and_waits_only_for_declared_dependenci
     assert 'MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-1200' in source
     assert 'MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60' in source
     assert 'capture_event=required_started capability_id=$capability_id' in source
+    assert 'capture_event=required_failed capability_id=$capability_id reason=$reason' in source
     assert 'capture_event=due_enqueue_started endpoint=$MARKETHUB_CAPTURE_ENDPOINT' in source
+    assert 'capture_event=due_enqueue_failed endpoint=$MARKETHUB_CAPTURE_ENDPOINT reason=$reason' in source
+    assert '[ "$status" -eq 28 ] && reason="timeout"' in source
 
 
 @pytest.mark.skipif(shutil.which("bash") is None or shutil.which("flock") is None, reason="requires bash and flock")
