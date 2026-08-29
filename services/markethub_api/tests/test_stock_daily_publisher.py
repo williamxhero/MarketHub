@@ -61,3 +61,8 @@ def test_parquet_contract_reuses_precomputed_coverage_and_still_filters_fact_row
     assert "0::int as missing_rows" in MODULE._COVERAGE_SQL
     assert "coalesce(b.is_suspended,false)=true" in MODULE._BARS_SQL
     assert "stock_suspension_history x" in MODULE._BARS_SQL
+
+
+def test_parquet_coverage_uses_catalog_identity_for_bjse_migrations() -> None:
+    assert "migration.old_code=catalog.code" in MODULE._COVERAGE_SQL
+    assert "migration.old_code=ref.stock.code" not in MODULE._COVERAGE_SQL
