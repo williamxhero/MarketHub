@@ -98,12 +98,15 @@ begin
                   'pg_catalog',
                   'information_schema',
                   'pg_toast',
+                  'pg_temp',
+                  'pg_toast_temp',
                   '_timescaledb_internal',
                   '_timescaledb_catalog',
                   '_timescaledb_config',
                   '_timescaledb_cache'
               )
           and coalesce(schema_name, '') not like 'pg_temp_%'
+          and coalesce(schema_name, '') not like 'pg_toast_temp_%'
           and not (
               schema_name = 'fact'
               and object_identity ~ '_(ts_shadow|ts_shadow_failed|legacy)([._]|$)'
