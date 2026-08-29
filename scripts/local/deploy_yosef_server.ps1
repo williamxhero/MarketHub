@@ -279,11 +279,11 @@ reconcile_capture_once() {
   capture_reconcile_status=$?
   set -e
   printf 'capture run reconciliation: %s\n' "$capture_reconcile_json"
-  [ "$capture_reconcile_status" -eq 0 ]
 }
 capture_drain_deadline=$((SECONDS + capture_drain_timeout_seconds))
 while true; do
-  if reconcile_capture_once; then break; else capture_reconcile_status=$?; fi
+  reconcile_capture_once
+  if [ "$capture_reconcile_status" = 0 ]; then break; fi
   if [ "$capture_reconcile_status" != 20 ]; then
     echo "capture reconciliation failed with status $capture_reconcile_status" >&2
     exit "$capture_reconcile_status"
@@ -301,7 +301,8 @@ while true; do
     service_stopped=1
     capture_post_stop_deadline=$((SECONDS + capture_drain_timeout_seconds))
     while true; do
-      if reconcile_capture_once; then break 2; else capture_reconcile_status=$?; fi
+      reconcile_capture_once
+      if [ "$capture_reconcile_status" = 0 ]; then break 2; fi
       if [ "$capture_reconcile_status" != 20 ]; then
         echo "post-stop capture reconciliation failed with status $capture_reconcile_status" >&2
         exit "$capture_reconcile_status"
