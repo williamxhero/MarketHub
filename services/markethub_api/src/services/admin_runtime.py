@@ -22,6 +22,7 @@ from quotemux.config_runtime import ContractPolicyOverride, SourceInstanceConfig
 from quotemux.contracts.policies import get_contract_policy, list_contract_policies
 from quotemux.contracts.registry import get_contract_allowed_merge_strategies, get_contract_result_shape, list_contract_names
 from quotemux.contracts.strategies import list_merge_strategies
+from quotemux.futures import resume_future_1m_coverage_backfill as _resume_future_1m_coverage_backfill
 from quotemux.infra.db.availability import get_fact_ref_availability
 from quotemux.provider_timeout.policy import default_capability_timeout_policy, default_provider_timeout_policy
 from quotemux.store.cache_db import execute_many, execute_sql, query_dataframe
@@ -1233,6 +1234,22 @@ def run_capture(capability_id: str) -> dict[str, object]:
     result = run_with_memory_log("capture.run_one", {"capability_id": root_capability_id}, lambda: capture_admin.run_capture(root_capability_id))
     _finalize_capture_read_models((result,))
     return result
+
+
+def resume_future_1m_coverage_backfill(
+    max_groups: int = 8,
+    statement_timeout_seconds: int = 120,
+) -> dict[str, object]:
+    """Run a bounded, restartable coverage repair outside capture initialization."""
+    return run_with_memory_log(
+        "futures.coverage_backfill",
+        {
+            "max_groups": max_groups,
+            "statement_timeout_seconds": statement_timeout_seconds,
+            "checkpoint": "fact.future_bar_1m_coverage",
+        },
+        lambda: _resume_future_1m_coverage_backfill(max_groups, statement_timeout_seconds),
+    )
 
 
 _REPAIR_DATASET_CAPABILITIES = {

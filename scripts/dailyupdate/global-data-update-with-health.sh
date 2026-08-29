@@ -19,11 +19,11 @@ MARKETHUB_EXPORT_ROOT="${MARKETHUB_EXPORT_ROOT:-/data/MarketHub2/exports}"
 MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH="${MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH:-0}"
 MARKETHUB_GLOBAL_UPDATE_LOCK_PATH="${MARKETHUB_GLOBAL_UPDATE_LOCK_PATH:-$RUNTIME_ROOT/locks/global-data-update.lock}"
 MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS="${MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS:-60}"
-# The publication gate must observe the generation produced by the completed
-# capture run. An asynchronous acceptance response would let the publisher run
-# before capture advances the dataset version and leave the new version without
-# an exact-current read model.
-MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due}"
+# The publisher waits only for its declared dependency.  `run-due` can include
+# historical repairs and unrelated long-running capabilities, so waiting for it
+# turns a routine publication into an unbounded global backlog drain.
+MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"
+MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily}"
 
 log() {
     printf '[%s] %s\n' "$(date '+%F %T')" "$1"
@@ -53,7 +53,9 @@ release_global_update_lock() {
 
 run_once() {
     log "开始 MarketHub 全局数据更新和数据健康检查 capture_endpoint=$MARKETHUB_HEALTH_CAPTURE_ENDPOINT"
-    MARKETHUB_CAPTURE_ENDPOINT="$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" "$GLOBAL_DATA_UPDATE_SCRIPT"
+    MARKETHUB_CAPTURE_ENDPOINT="$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" \
+        MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES" \
+        "$GLOBAL_DATA_UPDATE_SCRIPT"
     log "全局数据更新完成，开始数据健康检查和覆盖构建"
     "$DATA_HEALTH_SCRIPT"
     if [ "$MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH" = "1" ]; then
@@ -73,6 +75,16 @@ run_once() {
     log "完成 MarketHub 04:00 全局数据更新和数据健康检查"
 }
 
-acquire_global_update_lock
+acquire_global_update_lock || {
+    status=$?
+    if [ "$status" -eq 75 ]; then
+        # A scheduled overlap is a successful no-op: an existing owner will
+        # complete the same serialized pipeline.  Returning success prevents
+        # Task Center from treating normal coalescing as a production failure.
+        log "global_update_outcome=skipped reason=lock_busy retry_semantics=next_timer"
+        exit 0
+    fi
+    exit "$status"
+}
 trap release_global_update_lock EXIT
 run_once

@@ -22,10 +22,22 @@ def test_global_update_keeps_async_default_for_non_health_schedules() -> None:
 def test_health_gated_update_waits_for_due_capture_and_serializes_runs() -> None:
     source = (SCRIPT_DIR / "global-data-update-with-health.sh").read_text(encoding="utf-8")
 
-    assert 'MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due}"' in source
-    assert 'MARKETHUB_CAPTURE_ENDPOINT="$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" "$GLOBAL_DATA_UPDATE_SCRIPT"' in source
+    assert 'MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"' in source
+    assert 'MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily}"' in source
+    assert 'MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES"' in source
     assert 'flock -w "$MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS"' in source
     assert "未启动重复采集或发布" in source
+    assert "global_update_outcome=skipped reason=lock_busy retry_semantics=next_timer" in source
+
+
+def test_global_update_bounds_due_enqueue_and_waits_only_for_declared_dependencies() -> None:
+    source = (SCRIPT_DIR / "global-data-update.sh").read_text(encoding="utf-8")
+
+    assert 'MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="${MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES:-}"' in source
+    assert 'MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-1200' in source
+    assert 'MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60' in source
+    assert 'capture_event=required_started capability_id=$capability_id' in source
+    assert 'capture_event=due_enqueue_started endpoint=$MARKETHUB_CAPTURE_ENDPOINT' in source
 
 
 @pytest.mark.skipif(shutil.which("bash") is None or shutil.which("flock") is None, reason="requires bash and flock")
@@ -60,6 +72,7 @@ def test_health_gated_update_does_not_run_duplicate_pipeline(tmp_path: Path) -> 
     second = subprocess.run(["bash", str(SCRIPT_DIR / "global-data-update-with-health.sh")], env=environment, capture_output=True, text=True, check=False)
     first_output, _ = first.communicate(timeout=10)
     assert first.returncode == 0, first_output
-    assert second.returncode == 75
+    assert second.returncode == 0
     assert "未启动重复采集或发布" in second.stdout
+    assert "global_update_outcome=skipped reason=lock_busy retry_semantics=next_timer" in second.stdout
     assert log_path.read_text(encoding="utf-8").splitlines() == ["capture", "health", "publish"]

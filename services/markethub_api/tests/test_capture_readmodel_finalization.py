@@ -60,6 +60,36 @@ def test_non_intraday_capture_does_not_finalize_minute_coverage(monkeypatch) -> 
     assert calls == []
 
 
+def test_future_coverage_backfill_is_bounded_and_written_to_memory_log(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        admin_runtime,
+        "_resume_future_1m_coverage_backfill",
+        lambda max_groups, statement_timeout_seconds: {
+            "status": "success",
+            "max_groups": max_groups,
+            "statement_timeout_seconds": statement_timeout_seconds,
+        },
+    )
+    monkeypatch.setattr(
+        admin_runtime,
+        "run_with_memory_log",
+        lambda name, detail, operation: observed.update(name=name, detail=detail) or operation(),
+    )
+
+    result = admin_runtime.resume_future_1m_coverage_backfill(2, 30)
+
+    assert result["max_groups"] == 2
+    assert observed == {
+        "name": "futures.coverage_backfill",
+        "detail": {
+            "max_groups": 2,
+            "statement_timeout_seconds": 30,
+            "checkpoint": "fact.future_bar_1m_coverage",
+        },
+    }
+
+
 def test_main_continuous_capture_attempts_strict_back_adjusted_carry_forward(monkeypatch) -> None:
     _configure(monkeypatch)
     calls: list[bool] = []

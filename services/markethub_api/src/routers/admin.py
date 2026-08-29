@@ -335,6 +335,19 @@ async def api_admin_run_capture(capability_id: str) -> dict[str, object]:
     return await anyio.to_thread.run_sync(admin_runtime.run_capture, capability_id)
 
 
+@router.post("/api/admin/futures/coverage-backfill")
+async def api_admin_resume_future_1m_coverage_backfill(
+    max_groups: int = Query(8, ge=1, le=100),
+    statement_timeout_seconds: int = Query(120, ge=1, le=1800),
+) -> dict[str, object]:
+    """Run a bounded coverage batch; rerun after a timeout to resume at its checkpoint."""
+    return await anyio.to_thread.run_sync(
+        admin_runtime.resume_future_1m_coverage_backfill,
+        max_groups,
+        statement_timeout_seconds,
+    )
+
+
 @router.post("/api/admin/data-repairs")
 async def api_admin_run_data_repair(payload: DataRepairPayload) -> dict[str, object]:
     try:
