@@ -285,7 +285,7 @@ while true; do
     echo "capture reconciliation failed with status $capture_reconcile_status" >&2
     exit "$capture_reconcile_status"
   fi
-  if [ "$SECONDS" -ge "$capture_drain_deadline" ]; then
+  if [ "$SECONDS" -ge "${capture_drain_deadline:=$SECONDS}" ]; then
     if [ "$allow_capture_drain_service_stop" != 1 ]; then
       echo "active QuoteMux capture locks did not drain within ${capture_drain_timeout_seconds}s; keeping old release active" >&2
       exit 20
@@ -308,7 +308,7 @@ while true; do
         echo "post-stop capture reconciliation failed with status $capture_reconcile_status" >&2
         exit "$capture_reconcile_status"
       fi
-      if [ "$SECONDS" -ge "$capture_post_stop_deadline" ]; then
+      if [ "$SECONDS" -ge "${capture_post_stop_deadline:=$((SECONDS + capture_drain_timeout_seconds))}" ]; then
         echo "capture locks persisted after controlled service stop; restoring old release" >&2
         exit 20
       fi
