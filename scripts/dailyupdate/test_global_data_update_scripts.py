@@ -34,7 +34,7 @@ def test_global_update_bounds_due_enqueue_and_waits_only_for_declared_dependenci
     source = (SCRIPT_DIR / "global-data-update.sh").read_text(encoding="utf-8")
 
     assert 'MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="${MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES:-}"' in source
-    assert 'MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-1200' in source
+    assert 'MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-3600' in source
     assert 'MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60' in source
     assert 'capture_event=required_started capability_id=$capability_id' in source
     assert 'capture_event=required_failed capability_id=$capability_id reason=$reason' in source

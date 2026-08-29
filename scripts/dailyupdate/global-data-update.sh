@@ -48,8 +48,8 @@ core_execute() {
         [ -n "$capability_id" ] || continue
         safe_capability_id="${capability_id//[^A-Za-z0-9_.-]/_}"
         capture_path="$RESULT_DIR/$RUN_ID.required-$safe_capability_id.json"
-        log "capture_event=required_started capability_id=$capability_id timeout_seconds=${MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-1200}"
-        curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-1200}" \
+        log "capture_event=required_started capability_id=$capability_id timeout_seconds=${MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-3600}"
+        curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-3600}" \
             -X POST "$MARKETHUB_BASE_URL/api/admin/capture-runs/$capability_id" \
             -o "$capture_path" || {
                 local status=$?
