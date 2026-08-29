@@ -273,16 +273,13 @@ test "$(stat -c %G "$publisher_env_path")" = "$service_group"
 }
 # 旧 API 仍在线时完成 staged install 并等待当前合法持锁 capture 自行完成；
 # 只有停旧服务阻断新 capture 后才执行 privileged migration。
-reconcile_capture_once() {
+capture_drain_deadline=$((SECONDS + capture_drain_timeout_seconds))
+while true; do
   set +e
   capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
   capture_reconcile_status=$?
   set -e
   printf 'capture run reconciliation: %s\n' "$capture_reconcile_json"
-}
-capture_drain_deadline=$((SECONDS + capture_drain_timeout_seconds))
-while true; do
-  reconcile_capture_once
   if [ "$capture_reconcile_status" = 0 ]; then break; fi
   if [ "$capture_reconcile_status" != 20 ]; then
     echo "capture reconciliation failed with status $capture_reconcile_status" >&2
@@ -301,7 +298,11 @@ while true; do
     service_stopped=1
     capture_post_stop_deadline=$((SECONDS + capture_drain_timeout_seconds))
     while true; do
-      reconcile_capture_once
+      set +e
+      capture_reconcile_json="$("$runtime_root/.venv/bin/python" -c 'import json; from quotemux.store import reconcile_stale_capture_runs; result = reconcile_stale_capture_runs(); print(json.dumps(result, ensure_ascii=False)); raise SystemExit(20 if result["active_capability_ids"] else 0)')"
+      capture_reconcile_status=$?
+      set -e
+      printf 'capture run reconciliation after stop: %s\n' "$capture_reconcile_json"
       if [ "$capture_reconcile_status" = 0 ]; then break 2; fi
       if [ "$capture_reconcile_status" != 20 ]; then
         echo "post-stop capture reconciliation failed with status $capture_reconcile_status" >&2

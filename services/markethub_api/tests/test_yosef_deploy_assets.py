@@ -133,7 +133,8 @@ def test_deploy_waits_for_live_capture_locks_without_overriding_them() -> None:
     assert 'active QuoteMux capture locks did not drain within ${capture_drain_timeout_seconds}s; keeping old release active' in source
     assert 'sleep "$capture_drain_retry_seconds"' in source
     assert 'return "$capture_reconcile_status"' not in source
-    assert 'if reconcile_capture_once' not in source
+    assert 'reconcile_capture_once' not in source
+    assert source.count('from quotemux.store import reconcile_stale_capture_runs') == 2
     assert source.count('if [ "$capture_reconcile_status" = 0 ]; then') == 2
     default_capture_gate = source[source.index('capture_drain_deadline='):source.index('if [ "$allow_capture_drain_service_stop" != 1 ]; then')]
     assert 'systemctl kill' not in default_capture_gate
