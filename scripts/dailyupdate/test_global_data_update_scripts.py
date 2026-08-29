@@ -36,7 +36,7 @@ def test_health_alert_is_observable_without_failing_unrelated_capture() -> None:
     assert 'MARKETHUB_DATA_HEALTH_FAILURE_POLICY="${MARKETHUB_DATA_HEALTH_FAILURE_POLICY:-warn}"' in source
     assert 'warn|fail)' in source
     assert 'global_update_health_outcome=alert policy=$MARKETHUB_DATA_HEALTH_FAILURE_POLICY' in source
-    assert 'global_update_publication_outcome=blocked reason=data_health_alert' in source
+    assert 'global_update_publication_outcome=deferred reason=data_health_alert' in source
     assert '[ "$MARKETHUB_DATA_HEALTH_FAILURE_POLICY" = "fail" ]' in source
 
 
