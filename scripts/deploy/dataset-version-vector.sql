@@ -5,6 +5,27 @@ set local lock_timeout = '5s';
 create schema if not exists audit;
 create schema if not exists readmodel;
 
+create table if not exists readmodel.future_1m_completeness_rebuild (
+    rebuild_id bigserial primary key,
+    dataset_id text not null,
+    dataset_version text not null,
+    previous_dataset_version text not null,
+    lineage_generation bigint not null,
+    lineage_transaction_id bigint not null,
+    back_adjusted_series_state jsonb not null,
+    previous_back_adjusted_series_state jsonb not null,
+    status text not null check (status in ('rebuild_pending','rebuild_running','published','failed_closed','superseded')),
+    reason text not null,
+    next_action text not null,
+    attempt_count integer not null default 0,
+    error_json jsonb not null default '{}'::jsonb,
+    created_at_utc timestamp with time zone not null default clock_timestamp(),
+    updated_at_utc timestamp with time zone not null default clock_timestamp(),
+    unique (dataset_id,dataset_version,lineage_generation,lineage_transaction_id)
+);
+create index if not exists future_1m_completeness_rebuild_status_idx
+    on readmodel.future_1m_completeness_rebuild(status,created_at_utc);
+
 create table if not exists audit.dataset_version_state (
     dataset_id text primary key,
     baseline_id text not null,

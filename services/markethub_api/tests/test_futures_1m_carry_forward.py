@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 from services import admin_runtime, futures_1m_completeness as completeness
 
@@ -287,3 +288,11 @@ def test_admin_api_exposes_rebuild_status_health_and_safe_retry(monkeypatch) -> 
     assert client.get("/api/admin/futures-1m-completeness-rebuilds?limit=10").json() == [item]
     assert client.post("/api/admin/futures-1m-completeness-rebuilds/41/retry").json()["status"] == "rebuild_pending"
     assert client.get("/api/admin/futures-1m-completeness-rebuilds/health").json()["status"] == "unhealthy"
+
+
+def test_release_database_bootstrap_installs_rebuild_lifecycle_schema() -> None:
+    project_root = Path(__file__).resolve().parents[3]
+    deployment_sql = (project_root / "scripts" / "deploy" / "dataset-version-vector.sql").read_text(encoding="utf-8")
+
+    assert "create table if not exists readmodel.future_1m_completeness_rebuild" in deployment_sql
+    assert "unique (dataset_id,dataset_version,lineage_generation,lineage_transaction_id)" in deployment_sql
