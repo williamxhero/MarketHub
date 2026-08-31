@@ -1396,7 +1396,17 @@ def _finalize_capture_read_models(results: tuple[dict[str, object], ...] | list[
             finalize_stock_1m_daily_coverage_state()
             return
         if capability_id == "futures.quotes.main_continuous.1m":
-            carry_forward_current_back_adjusted_completeness()
+            try:
+                completeness = carry_forward_current_back_adjusted_completeness()
+            except Exception as exc:
+                completeness = {
+                    "outcome": "failed_closed",
+                    "reason": "completeness_finalization_error",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "next_action": {"action": "retry_completeness_finalization"},
+                }
+            result["read_model_finalization"] = {"future_1m_completeness": completeness}
             return
         if capability_id == "futures.contracts.catalog":
             finalize_future_contract_reference_state()

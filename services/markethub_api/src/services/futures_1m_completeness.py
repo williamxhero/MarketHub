@@ -581,14 +581,44 @@ def restore_legacy_futures_1m_completeness(dataset_version: str) -> dict[str, ob
 
 
 def carry_forward_current_back_adjusted_completeness() -> dict[str, object]:
-    """Formal main-series capture publication hook; never infers a session grid."""
+    """Formal main-series capture publication hook; never infers a session grid.
+
+    A capture may advance the immutable dataset without changing the
+    back-adjusted lineage.  Only that exact case is safe to carry forward.
+    Valid lineage changes require a new completeness build; unavailable or
+    unpublished lineage remains fail-closed without invalidating the capture.
+    """
     current_version = current_dataset_version(DATASET_ID)
     if current_version == "":
-        raise RuntimeError("future_bar_1m current dataset version unavailable")
-    series_rows = _SERIES_READER.list_futures_series_state_batch("back_adjusted_continuous").as_dicts()
+        return {
+            "outcome": "failed_closed",
+            "reason": "future_1m_dataset_version_unavailable",
+            "dataset_id": DATASET_ID,
+            "dataset_version": "",
+            "next_action": {"action": "retry_after_dataset_version_is_published"},
+        }
+    series_rows = list(_SERIES_READER.list_futures_series_state_batch("back_adjusted_continuous").as_dicts())
     if len(series_rows) != 1:
-        raise RuntimeError("back-adjusted series lineage state unavailable")
-    current_state = _normalized_back_adjusted_series_state(series_rows[0])
+        return {
+            "outcome": "failed_closed",
+            "reason": "back_adjusted_lineage_unavailable",
+            "dataset_id": DATASET_ID,
+            "dataset_version": current_version,
+            "observed_back_adjusted_series_states": series_rows,
+            "next_action": {"action": "repair_or_publish_back_adjusted_lineage"},
+        }
+    try:
+        current_state = _normalized_back_adjusted_series_state(series_rows[0])
+    except ValueError as exc:
+        return {
+            "outcome": "failed_closed",
+            "reason": "back_adjusted_lineage_invalid",
+            "dataset_id": DATASET_ID,
+            "dataset_version": current_version,
+            "observed_back_adjusted_series_state": series_rows[0],
+            "error": str(exc),
+            "next_action": {"action": "repair_or_publish_back_adjusted_lineage"},
+        }
     with _connect() as connection:
         existing = connection.execute(
             "select publication.dataset_version from readmodel.future_1m_completeness_publication publication join readmodel.dataset_build_state state on state.dataset_id=%s and state.dataset_version=publication.dataset_version where publication.dataset_version=%s and state.status='online' and state.coverage_ready",
@@ -600,9 +630,28 @@ def carry_forward_current_back_adjusted_completeness() -> dict[str, object]:
             "select publication.dataset_version,publication.back_adjusted_series_state,publication.manifest_sha256 from readmodel.future_1m_completeness_publication publication join readmodel.dataset_build_state state on state.dataset_id=%s and state.dataset_version=publication.dataset_version where publication.dataset_version<>%s and state.status='online' and state.coverage_ready order by publication.published_at_utc desc limit 1",
             (DATASET_ID, current_version),
         ).fetchone()
-        if previous is None or not can_carry_forward_back_adjusted_completeness(previous["back_adjusted_series_state"], current_state):
-            raise RuntimeError("back-adjusted completeness cannot carry forward: immutable series lineage changed or is unpublished")
+        if previous is None:
+            return {
+                "outcome": "failed_closed",
+                "reason": "back_adjusted_lineage_unpublished",
+                "dataset_id": DATASET_ID,
+                "dataset_version": current_version,
+                "current_back_adjusted_series_state": current_state,
+                "next_action": {"action": "publish_verified_futures_1m_completeness"},
+            }
         prior_version = str(previous["dataset_version"])
+        previous_state = _normalized_back_adjusted_series_state(previous["back_adjusted_series_state"])
+        if not can_carry_forward_back_adjusted_completeness(previous_state, current_state):
+            return {
+                "outcome": "rebuild_required",
+                "reason": "back_adjusted_lineage_changed",
+                "dataset_id": DATASET_ID,
+                "dataset_version": current_version,
+                "previous_dataset_version": prior_version,
+                "previous_back_adjusted_series_state": previous_state,
+                "current_back_adjusted_series_state": current_state,
+                "next_action": {"action": "build_and_publish_futures_1m_completeness"},
+            }
         copied = connection.execute(
             "insert into readmodel.future_1m_completeness_interval(dataset_version,product_code,exchange,series_type,start_date,end_date,status,availability_ref,session_rule_ref,detail_json,manifest_sha256) select %s,product_code,exchange,series_type,start_date,end_date,status,availability_ref,session_rule_ref,detail_json,manifest_sha256 from readmodel.future_1m_completeness_interval where dataset_version=%s",
             (current_version, prior_version),
@@ -618,4 +667,11 @@ def carry_forward_current_back_adjusted_completeness() -> dict[str, object]:
             "insert into readmodel.dataset_build_state(dataset_id,dataset_version,status,source_generation,coverage_ready,complete,row_count,checksum_sha256,built_at_utc,updated_at_utc) values(%s,%s,'online',%s,true,true,%s,%s,clock_timestamp(),clock_timestamp())",
             (DATASET_ID, current_version, int(state["generation"]), copied, str(previous["manifest_sha256"])),
         )
-    return {"dataset_id": DATASET_ID, "dataset_version": current_version, "carried": True, "carried_from_dataset_version": prior_version, "intervals": copied}
+    return {
+        "dataset_id": DATASET_ID,
+        "dataset_version": current_version,
+        "carried": True,
+        "carried_from_dataset_version": prior_version,
+        "intervals": copied,
+        "current_back_adjusted_series_state": current_state,
+    }
