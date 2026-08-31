@@ -296,3 +296,7 @@ def test_release_database_bootstrap_installs_rebuild_lifecycle_schema() -> None:
 
     assert "create table if not exists readmodel.future_1m_completeness_rebuild" in deployment_sql
     assert "unique (dataset_id,dataset_version,lineage_generation,lineage_transaction_id)" in deployment_sql
+    assert "grant usage,select on all sequences in schema readmodel to current_user" in deployment_sql
+
+    bootstrap_source = (project_root / "scripts" / "deploy" / "bootstrap_database.py").read_text(encoding="utf-8")
+    assert "grant usage,select on all sequences in schema readmodel" in bootstrap_source

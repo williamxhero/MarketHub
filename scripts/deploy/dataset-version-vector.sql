@@ -215,6 +215,7 @@ include(row_count,first_bar_time,last_bar_time);
 
 grant select on audit.dataset_version_state,audit.dataset_version_dependency,audit.dataset_version_publication to public;
 grant select on all tables in schema readmodel to public;
+grant usage,select on all sequences in schema readmodel to current_user;
 grant insert,update on audit.dataset_version_publication to current_user;
 
 commit;

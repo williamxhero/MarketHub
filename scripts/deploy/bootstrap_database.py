@@ -512,6 +512,7 @@ def _dataset_vector_grants(database_user: str) -> str:
         f"grant select on all tables in schema audit to {role};"
         f"grant insert,update on audit.dataset_version_publication to {role};"
         f"grant select,insert,update,delete on all tables in schema readmodel to {role};"
+        f"grant usage,select on all sequences in schema readmodel to {role};"
     )
 
 
