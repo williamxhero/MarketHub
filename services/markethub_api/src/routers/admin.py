@@ -10,6 +10,29 @@ from services import adj_factor_warmup, admin_runtime, stocks
 router = APIRouter()
 
 
+@router.get("/api/admin/futures-1m-completeness-rebuilds")
+async def api_admin_futures_1m_completeness_rebuilds(
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict[str, object]]:
+    return await anyio.to_thread.run_sync(admin_runtime.list_futures_1m_completeness_rebuilds, limit)
+
+
+@router.get("/api/admin/futures-1m-completeness-rebuilds/health")
+async def api_admin_futures_1m_completeness_rebuild_health() -> dict[str, object]:
+    return await anyio.to_thread.run_sync(admin_runtime.get_futures_1m_completeness_rebuild_health)
+
+
+@router.post("/api/admin/futures-1m-completeness-rebuilds/{rebuild_id}/retry")
+async def api_admin_retry_futures_1m_completeness_rebuild(rebuild_id: int) -> dict[str, object]:
+    try:
+        return await anyio.to_thread.run_sync(admin_runtime.retry_futures_1m_completeness_rebuild, rebuild_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "FUTURES_1M_COMPLETENESS_REBUILD_NOT_RECOVERABLE",
+            "message": str(exc),
+        }) from exc
+
+
 class SourceInstancePayload(BaseModel):
     instance_id: str
     package_id: str

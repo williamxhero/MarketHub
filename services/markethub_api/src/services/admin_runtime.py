@@ -37,7 +37,13 @@ from quotemux.store.timeout_admin import QuoteMuxTimeoutAdmin
 from services.minute_coverage_read_model import finalize_stock_1m_daily_coverage_state
 from services.dataset_versions import require_current
 from services.futures_repair_evidence import ManagedBackAdjustedRepairEvidenceRegistry
-from services.futures_1m_completeness import carry_forward_current_back_adjusted_completeness
+from services.futures_1m_completeness import (
+    carry_forward_current_back_adjusted_completeness,
+    get_futures_1m_completeness_rebuild_health as _get_futures_1m_completeness_rebuild_health,
+    list_futures_1m_completeness_rebuilds as _list_futures_1m_completeness_rebuilds,
+    process_next_futures_1m_completeness_rebuild,
+    retry_futures_1m_completeness_rebuild as _retry_futures_1m_completeness_rebuild,
+)
 from services.future_contract_reference_read_model import (
     finalize_future_contract_reference_state,
 )
@@ -48,6 +54,18 @@ from services.runtime_memory import run_with_memory_log
 MANIFEST_FILE_NAME = "quotemux_package.json"
 SECONDS_PER_DAY = 86400
 DEFAULT_TTL_DAYS = 365
+
+
+def list_futures_1m_completeness_rebuilds(limit: int = 50) -> list[dict[str, object]]:
+    return _list_futures_1m_completeness_rebuilds(limit)
+
+
+def retry_futures_1m_completeness_rebuild(rebuild_id: int) -> dict[str, object]:
+    return _retry_futures_1m_completeness_rebuild(rebuild_id)
+
+
+def get_futures_1m_completeness_rebuild_health() -> dict[str, object]:
+    return _get_futures_1m_completeness_rebuild_health()
 DEFAULT_TTL_SECONDS = DEFAULT_TTL_DAYS * SECONDS_PER_DAY
 _CACHE_ADMIN = QuoteMuxCacheAdmin()
 _TIMEOUT_ADMIN = QuoteMuxTimeoutAdmin()
@@ -1398,6 +1416,8 @@ def _finalize_capture_read_models(results: tuple[dict[str, object], ...] | list[
         if capability_id == "futures.quotes.main_continuous.1m":
             try:
                 completeness = carry_forward_current_back_adjusted_completeness()
+                if completeness.get("outcome") == "rebuild_pending":
+                    completeness = process_next_futures_1m_completeness_rebuild()
             except Exception as exc:
                 completeness = {
                     "outcome": "failed_closed",

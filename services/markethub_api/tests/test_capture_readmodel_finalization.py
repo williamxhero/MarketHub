@@ -100,12 +100,19 @@ def test_main_continuous_capture_attempts_strict_back_adjusted_carry_forward(mon
     assert calls == [True]
 
 
-def test_main_continuous_capture_does_not_hide_a_failed_back_adjusted_carry_forward(monkeypatch) -> None:
+def test_main_continuous_capture_preserves_success_and_exposes_failed_closed_finalization(monkeypatch) -> None:
     _configure(monkeypatch)
     monkeypatch.setattr(admin_runtime, "carry_forward_current_back_adjusted_completeness", lambda: (_ for _ in ()).throw(RuntimeError("lineage changed")))
+    result = {"capability_id": "futures.quotes.main_continuous.1m", "status": "success"}
 
-    with pytest.raises(RuntimeError, match="lineage changed"):
-        admin_runtime._finalize_capture_read_models(({"capability_id": "futures.quotes.main_continuous.1m", "status": "success"},))
+    admin_runtime._finalize_capture_read_models((result,))
+
+    finalization = result["read_model_finalization"]["future_1m_completeness"]
+    assert result["status"] == "success"
+    assert finalization["outcome"] == "failed_closed"
+    assert finalization["reason"] == "completeness_finalization_error"
+    assert finalization["error_type"] == "RuntimeError"
+    assert finalization["next_action"]["action"] == "retry_completeness_finalization"
 
 
 def test_future_1m_repair_routes_only_a_managed_registry_id(monkeypatch) -> None:

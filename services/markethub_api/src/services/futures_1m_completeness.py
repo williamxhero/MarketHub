@@ -56,6 +56,26 @@ create table if not exists readmodel.future_1m_completeness_publication (
     carried_from_dataset_version text,
     published_at_utc timestamp with time zone not null default clock_timestamp()
 );
+create table if not exists readmodel.future_1m_completeness_rebuild (
+    rebuild_id bigserial primary key,
+    dataset_id text not null,
+    dataset_version text not null,
+    previous_dataset_version text not null,
+    lineage_generation bigint not null,
+    lineage_transaction_id bigint not null,
+    back_adjusted_series_state jsonb not null,
+    previous_back_adjusted_series_state jsonb not null,
+    status text not null check (status in ('rebuild_pending','rebuild_running','published','failed_closed','superseded')),
+    reason text not null,
+    next_action text not null,
+    attempt_count integer not null default 0,
+    error_json jsonb not null default '{}'::jsonb,
+    created_at_utc timestamp with time zone not null default clock_timestamp(),
+    updated_at_utc timestamp with time zone not null default clock_timestamp(),
+    unique (dataset_id,dataset_version,lineage_generation,lineage_transaction_id)
+);
+create index if not exists future_1m_completeness_rebuild_status_idx
+    on readmodel.future_1m_completeness_rebuild(status,created_at_utc);
 create table if not exists readmodel.future_1m_completeness_revision (
     dataset_version text not null,
     revision_sha256 text not null,
@@ -167,6 +187,218 @@ def can_carry_forward_back_adjusted_completeness(published_state: Mapping[str, o
     published = _normalized_back_adjusted_series_state(published_state)
     current = _normalized_back_adjusted_series_state(current_state)
     return json.dumps(published, sort_keys=True, separators=(",", ":")) == json.dumps(current, sort_keys=True, separators=(",", ":"))
+
+
+def _enqueue_futures_1m_completeness_rebuild(
+    connection: psycopg.Connection[Any],
+    dataset_version: str,
+    previous_dataset_version: str,
+    previous_state: Mapping[str, object],
+    current_state: Mapping[str, object],
+) -> dict[str, object]:
+    row = connection.execute(
+        "insert into readmodel.future_1m_completeness_rebuild("
+        "dataset_id,dataset_version,previous_dataset_version,lineage_generation,lineage_transaction_id,"
+        "back_adjusted_series_state,previous_back_adjusted_series_state,status,reason,next_action) "
+        "values(%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,'rebuild_pending','back_adjusted_lineage_changed',"
+        "'process_futures_1m_completeness_rebuild') "
+        "on conflict(dataset_id,dataset_version,lineage_generation,lineage_transaction_id) do update "
+        "set updated_at_utc=readmodel.future_1m_completeness_rebuild.updated_at_utc "
+        "returning rebuild_id,status,created_at_utc,updated_at_utc",
+        (
+            DATASET_ID,
+            dataset_version,
+            previous_dataset_version,
+            int(current_state["generation"]),
+            int(current_state["transaction_id"]),
+            json.dumps(dict(current_state), sort_keys=True),
+            json.dumps(dict(previous_state), sort_keys=True),
+        ),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("futures 1m completeness rebuild could not be persisted")
+    return dict(row)
+
+
+def _is_conservative_insert_rebuild(
+    previous_state: Mapping[str, object], current_state: Mapping[str, object],
+) -> bool:
+    previous = _normalized_back_adjusted_series_state(previous_state)
+    current = _normalized_back_adjusted_series_state(current_state)
+    return (
+        current["operation"] == "insert"
+        and int(current["generation"]) > int(previous["generation"])
+        and int(current["transaction_id"]) > int(previous["transaction_id"])
+        and int(current["row_count"]) >= int(previous["row_count"])
+        and str(current["first_bar_time"]) <= str(previous["first_bar_time"])
+        and str(current["last_bar_time"]) >= str(previous["last_bar_time"])
+    )
+
+
+def process_next_futures_1m_completeness_rebuild() -> dict[str, object]:
+    """Publish one conservative insert-only rebuild in a single transaction.
+
+    Existing interval assertions are retained without upgrading any missing or
+    unknown interval.  This is safe only for a strictly monotonic insert
+    lineage; every other mutation remains fail-closed for a full audit.
+    """
+    observed_rows = list(_SERIES_READER.list_futures_series_state_batch("back_adjusted_continuous").as_dicts())
+    with _connect() as connection:
+        rebuild = connection.execute(
+            "select rebuild_id,dataset_version,previous_dataset_version,back_adjusted_series_state,"
+            "previous_back_adjusted_series_state from readmodel.future_1m_completeness_rebuild "
+            "where status='rebuild_pending' order by created_at_utc,rebuild_id for update skip locked limit 1"
+        ).fetchone()
+        if rebuild is None:
+            return {"outcome": "idle", "reason": "no_pending_rebuild", "dataset_id": DATASET_ID}
+        rebuild_id = int(rebuild["rebuild_id"])
+        connection.execute(
+            "update readmodel.future_1m_completeness_rebuild set status='rebuild_running',"
+            "attempt_count=attempt_count+1,updated_at_utc=clock_timestamp() where rebuild_id=%s returning attempt_count",
+            (rebuild_id,),
+        ).fetchone()
+        queued_state = _normalized_back_adjusted_series_state(rebuild["back_adjusted_series_state"])
+        previous_state = _normalized_back_adjusted_series_state(rebuild["previous_back_adjusted_series_state"])
+        current_version = current_dataset_version(DATASET_ID)
+        observed_state = (_normalized_back_adjusted_series_state(observed_rows[0]) if len(observed_rows) == 1 else None)
+        if (
+            current_version != str(rebuild["dataset_version"])
+            or observed_state is None
+            or not can_carry_forward_back_adjusted_completeness(queued_state, observed_state)
+        ):
+            connection.execute(
+                "update readmodel.future_1m_completeness_rebuild set status='superseded',"
+                "reason='lineage_changed_during_rebuild',next_action='enqueue_current_lineage',"
+                "updated_at_utc=clock_timestamp() where rebuild_id=%s",
+                (rebuild_id,),
+            )
+            result: dict[str, object] = {
+                "outcome": "superseded", "reason": "lineage_changed_during_rebuild",
+                "rebuild_id": rebuild_id, "dataset_id": DATASET_ID,
+                "dataset_version": str(rebuild["dataset_version"]),
+                "observed_dataset_version": current_version,
+                "observed_back_adjusted_series_state": observed_state or observed_rows,
+                "next_action": {"action": "enqueue_current_lineage"},
+            }
+            if current_version == str(rebuild["dataset_version"]) and observed_state is not None:
+                replacement = _enqueue_futures_1m_completeness_rebuild(
+                    connection, current_version, str(rebuild["previous_dataset_version"]),
+                    previous_state, observed_state,
+                )
+                result["replacement_rebuild_id"] = int(replacement["rebuild_id"])
+                result["next_action"] = {"action": "process_futures_1m_completeness_rebuild"}
+            return result
+        if not _is_conservative_insert_rebuild(previous_state, queued_state):
+            connection.execute(
+                "update readmodel.future_1m_completeness_rebuild set status='failed_closed',"
+                "reason='full_completeness_audit_required',next_action='run_full_futures_1m_completeness_audit',"
+                "updated_at_utc=clock_timestamp() where rebuild_id=%s",
+                (rebuild_id,),
+            )
+            return {
+                "outcome": "failed_closed", "reason": "full_completeness_audit_required",
+                "rebuild_id": rebuild_id, "dataset_id": DATASET_ID,
+                "dataset_version": current_version,
+                "current_back_adjusted_series_state": queued_state,
+                "next_action": {"action": "run_full_futures_1m_completeness_audit"},
+            }
+        manifest_checksum = hashlib.sha256(json.dumps({
+            "contract": "conservative-insert-rebuild-v1",
+            "previous_dataset_version": str(rebuild["previous_dataset_version"]),
+            "dataset_version": current_version,
+            "back_adjusted_series_state": queued_state,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        copied = connection.execute(
+            "insert into readmodel.future_1m_completeness_interval("
+            "dataset_version,product_code,exchange,series_type,start_date,end_date,status,availability_ref,"
+            "session_rule_ref,detail_json,manifest_sha256) "
+            "select %s,product_code,exchange,series_type,start_date,end_date,status,availability_ref,session_rule_ref,"
+            "detail_json || jsonb_build_object('rebuild_contract','conservative-insert-rebuild-v1'),%s "
+            "from readmodel.future_1m_completeness_interval where dataset_version=%s on conflict do nothing",
+            (current_version, manifest_checksum, str(rebuild["previous_dataset_version"])),
+        ).rowcount
+        connection.execute(
+            "insert into readmodel.future_1m_completeness_publication("
+            "dataset_version,back_adjusted_series_state,manifest_sha256,carried_from_dataset_version) "
+            "values(%s,%s::jsonb,%s,%s) on conflict(dataset_version) do nothing",
+            (current_version, json.dumps(queued_state, sort_keys=True), manifest_checksum, str(rebuild["previous_dataset_version"])),
+        )
+        state = connection.execute(
+            "select baseline_id,generation from audit.dataset_version_state where dataset_id=%s", (DATASET_ID,),
+        ).fetchone()
+        if state is None or dataset_version_from_state(DATASET_ID, str(state["baseline_id"]), int(state["generation"])) != current_version:
+            raise RuntimeError("future_bar_1m dataset version changed during completeness rebuild")
+        connection.execute(
+            "insert into readmodel.dataset_build_state("
+            "dataset_id,dataset_version,status,source_generation,coverage_ready,complete,row_count,checksum_sha256,built_at_utc,updated_at_utc) "
+            "values(%s,%s,'online',%s,true,true,%s,%s,clock_timestamp(),clock_timestamp()) "
+            "on conflict(dataset_id,dataset_version) do update set status='online',coverage_ready=true,complete=true,"
+            "row_count=excluded.row_count,checksum_sha256=excluded.checksum_sha256,updated_at_utc=clock_timestamp()",
+            (DATASET_ID, current_version, int(state["generation"]), copied, manifest_checksum),
+        )
+        connection.execute(
+            "update readmodel.future_1m_completeness_rebuild set status='published',reason='verified_conservative_insert_rebuild',"
+            "next_action='none',updated_at_utc=clock_timestamp() where rebuild_id=%s returning updated_at_utc",
+            (rebuild_id,),
+        ).fetchone()
+    return {
+        "outcome": "published", "reason": "verified_conservative_insert_rebuild",
+        "rebuild_id": rebuild_id, "dataset_id": DATASET_ID, "dataset_version": current_version,
+        "intervals": copied, "manifest_sha256": manifest_checksum,
+        "current_back_adjusted_series_state": queued_state, "next_action": {"action": "none"},
+    }
+
+
+def list_futures_1m_completeness_rebuilds(limit: int = 50) -> list[dict[str, object]]:
+    bounded_limit = max(1, min(int(limit), 200))
+    with _connect() as connection:
+        rows = connection.execute(
+            "select rebuild_id,dataset_id,dataset_version,previous_dataset_version,lineage_generation,"
+            "lineage_transaction_id,status,reason,next_action,attempt_count,error_json,created_at_utc,updated_at_utc "
+            "from readmodel.future_1m_completeness_rebuild order by rebuild_id desc limit %s",
+            (bounded_limit,),
+        ).fetchall()
+    return [{
+        **dict(row),
+        "next_action": {"action": str(row["next_action"])},
+    } for row in rows]
+
+
+def retry_futures_1m_completeness_rebuild(rebuild_id: int) -> dict[str, object]:
+    with _connect() as connection:
+        row = connection.execute(
+            "update readmodel.future_1m_completeness_rebuild set status='rebuild_pending',reason='operator_retry',"
+            "next_action='process_futures_1m_completeness_rebuild',error_json='{}'::jsonb,"
+            "updated_at_utc=clock_timestamp() where rebuild_id=%s and status in ('failed_closed','superseded') "
+            "returning rebuild_id,dataset_id,dataset_version,previous_dataset_version,lineage_generation,"
+            "lineage_transaction_id,status,reason,next_action,attempt_count,error_json,created_at_utc,updated_at_utc",
+            (int(rebuild_id),),
+        ).fetchone()
+    if row is None:
+        raise KeyError(f"futures 1m completeness rebuild is not recoverable: {rebuild_id}")
+    return {**dict(row), "next_action": {"action": str(row["next_action"])}}
+
+
+def get_futures_1m_completeness_rebuild_health() -> dict[str, object]:
+    warning_seconds = max(1, int(os.getenv("MARKETHUB_FUTURES_1M_REBUILD_WARNING_SECONDS", "900")))
+    critical_seconds = max(warning_seconds, int(os.getenv("MARKETHUB_FUTURES_1M_REBUILD_CRITICAL_SECONDS", "3600")))
+    with _connect() as connection:
+        row = connection.execute(
+            "select count(*) filter(where status in ('rebuild_pending','rebuild_running')) as pending,"
+            "count(*) filter(where status='failed_closed') as failed_closed,"
+            "coalesce(extract(epoch from (clock_timestamp()-min(created_at_utc) "
+            "filter(where status in ('rebuild_pending','rebuild_running')))),0)::bigint as oldest_pending_seconds "
+            "from readmodel.future_1m_completeness_rebuild"
+        ).fetchone() or {}
+    pending = int(row.get("pending", 0) or 0)
+    failed_closed = int(row.get("failed_closed", 0) or 0)
+    oldest = int(row.get("oldest_pending_seconds", 0) or 0)
+    status = "unhealthy" if failed_closed or oldest >= critical_seconds else "warning" if oldest >= warning_seconds else "healthy"
+    return {
+        "status": status, "pending": pending, "failed_closed": failed_closed,
+        "oldest_pending_seconds": oldest, "warning_seconds": warning_seconds,
+        "critical_seconds": critical_seconds,
+    }
 
 
 def validate_published_futures_1m_completeness(
@@ -642,15 +874,19 @@ def carry_forward_current_back_adjusted_completeness() -> dict[str, object]:
         prior_version = str(previous["dataset_version"])
         previous_state = _normalized_back_adjusted_series_state(previous["back_adjusted_series_state"])
         if not can_carry_forward_back_adjusted_completeness(previous_state, current_state):
+            rebuild = _enqueue_futures_1m_completeness_rebuild(
+                connection, current_version, prior_version, previous_state, current_state,
+            )
             return {
-                "outcome": "rebuild_required",
+                "outcome": str(rebuild["status"]),
                 "reason": "back_adjusted_lineage_changed",
+                "rebuild_id": int(rebuild["rebuild_id"]),
                 "dataset_id": DATASET_ID,
                 "dataset_version": current_version,
                 "previous_dataset_version": prior_version,
                 "previous_back_adjusted_series_state": previous_state,
                 "current_back_adjusted_series_state": current_state,
-                "next_action": {"action": "build_and_publish_futures_1m_completeness"},
+                "next_action": {"action": "process_futures_1m_completeness_rebuild"},
             }
         copied = connection.execute(
             "insert into readmodel.future_1m_completeness_interval(dataset_version,product_code,exchange,series_type,start_date,end_date,status,availability_ref,session_rule_ref,detail_json,manifest_sha256) select %s,product_code,exchange,series_type,start_date,end_date,status,availability_ref,session_rule_ref,detail_json,manifest_sha256 from readmodel.future_1m_completeness_interval where dataset_version=%s",
