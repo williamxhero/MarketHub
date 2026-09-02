@@ -554,13 +554,19 @@ def get_current_bar_health() -> dict[str, object]:
         select count(*) filter (where state='staged')::int as staged_count,
                min(interval_start) filter (where state='staged') as oldest_staged_interval,
                max(selected_at) as last_selected_at,
-               count(*) filter (where state='failed')::int as failed_count
+               count(*) filter (where state='failed')::int as failed_count,
+               count(*) filter (where freq='1m' and state='staged')::int as staged_1m_count,
+               count(*) filter (where freq='30m' and state='staged')::int as staged_30m_count,
+               count(*) filter (where freq='1m' and state='failed')::int as failed_1m_count,
+               count(*) filter (where freq='30m' and state='failed')::int as failed_30m_count,
+               max(selected_at) filter (where freq='1m') as last_selected_1m_at,
+               max(selected_at) filter (where freq='30m') as last_selected_30m_at
         from live.stock_bar_selected
         """
     )
     if frame.empty:
         return {
-            "status": "unhealthy", "capabilities": ["1m"], "clock": clock,
+            "status": "unhealthy", "capabilities": ["1m", "30m"], "clock": clock,
             "worker": {"status": "unknown"}, "providers": {"primary": "mootdx", "fallback": "opentdx", "validator": "efinance"},
             "finalizer": {"status": "unknown"}, "detail": "live staging state is unavailable",
         }
@@ -570,11 +576,16 @@ def get_current_bar_health() -> dict[str, object]:
     status = "unhealthy" if clock["status"] == "unhealthy" else "warning" if staged_count or failed_count else "healthy"
     return {
         "status": status,
-        "capabilities": ["1m"],
+        "capabilities": ["1m", "30m"],
         "clock": clock,
         "worker": {"status": "configured", "deadline_seconds": 8},
         "providers": {"primary": "mootdx", "fallback": "opentdx", "validator": "efinance"},
+        "current_period_policy": {"30m": {"native": "mootdx", "fallback": "derived_core.complete_1m_prefix"}},
         "last_successful_observation": "" if row.get("last_selected_at") is None else str(row["last_selected_at"]),
+        "periods": {
+            "1m": {"staged_count": int(row.get("staged_1m_count", 0) or 0), "failed_count": int(row.get("failed_1m_count", 0) or 0), "last_selected_at": "" if row.get("last_selected_1m_at") is None else str(row["last_selected_1m_at"])},
+            "30m": {"staged_count": int(row.get("staged_30m_count", 0) or 0), "failed_count": int(row.get("failed_30m_count", 0) or 0), "last_selected_at": "" if row.get("last_selected_30m_at") is None else str(row["last_selected_30m_at"])},
+        },
         "finalizer": {
             "status": "backlog" if staged_count else "ready",
             "staged_count": staged_count,
