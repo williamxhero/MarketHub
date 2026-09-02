@@ -397,9 +397,15 @@ class QuoteMuxWorkerGateway:
 
     def _refresh_worker(self, request: CurrentBarRequest) -> CurrentStockQuotesQueryResult:
         if request.freq == "30m":
-            return self._derive_active_30m(request)
+            try:
+                return self._refresh_native_worker(request)
+            except LiveBarUnavailable:
+                return self._derive_active_30m(request)
+        return self._refresh_native_worker(request)
+
+    def _refresh_native_worker(self, request: CurrentBarRequest) -> CurrentStockQuotesQueryResult:
         payload = json.dumps(
-            {"codes": list(request.codes), "effective_now": request.effective_now.isoformat()},
+            {"codes": list(request.codes), "freq": request.freq, "effective_now": request.effective_now.isoformat()},
             ensure_ascii=False,
         )
         executable = os.getenv("MHK_LIVE_INGEST_PYTHON", sys.executable)

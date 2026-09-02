@@ -441,6 +441,33 @@ def test_current_30m_bar_is_derived_only_after_every_elapsed_minute_is_accounted
     assert result.items[0].volume == 350.0
 
 
+def test_current_30m_bar_prefers_a_committed_native_worker_bar(monkeypatch) -> None:
+    current = datetime.fromisoformat("2026-09-02T13:32:08+08:00")
+    native = _current_result().items[0].model_copy(update={
+        "freq": "30m", "trade_time": "2026-09-02T13:30:00+08:00",
+        "interval_start": "2026-09-02T13:30:00+08:00", "interval_end": "2026-09-02T14:00:00+08:00",
+        "observed_at": current.isoformat(), "provider": "mootdx", "observation_version": "native-30m",
+    })
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        live_bars.subprocess,
+        "run",
+        lambda *args, **kwargs: calls.append(json.loads(kwargs["input"])) or subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout=json.dumps({"items": [native.model_dump()], "errors": [], "diagnostics": []}), stderr=""
+        ),
+    )
+    gateway = live_bars.QuoteMuxWorkerGateway(
+        session_resolver=_ActiveSessionResolver(),
+        elapsed_minute_reader=lambda *args: pytest.fail("native 30m must not read 1m inputs"),
+    )
+
+    result = gateway.get_current_quotes(live_bars.CurrentBarRequest(("600519",), "30m", 1, "none", current))
+
+    assert result.items[0].provider == "mootdx"
+    assert result.items[0].source_semantics == "native"
+    assert calls == [{"codes": ["600519"], "freq": "30m", "effective_now": current.isoformat()}]
+
+
 def test_current_30m_bar_refuses_partial_elapsed_minute_input(monkeypatch) -> None:
     current = datetime.fromisoformat("2026-09-02T13:32:08+08:00")
 
