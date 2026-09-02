@@ -25,6 +25,7 @@ def _positive_int_env(name: str, default: int) -> int:
 DATA_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_DATA_ROUTE_TOKENS", 64)
 QUOTE_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_QUOTE_ROUTE_TOKENS", 6)
 FUTURES_PARTIAL_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_FUTURES_PARTIAL_ROUTE_TOKENS", 1)
+LIVE_INGEST_ROUTE_THREAD_TOKENS = _positive_int_env("MHK_LIVE_INGEST_ROUTE_TOKENS", 4)
 QUOTE_ROUTE_POLL_SECONDS = 0.2
 _RESULT = TypeVar("_RESULT")
 
@@ -35,6 +36,7 @@ QUOTE_ROUTE_LIMITER = anyio.CapacityLimiter(QUOTE_ROUTE_THREAD_TOKENS)
 # Partial bars 和 coverage 共用 QuoteMux public reader/DB pool。同步 psycopg
 # 查询不能在 HTTP 客户端断开后可靠取消，因此超额请求必须排队而不能开始新的读取。
 FUTURES_PARTIAL_ROUTE_LIMITER = anyio.CapacityLimiter(FUTURES_PARTIAL_ROUTE_THREAD_TOKENS)
+LIVE_INGEST_ROUTE_LIMITER = anyio.CapacityLimiter(LIVE_INGEST_ROUTE_THREAD_TOKENS)
 _QUOTE_TASKS: set[asyncio.Task[object]] = set()
 
 
@@ -76,6 +78,17 @@ async def run_futures_partial_task(func: Callable[..., _RESULT], *args: object) 
         return _strict_public_call(func, args)
 
     return await anyio.to_thread.run_sync(execute, limiter=FUTURES_PARTIAL_ROUTE_LIMITER)
+
+
+async def run_live_ingest_task(func: Callable[..., _RESULT], *args: object) -> _RESULT:
+    """Call the internal live-ingest gateway without granting public routes write access."""
+    queued_at = time.monotonic()
+
+    def execute() -> _RESULT:
+        record_stage_ms("queue", (time.monotonic() - queued_at) * 1_000)
+        return func(*args)
+
+    return await anyio.to_thread.run_sync(execute, limiter=LIVE_INGEST_ROUTE_LIMITER)
 
 
 async def run_quote_task(

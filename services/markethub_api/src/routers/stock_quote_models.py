@@ -26,6 +26,7 @@ class StockQuotesQueryPayload(BaseModel):
 
     codes: list[str] = Field(min_length=1, description="股票代码列表，推荐每批 100 至 200 只。")
     freq: str = Field(default="1d", description="行情频率，例如 1m 或 1d。")
+    datetime: Literal["", "now"] = Field(default="", description="动态时间锚点；首期仅支持 now。")
     trade_date: str = Field(default="", description="单个交易日，格式 YYYY-MM-DD。")
     start_date: str = Field(default="", description="起始交易日，格式 YYYY-MM-DD。")
     end_date: str = Field(default="", description="结束交易日，格式 YYYY-MM-DD。")
@@ -48,6 +49,20 @@ class StockQuotesQueryPayload(BaseModel):
     data_version: str = Field(default="", description="兼容字段：/api/health 返回的全局市场事实版本。")
     dataset_version: str = Field(default="", description="推荐字段：对应频率的数据集版本；1m 使用 stock_bar_1m。")
 
+    @model_validator(mode="after")
+    def validate_current_mode(self) -> "StockQuotesQueryPayload":
+        if self.datetime != "now":
+            return self
+        if self.freq != "1m":
+            raise ValueError("datetime=now 当前仅支持 freq=1m")
+        if self.adjust != "none":
+            raise ValueError("datetime=now 当前仅支持 adjust=none")
+        if any((self.trade_date, self.start_date, self.end_date, self.start_time, self.end_time)):
+            raise ValueError("datetime=now 不能与交易日期或时间范围参数组合")
+        if self.count is None:
+            self.count = 1
+        return self
+
 
 class StockQuotesVersionedMeta(StockQuotesMeta):
     dataset_version: str = Field(default="", description="实际固定的目标数据集版本。")
@@ -56,6 +71,31 @@ class StockQuotesVersionedMeta(StockQuotesMeta):
 class StockQuotesVersionedQueryResult(BaseModel):
     items: list[StockQuoteItem] = Field(default_factory=list)
     meta: StockQuotesVersionedMeta
+
+
+class CurrentStockQuoteItem(StockQuoteItem):
+    interval_start: str
+    interval_end: str
+    is_final: bool
+    observed_at: str
+    last_trade_at: str | None = None
+    provider: str
+    source_semantics: Literal["native", "derived"]
+    observation_version: str
+    freshness_ms: int
+    degraded: bool = False
+    market_status: str
+
+
+class CurrentStockQuotesMeta(StockQuotesVersionedMeta):
+    effective_now: str
+    historical_dataset_version: str = ""
+
+
+class CurrentStockQuotesQueryResult(BaseModel):
+    items: list[CurrentStockQuoteItem] = Field(default_factory=list)
+    meta: CurrentStockQuotesMeta
+    errors: list[dict[str, object]] = Field(default_factory=list)
 
 
 class StockDailyWindowQueryPayload(BaseModel):
