@@ -396,3 +396,45 @@ def build_current_bar_request(
 def get_current_quotes(request: CurrentBarRequest) -> CurrentStockQuotesQueryResult:
     """Delegate current-Bar retrieval to the internal live-ingest boundary."""
     return _GATEWAY.get_current_quotes(request)
+
+
+def get_current_bar_health() -> dict[str, object]:
+    """Operational state for mutable current Bars, intentionally separate from historical publication."""
+    try:
+        EnvironmentClockHealth().assert_healthy()
+        clock: dict[str, object] = {"status": "healthy"}
+    except LiveClockUnhealthy as exc:
+        clock = {"status": "unhealthy", "detail": str(exc)}
+    frame = query_dataframe(
+        """
+        select count(*) filter (where state='staged')::int as staged_count,
+               min(interval_start) filter (where state='staged') as oldest_staged_interval,
+               max(selected_at) as last_selected_at,
+               count(*) filter (where state='failed')::int as failed_count
+        from live.stock_bar_selected
+        """
+    )
+    if frame.empty:
+        return {
+            "status": "unhealthy", "capabilities": ["1m"], "clock": clock,
+            "worker": {"status": "unknown"}, "providers": {"primary": "mootdx", "fallback": "opentdx", "validator": "efinance"},
+            "finalizer": {"status": "unknown"}, "detail": "live staging state is unavailable",
+        }
+    row = frame.iloc[0]
+    staged_count = int(row.get("staged_count", 0) or 0)
+    failed_count = int(row.get("failed_count", 0) or 0)
+    status = "unhealthy" if clock["status"] == "unhealthy" else "warning" if staged_count or failed_count else "healthy"
+    return {
+        "status": status,
+        "capabilities": ["1m"],
+        "clock": clock,
+        "worker": {"status": "configured", "deadline_seconds": 8},
+        "providers": {"primary": "mootdx", "fallback": "opentdx", "validator": "efinance"},
+        "last_successful_observation": "" if row.get("last_selected_at") is None else str(row["last_selected_at"]),
+        "finalizer": {
+            "status": "backlog" if staged_count else "ready",
+            "staged_count": staged_count,
+            "oldest_overdue_interval": "" if row.get("oldest_staged_interval") is None else str(row["oldest_staged_interval"]),
+            "failed_count": failed_count,
+        },
+    }

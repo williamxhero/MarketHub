@@ -39,7 +39,7 @@ from routers.news import router as news_router
 from routers.p0_fundamentals import router as p0_fundamentals_router
 from routers.rankings import router as rankings_router
 from routers.stocks import router as stocks_router
-from services import adj_factor_warmup, daily_window, reader_packages
+from services import adj_factor_warmup, daily_window, live_bars, reader_packages
 from services.dataset_versions import VERSION_CONTRACT, current_dataset_publications, current_dataset_versions
 from services.versioned_object_cache import snapshot as object_cache_metrics
 from services.market_data_version import current_market_data_version
@@ -275,6 +275,7 @@ async def health() -> dict[str, object]:
         "version_contract": VERSION_CONTRACT,
         "dataset_versions": dataset_versions,
         "dataset_publications": current_dataset_publications(dataset_versions),
+        "live_bars": live_bars.get_current_bar_health(),
         "openapi_url": "/api/openapi.json",
         "docs_url": "/api/openapi",
     }

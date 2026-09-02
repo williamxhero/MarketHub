@@ -352,3 +352,12 @@ def test_current_bar_request_rejects_more_than_twenty_unique_codes() -> None:
             trade_date="", start_date="", end_date="", start_time="", end_time="",
             effective_now=datetime.fromisoformat("2026-09-02T13:30:08+08:00"),
         )
+
+
+def test_health_keeps_live_bar_readiness_separate_from_historical_versions(monkeypatch) -> None:
+    monkeypatch.setattr(live_bars, "get_current_bar_health", lambda: {"status": "warning", "capabilities": ["1m"], "clock": {"status": "healthy"}})
+
+    payload = TestClient(app).get("/api/health").json()
+
+    assert payload["live_bars"] == {"status": "warning", "capabilities": ["1m"], "clock": {"status": "healthy"}}
+    assert "dataset_versions" in payload
