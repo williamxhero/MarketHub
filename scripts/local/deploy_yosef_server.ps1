@@ -339,6 +339,7 @@ if [ "$service_stopped" != 1 ]; then
 fi
 run_privileged_migration
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/live_stock_bar_v1_20260902/release_migration.py" apply
+"$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/live_stock_bar_v2_20260902/release_migration.py" apply
 # 某些构建后端会在源码包目录重新生成 egg-info；发布产物不允许带入 root-owned 构建目录。
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"
 rm -rf "$release_root/QuoteMux_Packages/build"
