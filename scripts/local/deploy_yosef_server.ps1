@@ -338,6 +338,7 @@ if [ "$service_stopped" != 1 ]; then
   service_stopped=1
 fi
 run_privileged_migration
+"$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/live_stock_bar_v1_20260902/release_migration.py" apply
 # 某些构建后端会在源码包目录重新生成 egg-info；发布产物不允许带入 root-owned 构建目录。
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"
 rm -rf "$release_root/QuoteMux_Packages/build"
@@ -406,9 +407,42 @@ for attempt in $(seq 1 20); do
     install -m 0755 "$remote_root/current/MarketHub/migrations/storage_v2_20260823/cleanup_after_migration.sh" "$runtime_root/scripts/storage-v2-cleanup-after-migration.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/publisher/publish_stock_daily_parquet.py" "$runtime_root/publisher/publish_stock_daily_parquet.py"
     sudo -n install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/storage-governance.sh" /usr/local/sbin/markethub-storage-governance
+    cat >/tmp/markethub-live-bar-recovery.service <<RECOVERY_SERVICE
+[Unit]
+Description=MarketHub live Bar recovery
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=$service_user
+Group=$service_group
+EnvironmentFile=$env_path
+Environment=MARKETHUB_RUNTIME_ROOT=$runtime_root
+Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime
+Environment=PYTHONPATH=$remote_root/current/QuoteMux/src
+Environment=QUOTEMUX_PACKAGE_REPO_SPEC=$remote_root/current/QuoteMux_Packages
+Environment=QUOTEMUX_PACKAGE_VENV_ROOT=$package_venv_root
+ExecStart=/bin/sh -c 'printf "{\\"action\\":\\"recover\\"}\\n" | $runtime_root/.venv/bin/python -m quotemux.live_bars_worker'
+RECOVERY_SERVICE
+    cat >/tmp/markethub-live-bar-recovery.timer <<RECOVERY_TIMER
+[Unit]
+Description=Run MarketHub live Bar recovery every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+RECOVERY_TIMER
+    sudo -n install -m 0644 /tmp/markethub-live-bar-recovery.service /etc/systemd/system/markethub-live-bar-recovery.service
+    sudo -n install -m 0644 /tmp/markethub-live-bar-recovery.timer /etc/systemd/system/markethub-live-bar-recovery.timer
+    sudo -n systemctl daemon-reload
+    sudo -n systemctl enable --now markethub-live-bar-recovery.timer
     current_switched=0
     trap - EXIT
-    rm -f "$remote_archive" /tmp/markethub-service
+    rm -f "$remote_archive" /tmp/markethub-service /tmp/markethub-live-bar-recovery.service /tmp/markethub-live-bar-recovery.timer
     exit 0
   fi
   sleep 2
