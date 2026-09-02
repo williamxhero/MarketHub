@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from services.market_breadth import build_market_breadth
+from services.market_breadth import BREADTH_SQL, build_market_breadth
+
+
+def test_universe_requires_positive_listing_qualification() -> None:
+    assert "listed_date is not null" in BREADTH_SQL.lower()
+    assert "trade_date)s::date < delisted_date" in BREADTH_SQL.lower()
 
 
 def test_complete_close_breadth_has_disjoint_universe_accounting() -> None:

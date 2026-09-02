@@ -24,7 +24,8 @@ with catalog as materialized (
 ), universe as materialized (
     select market,code
     from catalog
-    where (case when market='BJSE' then greatest(listed_date,date '2021-11-15') else listed_date end) <= %(trade_date)s::date
+    where listed_date is not null
+      and (case when market='BJSE' then greatest(listed_date,date '2021-11-15') else listed_date end) <= %(trade_date)s::date
       and (delisted_date is null or %(trade_date)s::date < delisted_date)
       and ((market='SHSE' and left(code,1)='6')
         or (market='SZSE' and left(code,1) in ('0','3'))
