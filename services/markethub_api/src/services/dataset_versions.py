@@ -36,6 +36,7 @@ ROUTE_DATASET_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "/api/stocks/quotes/daily-window/query": ("stock_reference", "stock_daily_1d"),
     "/api/stocks/quotes/daily-snapshot": ("stock_daily_1d",),
     "/api/stocks/quotes/daily-local-window": ("stock_daily_1d",),
+    "/api/stocks/market-breadth": ("stock_reference", "stock_daily_1d"),
     "/api/futures/coverage": ("future_bar_1m",),
     "/api/futures/quotes/1m": ("future_bar_1m",),
     "/api/futures/contracts": ("future_contract_reference",),
