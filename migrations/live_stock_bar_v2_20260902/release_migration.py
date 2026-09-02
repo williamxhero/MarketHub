@@ -29,7 +29,7 @@ def preflight() -> dict[str, object]:
     if missing:
         raise RuntimeError(f"missing database environment: {missing}")
     with _connect() as connection:
-        rows = connection.execute("select to_regclass('live.' || name) is not null as present from unnest(%s::text[]) name", (TABLES,)).fetchall()
+        rows = connection.execute("select to_regclass('live.' || name) is not null as present from unnest(%s::text[]) name", (list(TABLES),)).fetchall()
     if not all(bool(row["present"]) for row in rows):
         raise RuntimeError("live stock Bar v1 staging is required before the v2 frequency migration")
     return {"migration_id": MIGRATION_ID, "ready": True}
