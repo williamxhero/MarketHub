@@ -61,6 +61,8 @@ class StockQuotesQueryPayload(BaseModel):
             raise ValueError("datetime=now 不能与交易日期或时间范围参数组合")
         if self.count is None:
             self.count = 1
+        elif self.count != 1:
+            raise ValueError("datetime=now 当前仅支持 count=1")
         return self
 
 

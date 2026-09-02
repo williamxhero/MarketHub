@@ -1,0 +1,7 @@
+{
+  "migration_id": "markethub-live-stock-bar-v1-20260902",
+  "kind": "additive-live-observation-store",
+  "idempotent": true,
+  "rollback": "code rollback is supported; staged observations are retained for recovery and finalization",
+  "steps": ["preflight", "apply", "verify"]
+}
