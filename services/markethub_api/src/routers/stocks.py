@@ -133,6 +133,11 @@ async def _get_current_stock_quotes(
             status_code=503,
             detail={"code": "LIVE_CLOCK_UNHEALTHY", "message": str(exc)},
         ) from exc
+    except live_bars.LiveBarDataIncomplete as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "LIVE_BAR_DATA_INCOMPLETE", "message": str(exc)},
+        ) from exc
     except live_bars.LiveBarUnavailable as exc:
         raise HTTPException(
             status_code=503,

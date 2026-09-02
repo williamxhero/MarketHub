@@ -53,8 +53,8 @@ class StockQuotesQueryPayload(BaseModel):
     def validate_current_mode(self) -> "StockQuotesQueryPayload":
         if self.datetime != "now":
             return self
-        if self.freq != "1m":
-            raise ValueError("datetime=now 当前仅支持 freq=1m")
+        if self.freq not in {"1m", "30m"}:
+            raise ValueError("datetime=now 当前仅支持 freq=1m 或 freq=30m")
         if self.adjust != "none":
             raise ValueError("datetime=now 当前仅支持 adjust=none")
         if any((self.trade_date, self.start_date, self.end_date, self.start_time, self.end_time)):

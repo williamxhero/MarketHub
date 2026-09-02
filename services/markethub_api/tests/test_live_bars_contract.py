@@ -133,6 +133,24 @@ def test_current_bar_reports_unavailable_gateway(monkeypatch) -> None:
     assert response.json()["code"] == "LIVE_INGEST_UNAVAILABLE"
 
 
+def test_current_period_with_missing_elapsed_inputs_has_a_stable_public_error(monkeypatch) -> None:
+    class _IncompleteGateway:
+        @staticmethod
+        def get_current_quotes(request):
+            del request
+            raise live_bars.LiveBarDataIncomplete("current 30m Bar has unexplained elapsed minutes: 2026-09-02T13:30:00+08:00")
+
+    monkeypatch.setattr(live_bars, "_GATEWAY", _IncompleteGateway())
+
+    response = TestClient(app).get(
+        "/api/stocks/quotes",
+        params={"code": "600519", "freq": "30m", "datetime": "now"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "LIVE_BAR_DATA_INCOMPLETE"
+
+
 def test_current_bar_gateway_maps_a_committed_worker_result(monkeypatch) -> None:
     captured: dict[str, object] = {}
     worker_payload = {
@@ -363,6 +381,95 @@ def test_current_bar_request_enforces_the_deployed_liquid_stock_allowlist(monkey
             trade_date="", start_date="", end_date="", start_time="", end_time="",
             effective_now=datetime.fromisoformat("2026-09-02T13:30:08+08:00"),
         )
+
+
+def test_current_30m_bar_is_derived_only_after_every_elapsed_minute_is_accounted_for(monkeypatch) -> None:
+    current = datetime.fromisoformat("2026-09-02T13:32:08+08:00")
+    worker_payload = {
+        "items": [{
+            "code": "600519", "trade_time": "2026-09-02T13:32:00+08:00", "freq": "1m",
+            "open": 1401.5, "high": 1403.0, "low": 1401.0, "close": 1402.5,
+            "volume": 130, "amount": 182325.0, "adjust": "none", "is_suspended": False, "is_st": False,
+            "interval_start": "2026-09-02T13:32:00+08:00", "interval_end": "2026-09-02T13:33:00+08:00",
+            "is_final": False, "observed_at": current.isoformat(), "last_trade_at": "2026-09-02T13:32:00+08:00",
+            "provider": "mootdx", "source_semantics": "native", "observation_version": "live-1332",
+            "freshness_ms": 0, "degraded": False, "market_status": "trading",
+        }], "errors": [], "diagnostics": [],
+    }
+    monkeypatch.setattr(
+        live_bars.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args=args[0], returncode=0, stdout=json.dumps(worker_payload), stderr=""),
+    )
+
+    class _ElapsedMinuteReader:
+        @staticmethod
+        def read_finalized(code, expected_starts):
+            assert code == "600519"
+            assert expected_starts == (
+                "2026-09-02T13:30:00+08:00",
+                "2026-09-02T13:31:00+08:00",
+            )
+            return [
+                {"interval_start": expected_starts[0], "open": 1400.0, "high": 1401.0, "low": 1399.0, "close": 1400.5, "volume": 100, "amount": 140050.0, "observation_version": "final-1330"},
+                {"interval_start": expected_starts[1], "open": 1400.5, "high": 1402.0, "low": 1400.0, "close": 1401.5, "volume": 120, "amount": 168180.0, "observation_version": "final-1331"},
+            ]
+
+    def derive(code, expected_starts, minute_bars):
+        assert code == "600519"
+        assert expected_starts == [
+            "2026-09-02T13:30:00+08:00",
+            "2026-09-02T13:31:00+08:00",
+            "2026-09-02T13:32:00+08:00",
+        ]
+        assert [item["interval_start"] for item in minute_bars] == expected_starts
+        return {"code": code, "interval_start": expected_starts[0], "open": 1400.0, "high": 1403.0, "low": 1399.0, "close": 1402.5, "volume": 350, "amount": 490555.0, "source_semantics": "derived"}
+
+    gateway = live_bars.QuoteMuxWorkerGateway(
+        session_resolver=_ActiveSessionResolver(),
+        elapsed_minute_reader=_ElapsedMinuteReader(),
+        current_period_deriver=derive,
+    )
+
+    result = gateway.get_current_quotes(live_bars.CurrentBarRequest(("600519",), "30m", 1, "none", current))
+
+    assert result.items[0].freq == "30m"
+    assert result.items[0].interval_start == "2026-09-02T13:30:00+08:00"
+    assert result.items[0].interval_end == "2026-09-02T14:00:00+08:00"
+    assert result.items[0].is_final is False
+    assert result.items[0].source_semantics == "derived"
+    assert result.items[0].volume == 350.0
+
+
+def test_current_30m_bar_refuses_partial_elapsed_minute_input(monkeypatch) -> None:
+    current = datetime.fromisoformat("2026-09-02T13:32:08+08:00")
+
+    class _ElapsedMinuteReader:
+        @staticmethod
+        def read_finalized(code, expected_starts):
+            del code, expected_starts
+            return []
+
+    gateway = live_bars.QuoteMuxWorkerGateway(
+        session_resolver=_ActiveSessionResolver(),
+        elapsed_minute_reader=_ElapsedMinuteReader(),
+        current_period_deriver=lambda *args: pytest.fail("partial period must not be derived"),
+    )
+    current_item = _current_result().items[0].model_copy(update={
+        "trade_time": "2026-09-02T13:32:00+08:00",
+        "interval_start": "2026-09-02T13:32:00+08:00",
+        "interval_end": "2026-09-02T13:33:00+08:00",
+        "observed_at": current.isoformat(),
+    })
+    worker_payload = {"items": [current_item.model_dump()], "errors": [], "diagnostics": []}
+    monkeypatch.setattr(
+        live_bars.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args=args[0], returncode=0, stdout=json.dumps(worker_payload), stderr=""),
+    )
+
+    with pytest.raises(live_bars.LiveBarDataIncomplete, match="13:30"):
+        gateway.get_current_quotes(live_bars.CurrentBarRequest(("600519",), "30m", 1, "none", current))
 
 
 def test_health_keeps_live_bar_readiness_separate_from_historical_versions(monkeypatch) -> None:
