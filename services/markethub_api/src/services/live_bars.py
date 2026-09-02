@@ -115,7 +115,8 @@ class PostgresFinalizedCurrentBarReader:
             if row is None:
                 errors.append({"code": code, "message": "no finalized eligible 1m Bar in canonical history"})
                 continue
-            interval_start = row["bar_time"].to_pydatetime().astimezone(SHANGHAI)
+            raw_bar_time = row["bar_time"].to_pydatetime()
+            interval_start = raw_bar_time.replace(tzinfo=SHANGHAI) if raw_bar_time.tzinfo is None else raw_bar_time.astimezone(SHANGHAI)
             items.append(
                 CurrentStockQuoteItem(
                     code=code, trade_time=interval_start.isoformat(), freq="1m",

@@ -372,3 +372,19 @@ def test_health_keeps_live_bar_readiness_separate_from_historical_versions(monke
 
     assert payload["live_bars"] == {"status": "warning", "capabilities": ["1m"], "clock": {"status": "healthy"}}
     assert "dataset_versions" in payload
+
+
+def test_finalized_history_reader_preserves_naive_database_bar_time_as_shanghai(monkeypatch) -> None:
+    monkeypatch.setattr(
+        live_bars,
+        "query_dataframe",
+        lambda *args, **kwargs: pd.DataFrame([{
+            "market": "SHSE", "code": "600519", "bar_time": pd.Timestamp("2026-09-02 15:00:00"),
+            "open": 1400.0, "high": 1401.0, "low": 1399.0, "close": 1400.5, "volume": 1200, "amount": 1_680_600.0,
+        }]),
+    )
+    request = live_bars.CurrentBarRequest(("600519",), "1m", 1, "none", datetime.fromisoformat("2026-09-02T21:00:00+08:00"))
+
+    result = live_bars.PostgresFinalizedCurrentBarReader().get_latest_finalized(request, "closed")
+
+    assert result.items[0].interval_start == "2026-09-02T15:00:00+08:00"
