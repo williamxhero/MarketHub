@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import os
 import subprocess
@@ -11,6 +11,7 @@ import threading
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+from quotemux.infra.db.client import query_dataframe
 from routers.stock_quote_models import CurrentStockQuoteItem, CurrentStockQuotesMeta, CurrentStockQuotesQueryResult
 from services.common import require_adjust, require_codes, require_quote_freq
 
@@ -31,6 +32,111 @@ class LiveBarUnavailable(RuntimeError):
     """The public API could not reach its internal live-ingest worker."""
 
 
+class LiveClockUnhealthy(LiveBarUnavailable):
+    """The host clock cannot safely label and persist a current Bar."""
+
+
+class LiveClockHealth(Protocol):
+    def assert_healthy(self) -> None: ...
+
+
+class EnvironmentClockHealth:
+    """Consume NTP skew measured by the service supervisor without trusting host timezone."""
+
+    def assert_healthy(self) -> None:
+        try:
+            skew_seconds = abs(float(os.getenv("MHK_LIVE_CLOCK_SKEW_SECONDS", "0")))
+            tolerance_seconds = float(os.getenv("MHK_LIVE_CLOCK_SKEW_TOLERANCE_SECONDS", "2"))
+        except ValueError as exc:
+            raise LiveClockUnhealthy("clock health configuration is invalid") from exc
+        if tolerance_seconds < 0 or skew_seconds > tolerance_seconds:
+            raise LiveClockUnhealthy(f"clock skew {skew_seconds:.3f}s exceeds tolerance {tolerance_seconds:.3f}s")
+
+
+@dataclass(frozen=True)
+class CurrentBarSession:
+    market_status: str
+    active: bool
+
+
+class CurrentBarSessionResolver(Protocol):
+    def resolve(self, effective_now: datetime) -> CurrentBarSession: ...
+
+
+class FinalizedCurrentBarReader(Protocol):
+    def get_latest_finalized(self, request: CurrentBarRequest, market_status: str) -> CurrentStockQuotesQueryResult: ...
+
+
+class ChinaStockSessionResolver:
+    """Resolve China A-share continuous-trading eligibility from the durable calendar."""
+
+    def resolve(self, effective_now: datetime) -> CurrentBarSession:
+        local_now = effective_now.astimezone(SHANGHAI)
+        calendar = query_dataframe(
+            "select is_open from ref.trade_calendar where exchange in ('SSE', 'SHSE') and trade_date=%s::date limit 1",
+            (local_now.date().isoformat(),),
+        )
+        if calendar.empty:
+            raise LiveBarUnavailable("trading calendar is unavailable for the requested date")
+        if not bool(calendar.iloc[0]["is_open"]):
+            return CurrentBarSession(market_status="closed", active=False)
+        clock = local_now.timetz().replace(tzinfo=None)
+        if (clock.hour, clock.minute) < (9, 30):
+            return CurrentBarSession(market_status="preopen", active=False)
+        if (clock.hour, clock.minute) < (11, 30):
+            return CurrentBarSession(market_status="trading", active=True)
+        if (clock.hour, clock.minute) < (13, 0):
+            return CurrentBarSession(market_status="recess", active=False)
+        if (clock.hour, clock.minute) < (15, 0):
+            return CurrentBarSession(market_status="trading", active=True)
+        return CurrentBarSession(market_status="closed", active=False)
+
+
+class PostgresFinalizedCurrentBarReader:
+    """Read only canonical final history for non-active current-mode requests."""
+
+    def get_latest_finalized(self, request: CurrentBarRequest, market_status: str) -> CurrentStockQuotesQueryResult:
+        frame = query_dataframe(
+            """
+            select distinct on (bars.code) bars.market, bars.code, bars.bar_time, bars.open, bars.high, bars.low,
+                   bars.close, bars.volume, bars.amount
+            from fact.stock_bar_1m bars
+            where bars.code = any(%s::character(6)[])
+              and bars.bar_time < %s::timestamptz
+            order by bars.code, bars.bar_time desc
+            """,
+            (list(request.codes), request.effective_now.astimezone(SHANGHAI)),
+        )
+        rows = {str(row["code"]).zfill(6): row for _, row in frame.iterrows()}
+        items: list[CurrentStockQuoteItem] = []
+        errors: list[dict[str, object]] = []
+        for code in request.codes:
+            row = rows.get(code)
+            if row is None:
+                errors.append({"code": code, "message": "no finalized eligible 1m Bar in canonical history"})
+                continue
+            interval_start = row["bar_time"].to_pydatetime().astimezone(SHANGHAI)
+            items.append(
+                CurrentStockQuoteItem(
+                    code=code, trade_time=interval_start.isoformat(), freq="1m",
+                    open=float(row["open"]), high=float(row["high"]), low=float(row["low"]), close=float(row["close"]),
+                    volume=float(row["volume"]), amount=float(row["amount"]), adjust="none", is_suspended=False, is_st=False,
+                    interval_start=interval_start.isoformat(), interval_end=(interval_start + timedelta(minutes=1)).isoformat(),
+                    is_final=True, observed_at=interval_start.isoformat(), last_trade_at=interval_start.isoformat(),
+                    provider="canonical_history", source_semantics="native", observation_version=f"final:{interval_start.isoformat()}",
+                    freshness_ms=0, degraded=False, market_status=market_status,
+                )
+            )
+        if not items:
+            detail = str(errors[0]["message"]) if errors else "no finalized current Bar"
+            raise LiveBarUnavailable(detail)
+        return CurrentStockQuotesQueryResult(
+            items=items,
+            meta=CurrentStockQuotesMeta(total_rows=len(items), returned_rows=len(items), complete=not errors, truncated=False, effective_now=request.effective_now.isoformat()),
+            errors=errors,
+        )
+
+
 class CurrentBarGateway(Protocol):
     def get_current_quotes(self, request: CurrentBarRequest) -> CurrentStockQuotesQueryResult: ...
 
@@ -43,15 +149,67 @@ class _UnavailableCurrentBarGateway:
 class QuoteMuxWorkerGateway:
     """Invoke the separately deployed QuoteMux live-ingest command worker."""
 
-    def __init__(self) -> None:
+    def __init__(self, session_resolver: CurrentBarSessionResolver | None = None, finalized_reader: FinalizedCurrentBarReader | None = None, clock_health: LiveClockHealth | None = None) -> None:
         self._cache: dict[tuple[str, str, str, str, str, str], CurrentStockQuotesQueryResult] = {}
         self._cache_index: dict[tuple[str, str, str, str], tuple[str, str, str, str, str, str]] = {}
         self._inflight: dict[tuple[str, str, str, str], Future[CurrentStockQuotesQueryResult]] = {}
         self._lock = threading.Lock()
+        self._session_resolver = session_resolver or ChinaStockSessionResolver()
+        self._finalized_reader = finalized_reader or PostgresFinalizedCurrentBarReader()
+        self._clock_health = clock_health or EnvironmentClockHealth()
 
     def get_current_quotes(self, request: CurrentBarRequest) -> CurrentStockQuotesQueryResult:
+        self._clock_health.assert_healthy()
+        session = self._session_resolver.resolve(request.effective_now)
+        if not session.active:
+            return self._finalized_reader.get_latest_finalized(request, session.market_status)
         if len(request.codes) != 1:
-            return self._refresh_worker(request)
+            return self._get_active_batch(request)
+        return self._get_active_single(request)
+
+    def _get_active_batch(self, request: CurrentBarRequest) -> CurrentStockQuotesQueryResult:
+        try:
+            configured_workers = int(os.getenv("MHK_LIVE_BATCH_MAX_WORKERS", "6"))
+        except ValueError:
+            configured_workers = 6
+        max_workers = max(4, min(8, configured_workers))
+        child_results: dict[str, CurrentStockQuotesQueryResult] = {}
+        child_errors: dict[str, dict[str, object]] = {}
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(request.codes))) as executor:
+            futures = {
+                code: executor.submit(
+                    self._get_active_single,
+                    CurrentBarRequest(codes=(code,), freq=request.freq, count=request.count, adjust=request.adjust, effective_now=request.effective_now),
+                )
+                for code in request.codes
+            }
+            for code, future in futures.items():
+                try:
+                    child_results[code] = future.result()
+                except LiveBarUnavailable as exc:
+                    child_errors[code] = {"code": code, "message": str(exc)}
+        items: list[CurrentStockQuoteItem] = []
+        errors: list[dict[str, object]] = []
+        diagnostics: list[dict[str, object]] = []
+        for code in request.codes:
+            result = child_results.get(code)
+            if result is None:
+                errors.append(child_errors[code])
+                continue
+            items.extend(result.items)
+            errors.extend(result.errors)
+            diagnostics.extend(result.diagnostics)
+        if not items:
+            detail = str(errors[0].get("message", "no current Bar committed")) if errors else "no current Bar committed"
+            raise LiveBarUnavailable(detail)
+        return CurrentStockQuotesQueryResult(
+            items=items,
+            meta=CurrentStockQuotesMeta(total_rows=len(items), returned_rows=len(items), complete=not errors, truncated=False, effective_now=request.effective_now.isoformat(), historical_dataset_version=""),
+            errors=errors,
+            diagnostics=diagnostics,
+        )
+
+    def _get_active_single(self, request: CurrentBarRequest) -> CurrentStockQuotesQueryResult:
         base_key = self._base_key(request)
         cached = self._cached(base_key, request)
         if cached is not None:
@@ -223,8 +381,11 @@ def build_current_bar_request(
         raise ValueError("datetime=now 当前仅支持 adjust=none")
     if count not in {None, 1}:
         raise ValueError("datetime=now 当前仅支持 count=1")
+    normalized_codes = tuple(require_codes(code, codes))
+    if len(normalized_codes) > 20:
+        raise ValueError("datetime=now accepts at most 20 unique codes")
     return CurrentBarRequest(
-        codes=tuple(require_codes(code, codes)),
+        codes=normalized_codes,
         freq=normalized_freq,
         count=count or 1,
         adjust=normalized_adjust,

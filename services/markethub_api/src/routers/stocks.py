@@ -128,6 +128,11 @@ async def _get_current_stock_quotes(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except live_bars.LiveClockUnhealthy as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "LIVE_CLOCK_UNHEALTHY", "message": str(exc)},
+        ) from exc
     except live_bars.LiveBarUnavailable as exc:
         raise HTTPException(
             status_code=503,
