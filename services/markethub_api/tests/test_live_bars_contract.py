@@ -136,6 +136,9 @@ def test_current_bar_gateway_maps_a_committed_worker_result(monkeypatch) -> None
             }
         ],
         "errors": [],
+        "diagnostics": [
+            {"code": "600519", "validator": "efinance", "status": "warning", "difference_ratio": 0.02},
+        ],
     }
 
     def fake_run(*args, **kwargs):
@@ -151,6 +154,7 @@ def test_current_bar_gateway_maps_a_committed_worker_result(monkeypatch) -> None
     )
 
     assert result.items[0].observation_version == "42"
+    assert result.diagnostics == [{"code": "600519", "validator": "efinance", "status": "warning", "difference_ratio": 0.02}]
     assert json.loads(captured["kwargs"]["input"])["codes"] == ["600519"]
 
 
