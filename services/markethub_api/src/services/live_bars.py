@@ -384,6 +384,12 @@ def build_current_bar_request(
     normalized_codes = tuple(require_codes(code, codes))
     if len(normalized_codes) > 20:
         raise ValueError("datetime=now accepts at most 20 unique codes")
+    allowlist_text = os.getenv("MHK_LIVE_ALLOWED_CODES", "")
+    if allowlist_text:
+        allowlist = set(require_codes("", allowlist_text))
+        disallowed = [item for item in normalized_codes if item not in allowlist]
+        if disallowed:
+            raise ValueError(f"datetime=now code is outside the live allowlist: {','.join(disallowed)}")
     return CurrentBarRequest(
         codes=normalized_codes,
         freq=normalized_freq,

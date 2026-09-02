@@ -354,6 +354,17 @@ def test_current_bar_request_rejects_more_than_twenty_unique_codes() -> None:
         )
 
 
+def test_current_bar_request_enforces_the_deployed_liquid_stock_allowlist(monkeypatch) -> None:
+    monkeypatch.setenv("MHK_LIVE_ALLOWED_CODES", "600519,000001")
+
+    with pytest.raises(ValueError, match="allowlist"):
+        live_bars.build_current_bar_request(
+            code="600000", codes="", freq="1m", count=1, adjust="none",
+            trade_date="", start_date="", end_date="", start_time="", end_time="",
+            effective_now=datetime.fromisoformat("2026-09-02T13:30:08+08:00"),
+        )
+
+
 def test_health_keeps_live_bar_readiness_separate_from_historical_versions(monkeypatch) -> None:
     monkeypatch.setattr(live_bars, "get_current_bar_health", lambda: {"status": "warning", "capabilities": ["1m"], "clock": {"status": "healthy"}})
 
