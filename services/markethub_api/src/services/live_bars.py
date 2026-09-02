@@ -145,6 +145,7 @@ class QuoteMuxWorkerGateway:
             items=[item.model_copy(update={"freshness_ms": age_ms, "degraded": degraded}) for item in result.items],
             meta=result.meta.model_copy(update={"effective_now": request.effective_now.isoformat()}),
             errors=result.errors,
+            diagnostics=result.diagnostics,
         )
 
     def _refresh_worker(self, request: CurrentBarRequest) -> CurrentStockQuotesQueryResult:
@@ -172,8 +173,9 @@ class QuoteMuxWorkerGateway:
             result = json.loads(completed.stdout)
             raw_items = result.get("items", [])
             raw_errors = result.get("errors", [])
-            if not isinstance(raw_items, list) or not isinstance(raw_errors, list):
-                raise ValueError("worker response has invalid items/errors")
+            raw_diagnostics = result.get("diagnostics", [])
+            if not isinstance(raw_items, list) or not isinstance(raw_errors, list) or not isinstance(raw_diagnostics, list):
+                raise ValueError("worker response has invalid items/errors/diagnostics")
             items = [CurrentStockQuoteItem.model_validate(item) for item in raw_items]
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             raise LiveBarUnavailable(f"live-ingest worker returned invalid response: {exc}") from exc
@@ -190,6 +192,7 @@ class QuoteMuxWorkerGateway:
                 effective_now=request.effective_now.isoformat(), historical_dataset_version="",
             ),
             errors=[dict(item) for item in raw_errors if isinstance(item, dict)],
+            diagnostics=[dict(item) for item in raw_diagnostics if isinstance(item, dict)],
         )
 
 

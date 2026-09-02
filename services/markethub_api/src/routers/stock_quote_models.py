@@ -98,6 +98,7 @@ class CurrentStockQuotesQueryResult(BaseModel):
     items: list[CurrentStockQuoteItem] = Field(default_factory=list)
     meta: CurrentStockQuotesMeta
     errors: list[dict[str, object]] = Field(default_factory=list)
+    diagnostics: list[dict[str, object]] = Field(default_factory=list)
 
 
 class StockDailyWindowQueryPayload(BaseModel):
