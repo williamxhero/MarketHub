@@ -193,3 +193,15 @@ def test_stock_smoke_uses_the_health_discovered_required_data_version() -> None:
 
     assert data_version["required"] is True
     assert data_version["schema"]["minLength"] == 1
+
+
+def test_peer_migration_temporarily_grants_postgres_runtime_traverse_and_restores_it() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'peer_runtime_original_group="$(stat -c %G "$runtime_root")"' in source
+    assert 'peer_runtime_original_mode="$(stat -c %a "$runtime_root")"' in source
+    assert 'sudo -n chgrp postgres "$runtime_root"' in source
+    assert 'sudo -n chmod g+x "$runtime_root"' in source
+    assert 'sudo -n chgrp "$peer_runtime_original_group" "$runtime_root"' in source
+    assert 'sudo -n chmod "$peer_runtime_original_mode" "$runtime_root"' in source
+    assert source.count("restore_peer_runtime_access") >= 3

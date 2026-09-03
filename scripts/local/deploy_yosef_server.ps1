@@ -127,6 +127,9 @@ service_stopped=0
 migration_stage=""
 publisher_target_stage=""
 reader_target_stage=""
+peer_runtime_access_changed=0
+peer_runtime_original_group=""
+peer_runtime_original_mode=""
 env_backup="/tmp/${service_name}-${release_name}.env.bak"
 unit_path="/etc/systemd/system/$service_name.service"
 unit_backup="/tmp/${service_name}-${release_name}.service.bak"
@@ -138,7 +141,15 @@ mkdir -p "$shared_backup"
 if test -d "$runtime_root/scripts"; then cp -a "$runtime_root/scripts" "$shared_backup/scripts"; scripts_existed=1; fi
 if test -d "$runtime_root/publisher"; then cp -a "$runtime_root/publisher" "$shared_backup/publisher"; publisher_existed=1; fi
 if sudo -n test -f /usr/local/sbin/markethub-storage-governance; then sudo -n cp /usr/local/sbin/markethub-storage-governance "$shared_backup/governance"; governance_existed=1; fi
+restore_peer_runtime_access() {
+  if [ "$peer_runtime_access_changed" = 1 ]; then
+    sudo -n chgrp "$peer_runtime_original_group" "$runtime_root"
+    sudo -n chmod "$peer_runtime_original_mode" "$runtime_root"
+    peer_runtime_access_changed=0
+  fi
+}
 restart_on_exit() {
+  restore_peer_runtime_access || true
   if [ -n "$migration_stage" ]; then sudo -n rm -rf "$migration_stage" || true; fi
   if [ -n "$publisher_target_stage" ]; then sudo -n rm -f "$publisher_target_stage" || true; fi
   if [ -n "$reader_target_stage" ]; then sudo -n rm -f "$reader_target_stage" || true; fi
@@ -220,6 +231,13 @@ case "$migration_mode" in
     if test -f "$reader_env_path"; then cp "$reader_env_path" "$reader_stage"; fi
     sudo -n chown -R postgres:postgres "$migration_stage"
     sudo -n chmod 0700 "$migration_stage"
+    # The runtime root may intentionally be 0700. Grant postgres only temporary
+    # directory traversal so peer-mode migration can execute the shared venv.
+    peer_runtime_original_group="$(stat -c %G "$runtime_root")"
+    peer_runtime_original_mode="$(stat -c %a "$runtime_root")"
+    peer_runtime_access_changed=1
+    sudo -n chgrp postgres "$runtime_root"
+    sudo -n chmod g+x "$runtime_root"
     sudo -n -u postgres env \
       MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_PEER=1 \
       MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_MIGRATION_DB_SOCKET_DIR=/var/run/postgresql \
@@ -232,6 +250,7 @@ case "$migration_mode" in
       MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT=1 \
       PYTHONPATH="$migration_stage/code" \
       "$runtime_root/.venv/bin/python" "$migration_stage/code/release_migration.py"
+    restore_peer_runtime_access
     publisher_target_stage="${publisher_env_path}.${release_name}.new"
     reader_target_stage="${reader_env_path}.${release_name}.new"
     sudo -n install -o "$service_user" -g "$service_group" -m 0600 "$publisher_stage" "$publisher_target_stage"
