@@ -205,3 +205,12 @@ def test_peer_migration_temporarily_grants_postgres_runtime_traverse_and_restore
     assert 'sudo -n chgrp "$peer_runtime_original_group" "$runtime_root"' in source
     assert 'sudo -n chmod "$peer_runtime_original_mode" "$runtime_root"' in source
     assert source.count("restore_peer_runtime_access") >= 3
+
+
+def test_live_bar_recovery_unit_uses_worker_cli_without_shell_json() -> None:
+    source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root" in source
+    assert "Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime" not in source
+    assert 'ExecStart=$runtime_root/.venv/bin/python -m quotemux.live_bars_worker --recover' in source
+    assert 'printf "{\\"action\\":\\"recover\\"}' not in source

@@ -386,7 +386,7 @@ EnvironmentFile=$reader_env_path
 Environment=MARKETHUB_RUNTIME_ROOT=$runtime_root
 Environment=MARKETHUB_DATA_ROOT=$runtime_root/store
 Environment=MARKETHUB_RELEASE=$release_name
-Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime
+Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root
 Environment=PYTHONPATH=$remote_root/current/QuoteMux/src:$remote_root/current/MarketHub/services/markethub_api/src
 Environment=QUOTEMUX_PACKAGE_REPO_SPEC=$remote_root/current/QuoteMux_Packages
 Environment=QUOTEMUX_PACKAGE_VENV_ROOT=$package_venv_root
@@ -438,11 +438,11 @@ User=$service_user
 Group=$service_group
 EnvironmentFile=$env_path
 Environment=MARKETHUB_RUNTIME_ROOT=$runtime_root
-Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime
+Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root
 Environment=PYTHONPATH=$remote_root/current/QuoteMux/src
 Environment=QUOTEMUX_PACKAGE_REPO_SPEC=$remote_root/current/QuoteMux_Packages
 Environment=QUOTEMUX_PACKAGE_VENV_ROOT=$package_venv_root
-ExecStart=/bin/sh -c 'printf "{\\"action\\":\\"recover\\"}\\n" | $runtime_root/.venv/bin/python -m quotemux.live_bars_worker'
+ExecStart=$runtime_root/.venv/bin/python -m quotemux.live_bars_worker --recover
 RECOVERY_SERVICE
     cat >/tmp/markethub-live-bar-recovery.timer <<RECOVERY_TIMER
 [Unit]

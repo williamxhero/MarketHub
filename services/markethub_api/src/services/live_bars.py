@@ -23,9 +23,9 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 def _live_ingest_deadline_seconds() -> int:
     try:
-        configured = int(os.getenv("MHK_LIVE_INGEST_DEADLINE_SECONDS", "15"))
+        configured = int(os.getenv("MHK_LIVE_INGEST_DEADLINE_SECONDS", "30"))
     except ValueError:
-        configured = 15
+        configured = 30
     return max(8, min(30, configured))
 
 
