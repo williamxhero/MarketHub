@@ -145,27 +145,95 @@ async def _get_current_stock_quotes(
         ) from exc
 
 
-@router.get("/api/stocks/quotes", summary='返回股票行情数据和完整性元信息，适合单股、多股批量查询、本地扫描和需要确认每只股票覆盖情况的调用场景', description='`GET` 返回股票行情数据和完整性元信息，适合单股、多股批量查询、本地扫描和需要确认每只股票覆盖情况的调用场景。\n\n## 查询参数\n\n- `code`（`str`）：单个股票代码；与 `codes` 至少传一个。\n- `codes`（`str`）：多个股票代码，逗号分隔；与 `code` 至少传一个。\n- `freq`（`str`，默认 `1d`）：行情频率，可选 `tick`、`1m`、`5m`、`15m`、`30m`、`60m`、`1d`、`1w`、`1mo`。\n- `trade_date`（`str`）：交易日期，格式 `YYYY-MM-DD`。\n- `start_date`（`str`）：起始日期，格式 `YYYY-MM-DD`。\n- `end_date`（`str`）：结束日期，格式 `YYYY-MM-DD`。\n- `start_time`（`str`）：起始时间；分钟行情可传完整时间字符串。\n- `end_time`（`str`）：结束时间；分钟行情可传完整时间字符串。\n- `count`（`int | None`）：每只股票返回最近若干条记录。\n- `adjust`（`str`，默认 `none`）：复权方式。\n- `fields`（`str`）：按逗号指定 `items` 的返回字段；不影响 `meta`。\n- `limit`（`int | None`）：调用方主动裁剪总返回条数；不传则返回完整结果。\n- `skip_suspended`（`bool`，默认 `true`）：仅对 `1d/1w/1mo` 生效；强制过滤停牌行。\n- `skip_st`（`bool`，默认 `false`）：仅对 `1d/1w/1mo` 生效；如果某只股票在请求窗口内任一行 `is_st=true`，则该股票所有返回行都会被过滤。\n- `fill_missing`（`bool`，默认 `false`）：控制是否返回日线缺口补洞产生的停牌占位行；历史交易日缺口默认会进入 provider 补缺链路，只有 `fill_missing=true&skip_suspended=false` 时才返回 `is_suspended=true` 行。\n\n## 返回类型\n\n顶层返回 `StockQuotesQueryResult`。\n\n## 返回字段\n\n- `items`（`list[StockQuoteItem]`）：行情记录列表。\n- `meta`（`StockQuotesMeta`）：本次查询的完整性元信息。\n- `items.code`（`str`）：股票代码。\n- `items.trade_time`（`str`）：时间点；日频返回交易日，分钟频返回具体时间。\n- `items.freq`（`str`）：数据频率。\n- `items.open`（`float | None`）：开盘价。\n- `items.high`（`float | None`）：最高价。\n- `items.low`（`float | None`）：最低价。\n- `items.close`（`float | None`）：收盘价。\n- `items.pre_close`（`float | None`）：前收盘价。\n- `items.change`（`float | None`）：涨跌额。\n- `items.pct_chg`（`float | None`）：涨跌幅，单位 `%`。\n- `items.volume`（`float | None`）：成交量。\n- `items.amount`（`float | None`）：成交额。\n- `items.adjust`（`str`）：复权方式。\n- `items.is_suspended`（`bool`）：该行是否停牌。\n- `items.is_st`（`bool`）：该行是否 ST。\n- `meta.total_rows`（`int`）：过滤后可返回集合的总行数。\n- `meta.returned_rows`（`int`）：实际返回行数。\n- `meta.complete`（`bool`）：整体结果是否完整。\n- `meta.truncated`（`bool`）：是否被 `limit` 裁剪。\n- `meta.codes`（`list[StockQuoteCodeSummary]`）：每只股票的完整性统计。\n- `meta.codes.code`（`str`）：股票代码。\n- `meta.codes.row_count`（`int`）：该股票实际返回行数。\n- `meta.codes.expected_bar_count`（`int`）：预期 bar 数。\n- `meta.codes.actual_bar_count`（`int`）：实际覆盖 bar 数。\n- `meta.codes.first_trade_time`（`str`）：首条返回时间。\n- `meta.codes.last_trade_time`（`str`）：末条返回时间。\n- `meta.codes.complete`（`bool`）：该股票是否完整。\n- `meta.codes.truncated`（`bool`）：该股票是否被裁剪。\n- `meta.codes.missing_trade_dates`（`list[str]`）：缺失交易日。\n- `meta.codes.missing_trade_times`（`list[str]`）：缺失 bar 时间。\n\n## 补充说明\n\n- `fields` 只裁剪 `items`，不裁剪 `meta`。\n- `freq=1d/1w/1mo` 先读本地 `fact.stock_daily_1d`；历史交易日缺口默认进入 `stocks.quotes.daily` provider 补缺链路。\n- 当前交易日或未来日期不会同步补缺，只返回本地结果和完整性 `meta`。\n- Runtime Profile 会按 Capability Matrix 勾选的源补齐本地缺口。\n- `fact.stock_daily_1d` 已纳入 `BJSE` 正式日线口径，所以 `1d` 日线查询会正常返回北交所股票。\n- 如果 provider 补缺后仍缺少历史交易日，且该股票能找到前一个交易日，系统会用前一交易日收盘价写入一条 `is_suspended=true` 的停牌占位日线。\n- 已写入 `fact.stock_daily_1d` 的停牌占位日线会参与完整性覆盖计算，因此不会再计入 `missing_trade_dates`。\n- `fill_missing=false` 默认不返回停牌占位行；`skip_suspended=true` 会强制过滤所有停牌行。\n- `skip_suspended` 只过滤停牌行，不会过滤 ST 股票。\n- `skip_st=true` 会按请求窗口整只过滤 ST 股票；被过滤掉的股票仍会在 `meta.codes` 中保留一条 summary，但 `row_count=0`、`complete=false`。\n- `1w`、`1mo` 在日线结果上聚合，并沿用同一套 `fill_missing`、`skip_suspended`、`skip_st` 规则。\n- 分钟线不应用停牌补洞和 ST 整只过滤规则。')
+STOCK_QUOTES_CURRENT_BAR_DESCRIPTION = """
+
+## 当前交易周期 Bar（`datetime=now`）
+
+- 请求形式：`/api/stocks/quotes?code=600519&freq=1m&datetime=now&count=1`；当前仅支持 `freq=1m` 或 `freq=30m`、`count=1`、`adjust=none`，且不能同时传日期或时间范围。
+- 返回的是当前交易周期内持续变化的 OHLCVA Bar，不是某个时间点的 last-price quote。周期尚未结束时 `is_final=false`。
+- 成功选中的观测会写入 `live.stock_bar_observation`，当前版本会写入 `live.stock_bar_selected`；周期完成后才固化到 `fact.stock_bar_1m` 或 `fact.stock_bar_30m`，成为同一接口可查询的历史事实。
+- `observed_at` 是行情观测时间；盘中 1m 结果的新鲜度上限为 5 分钟，`freshness_ms` 给出相对 `meta.effective_now` 的年龄。刷新失败但缓存仍在上限内时可以返回，并标记 `degraded=true`；超过上限则返回 503。
+- 30m 优先返回 provider 原生当前周期 Bar（`source_semantics=native`）；原生条不可用时，只允许用当前 30m 周期中从起点到当前时刻的完整 1m 前缀派生（`source_semantics=derived`）。缺分钟、部分拼接或无成交伪造条不会返回。
+- 午间休市或闭市时可返回最近已完成事实并标记 `is_final=true`；闭市期间上游不可用不是行情故障。
+
+当前模式返回 `CurrentStockQuotesQueryResult`，历史模式返回 `StockQuotesVersionedQueryResult`。
+"""
+
+STOCK_QUOTES_RESPONSES = {
+    200: {
+        "description": "历史查询结果，或 datetime=now 的当前交易周期 Bar。",
+        "content": {
+            "application/json": {
+                "schema": {
+                    "oneOf": [
+                        {"$ref": "#/components/schemas/CurrentStockQuotesQueryResult"},
+                        {"$ref": "#/components/schemas/StockQuotesVersionedQueryResult"},
+                    ]
+                }
+            }
+        },
+    },
+    422: {"description": "参数组合不符合历史模式或 datetime=now 契约。"},
+    503: {"description": "实时上游不可用、时钟异常、数据超过 5 分钟或 30m 前缀不完整。"},
+}
+
+
+@router.get(
+    "/api/stocks/quotes",
+    summary="返回股票行情数据和完整性元信息，适合单股、多股批量查询、本地扫描和需要确认每只股票覆盖情况的调用场景",
+    description="`GET` 返回股票行情数据和完整性元信息，适合单股、多股批量查询、本地扫描和需要确认每只股票覆盖情况的调用场景。\n\n## 查询参数\n\n- `code`（`str`）：单个股票代码；与 `codes` 至少传一个。\n- `codes`（`str`）：多个股票代码，逗号分隔；与 `code` 至少传一个。\n- `freq`（`str`，默认 `1d`）：行情频率，可选 `tick`、`1m`、`5m`、`15m`、`30m`、`60m`、`1d`、`1w`、`1mo`。\n- `trade_date`（`str`）：交易日期，格式 `YYYY-MM-DD`。\n- `start_date`（`str`）：起始日期，格式 `YYYY-MM-DD`。\n- `end_date`（`str`）：结束日期，格式 `YYYY-MM-DD`。\n- `start_time`（`str`）：起始时间；分钟行情可传完整时间字符串。\n- `end_time`（`str`）：结束时间；分钟行情可传完整时间字符串。\n- `count`（`int | None`）：每只股票返回最近若干条记录。\n- `adjust`（`str`，默认 `none`）：复权方式。\n- `fields`（`str`）：按逗号指定 `items` 的返回字段；不影响 `meta`。\n- `limit`（`int | None`）：调用方主动裁剪总返回条数；不传则返回完整结果。\n- `skip_suspended`（`bool`，默认 `true`）：仅对 `1d/1w/1mo` 生效；强制过滤停牌行。\n- `skip_st`（`bool`，默认 `false`）：仅对 `1d/1w/1mo` 生效；如果某只股票在请求窗口内任一行 `is_st=true`，则该股票所有返回行都会被过滤。\n- `fill_missing`（`bool`，默认 `false`）：控制是否返回日线缺口补洞产生的停牌占位行；历史交易日缺口默认会进入 provider 补缺链路，只有 `fill_missing=true&skip_suspended=false` 时才返回 `is_suspended=true` 行。\n\n## 返回类型\n\n顶层返回 `StockQuotesQueryResult`。\n\n## 返回字段\n\n- `items`（`list[StockQuoteItem]`）：行情记录列表。\n- `meta`（`StockQuotesMeta`）：本次查询的完整性元信息。\n- `items.code`（`str`）：股票代码。\n- `items.trade_time`（`str`）：时间点；日频返回交易日，分钟频返回具体时间。\n- `items.freq`（`str`）：数据频率。\n- `items.open`（`float | None`）：开盘价。\n- `items.high`（`float | None`）：最高价。\n- `items.low`（`float | None`）：最低价。\n- `items.close`（`float | None`）：收盘价。\n- `items.pre_close`（`float | None`）：前收盘价。\n- `items.change`（`float | None`）：涨跌额。\n- `items.pct_chg`（`float | None`）：涨跌幅，单位 `%`。\n- `items.volume`（`float | None`）：成交量。\n- `items.amount`（`float | None`）：成交额。\n- `items.adjust`（`str`）：复权方式。\n- `items.is_suspended`（`bool`）：该行是否停牌。\n- `items.is_st`（`bool`）：该行是否 ST。\n- `meta.total_rows`（`int`）：过滤后可返回集合的总行数。\n- `meta.returned_rows`（`int`）：实际返回行数。\n- `meta.complete`（`bool`）：整体结果是否完整。\n- `meta.truncated`（`bool`）：是否被 `limit` 裁剪。\n- `meta.codes`（`list[StockQuoteCodeSummary]`）：每只股票的完整性统计。\n- `meta.codes.code`（`str`）：股票代码。\n- `meta.codes.row_count`（`int`）：该股票实际返回行数。\n- `meta.codes.expected_bar_count`（`int`）：预期 bar 数。\n- `meta.codes.actual_bar_count`（`int`）：实际覆盖 bar 数。\n- `meta.codes.first_trade_time`（`str`）：首条返回时间。\n- `meta.codes.last_trade_time`（`str`）：末条返回时间。\n- `meta.codes.complete`（`bool`）：该股票是否完整。\n- `meta.codes.truncated`（`bool`）：该股票是否被裁剪。\n- `meta.codes.missing_trade_dates`（`list[str]`）：缺失交易日。\n- `meta.codes.missing_trade_times`（`list[str]`）：缺失 bar 时间。\n\n## 补充说明\n\n- `fields` 只裁剪 `items`，不裁剪 `meta`。\n- `freq=1d/1w/1mo` 先读本地 `fact.stock_daily_1d`；历史交易日缺口默认进入 `stocks.quotes.daily` provider 补缺链路。\n- 当前交易日或未来日期不会同步补缺，只返回本地结果和完整性 `meta`。\n- Runtime Profile 会按 Capability Matrix 勾选的源补齐本地缺口。\n- `fact.stock_daily_1d` 已纳入 `BJSE` 正式日线口径，所以 `1d` 日线查询会正常返回北交所股票。\n- 如果 provider 补缺后仍缺少历史交易日，且该股票能找到前一个交易日，系统会用前一交易日收盘价写入一条 `is_suspended=true` 的停牌占位日线。\n- 已写入 `fact.stock_daily_1d` 的停牌占位日线会参与完整性覆盖计算，因此不会再计入 `missing_trade_dates`。\n- `fill_missing=false` 默认不返回停牌占位行；`skip_suspended=true` 会强制过滤所有停牌行。\n- `skip_suspended` 只过滤停牌行，不会过滤 ST 股票。\n- `skip_st=true` 会按请求窗口整只过滤 ST 股票；被过滤掉的股票仍会在 `meta.codes` 中保留一条 summary，但 `row_count=0`、`complete=false`。\n- `1w`、`1mo` 在日线结果上聚合，并沿用同一套 `fill_missing`、`skip_suspended`、`skip_st` 规则。\n- 分钟线不应用停牌补洞和 ST 整只过滤规则。"
+    + STOCK_QUOTES_CURRENT_BAR_DESCRIPTION,
+    response_model=None,
+    responses=STOCK_QUOTES_RESPONSES,
+)
 async def api_stock_quotes(
-    code: str = Query("", description='单个股票代码；与 `codes` 至少传一个。'),
-    codes: str = Query("", description='多个股票代码，逗号分隔；与 `code` 至少传一个。'),
-    freq: str = Query("1d", description='行情频率，可选 `tick`、`1m`、`5m`、`15m`、`30m`、`60m`、`1d`、`1w`、`1mo`。'),
-    datetime: Literal["", "now"] = Query("", description="动态时间锚点；首期仅支持 now。"),
-    trade_date: str = Query("", description='交易日期，格式 `YYYY-MM-DD`。'),
-    start_date: str = Query("", description='起始日期，格式 `YYYY-MM-DD`。'),
-    end_date: str = Query("", description='结束日期，格式 `YYYY-MM-DD`。'),
-    start_time: str = Query("", description='起始时间；分钟行情可传完整时间字符串。'),
-    end_time: str = Query("", description='结束时间；分钟行情可传完整时间字符串。'),
-    count: int | None = Query(None, ge=1, description='每只股票返回最近若干条记录。'),
-    adjust: str = Query("none", description='复权方式。'),
-    fields: str = Query("", description='按逗号指定 `items` 的返回字段；不影响 `meta`。'),
-    limit: int | None = Query(None, ge=1, description='调用方主动裁剪总返回条数；不传则返回完整结果。'),
-    skip_suspended: bool = Query(True, description='仅对 `1d/1w/1mo` 生效；强制过滤停牌行。'),
-    skip_st: bool = Query(False, description='仅对 `1d/1w/1mo` 生效；如果某只股票在请求窗口内任一行 `is_st=true`，则该股票所有返回行都会被过滤。'),
-    fill_missing: bool = Query(False, description='控制是否返回源数据已明确标记的停牌行；服务不会生成前收盘价占位 OHLCV。'),
-    meta_detail: Literal["summary", "full"] = Query("summary", description="summary 只返回缺失数量；full 额外展开 missing_trade_times。"),
-    data_version: str = Query("", description="历史查询所需的 /api/health 市场数据版本；datetime=now 不需要调用方提供。"),
+    code: str = Query("", description="单个股票代码；与 `codes` 至少传一个。"),
+    codes: str = Query(
+        "", description="多个股票代码，逗号分隔；与 `code` 至少传一个。"
+    ),
+    freq: str = Query(
+        "1d",
+        description="行情频率，可选 `tick`、`1m`、`5m`、`15m`、`30m`、`60m`、`1d`、`1w`、`1mo`。",
+    ),
+    datetime: Literal["", "now"] = Query(
+        "",
+        description="动态时间锚点。设为 now 时返回当前交易周期 Bar；当前仅支持 freq=1m 或 freq=30m、count=1、adjust=none，且不能与日期或时间范围组合。",
+    ),
+    trade_date: str = Query("", description="交易日期，格式 `YYYY-MM-DD`。"),
+    start_date: str = Query("", description="起始日期，格式 `YYYY-MM-DD`。"),
+    end_date: str = Query("", description="结束日期，格式 `YYYY-MM-DD`。"),
+    start_time: str = Query("", description="起始时间；分钟行情可传完整时间字符串。"),
+    end_time: str = Query("", description="结束时间；分钟行情可传完整时间字符串。"),
+    count: int | None = Query(None, ge=1, description="每只股票返回最近若干条记录。"),
+    adjust: str = Query("none", description="复权方式。"),
+    fields: str = Query(
+        "", description="按逗号指定 `items` 的返回字段；不影响 `meta`。"
+    ),
+    limit: int | None = Query(
+        None, ge=1, description="调用方主动裁剪总返回条数；不传则返回完整结果。"
+    ),
+    skip_suspended: bool = Query(
+        True, description="仅对 `1d/1w/1mo` 生效；强制过滤停牌行。"
+    ),
+    skip_st: bool = Query(
+        False,
+        description="仅对 `1d/1w/1mo` 生效；如果某只股票在请求窗口内任一行 `is_st=true`，则该股票所有返回行都会被过滤。",
+    ),
+    fill_missing: bool = Query(
+        False,
+        description="控制是否返回源数据已明确标记的停牌行；服务不会生成前收盘价占位 OHLCV。",
+    ),
+    meta_detail: Literal["summary", "full"] = Query(
+        "summary",
+        description="summary 只返回缺失数量；full 额外展开 missing_trade_times。",
+    ),
+    data_version: str = Query(
+        "",
+        description="历史查询所需的 /api/health 市场数据版本；datetime=now 不需要调用方提供。",
+    ),
 ) -> dict[str, object]:
+    """在同一股票行情资源中查询历史事实或当前交易周期 Bar。"""
+
     actual_codes = codes if codes != "" else code
     detail = _quote_request_detail(actual_codes, freq, start_date, end_date, limit)
     if datetime == "now":
@@ -183,10 +251,34 @@ async def api_stock_quotes(
             fields=fields,
             detail=detail,
         )
-    args = (code, codes, freq, trade_date, start_date, end_date, start_time, end_time, count, adjust, limit, skip_suspended, skip_st, fill_missing, meta_detail, data_version)
+    args = (
+        code,
+        codes,
+        freq,
+        trade_date,
+        start_date,
+        end_date,
+        start_time,
+        end_time,
+        count,
+        adjust,
+        limit,
+        skip_suspended,
+        skip_st,
+        fill_missing,
+        meta_detail,
+        data_version,
+    )
     is_heavy = int(detail["code_count"]) > 5 or int(detail["limit"]) > 2000
     runner = run_quote_task if is_heavy else run_data_task
-    return await runner(_filter_stock_quote_query_result, stocks.get_quotes_query_result, args, fields, STOCK_QUOTE_FIELDS, detail)
+    return await runner(
+        _filter_stock_quote_query_result,
+        stocks.get_quotes_query_result,
+        args,
+        fields,
+        STOCK_QUOTE_FIELDS,
+        detail,
+    )
 
 
 @router.post(
@@ -206,7 +298,9 @@ async def api_stock_quotes(
         200: {
             "content": {
                 "application/json": {},
-                "application/vnd.apache.arrow.stream": {"schema": {"type": "string", "format": "binary"}},
+                "application/vnd.apache.arrow.stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                },
             }
         },
         406: {"description": "Accept 不支持"},

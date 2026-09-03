@@ -26,7 +26,10 @@ class StockQuotesQueryPayload(BaseModel):
 
     codes: list[str] = Field(min_length=1, description="股票代码列表，推荐每批 100 至 200 只。")
     freq: str = Field(default="1d", description="行情频率，例如 1m 或 1d。")
-    datetime: Literal["", "now"] = Field(default="", description="动态时间锚点；首期仅支持 now。")
+    datetime: Literal["", "now"] = Field(
+        default="",
+        description="动态时间锚点。设为 now 时返回当前交易周期 Bar；当前仅支持 freq=1m 或 freq=30m、count=1、adjust=none。",
+    )
     trade_date: str = Field(default="", description="单个交易日，格式 YYYY-MM-DD。")
     start_date: str = Field(default="", description="起始交易日，格式 YYYY-MM-DD。")
     end_date: str = Field(default="", description="结束交易日，格式 YYYY-MM-DD。")
@@ -76,29 +79,34 @@ class StockQuotesVersionedQueryResult(BaseModel):
 
 
 class CurrentStockQuoteItem(StockQuoteItem):
-    interval_start: str
-    interval_end: str
-    is_final: bool
-    observed_at: str
-    last_trade_at: str | None = None
-    provider: str
-    source_semantics: Literal["native", "derived"]
-    observation_version: str
-    freshness_ms: int
-    degraded: bool = False
-    market_status: str
+    interval_start: str = Field(description="Bar 所属交易周期的起点，Asia/Shanghai ISO 8601 时间。")
+    interval_end: str = Field(description="Bar 所属交易周期的右开区间终点，Asia/Shanghai ISO 8601 时间。")
+    is_final: bool = Field(description="是否已完成并固化为历史事实；当前尚未结束的交易周期为 false。")
+    observed_at: str = Field(description="该版本行情被 provider 观测到的时间，用于判断数据新鲜度。")
+    last_trade_at: str | None = Field(default=None, description="provider 给出的最近成交时间；无可确认成交时为 null。")
+    provider: str = Field(description="本条 Bar 的实际数据提供方，例如 mootdx、opentdx 或 derived_core。")
+    source_semantics: Literal["native", "derived"] = Field(
+        description="native 表示 provider 原生周期 Bar；derived 表示由完整的已过 1m 前缀聚合。"
+    )
+    observation_version: str = Field(description="该次观测的不可变版本标识；当前 Bar 内容变化时版本随之变化。")
+    freshness_ms: int = Field(description="effective_now 与 observed_at 的毫秒差；盘中不得超过 300000。")
+    degraded: bool = Field(default=False, description="是否因 provider 刷新失败而返回仍在 5 分钟新鲜度窗口内的缓存版本。")
+    market_status: str = Field(description="查询锚点对应的市场状态，例如 trading、recess 或 closed。")
 
 
 class CurrentStockQuotesMeta(StockQuotesVersionedMeta):
-    effective_now: str
-    historical_dataset_version: str = ""
+    effective_now: str = Field(description="服务用于解析当前交易周期和计算新鲜度的 Asia/Shanghai 时间锚点。")
+    historical_dataset_version: str = Field(
+        default="",
+        description="查询时已固化历史事实的数据集版本；当前未提供版本时为空字符串。",
+    )
 
 
 class CurrentStockQuotesQueryResult(BaseModel):
-    items: list[CurrentStockQuoteItem] = Field(default_factory=list)
-    meta: CurrentStockQuotesMeta
-    errors: list[dict[str, object]] = Field(default_factory=list)
-    diagnostics: list[dict[str, object]] = Field(default_factory=list)
+    items: list[CurrentStockQuoteItem] = Field(default_factory=list, description="每只股票至多一条当前或最近已完成 Bar。")
+    meta: CurrentStockQuotesMeta = Field(description="当前时间锚点、完整性和历史事实版本元数据。")
+    errors: list[dict[str, object]] = Field(default_factory=list, description="按股票记录的取数错误；整体不可用时接口返回 503。")
+    diagnostics: list[dict[str, object]] = Field(default_factory=list, description="validator、fallback 等不改变主结果语义的诊断信息。")
 
 
 class StockDailyWindowQueryPayload(BaseModel):

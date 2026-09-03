@@ -90,6 +90,52 @@ def test_get_current_bar_uses_existing_route_without_data_version(monkeypatch) -
     assert payload["meta"]["effective_now"] == "2026-09-02T13:30:08+08:00"
 
 
+def test_stock_quotes_openapi_documents_current_bar_contract() -> None:
+    schema = TestClient(app).get("/api/openapi.json").json()
+    operation = schema["paths"]["/api/stocks/quotes"]["get"]
+    description = operation["description"]
+
+    assert "datetime=now" in description
+    assert "live.stock_bar_selected" in description
+    assert "fact.stock_bar_1m" in description
+    assert "fact.stock_bar_30m" in description
+    assert "is_final=false" in description
+    assert "完整 1m 前缀" in description
+
+    parameters = {item["name"]: item for item in operation["parameters"]}
+    assert "freq=1m 或 freq=30m" in parameters["datetime"]["description"]
+    assert "count=1" in parameters["datetime"]["description"]
+    assert "当前交易周期" in parameters["datetime"]["description"]
+
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert "additionalProperties" not in response_schema
+    response_refs = {item["$ref"] for item in response_schema["oneOf"]}
+    assert response_refs == {
+        "#/components/schemas/CurrentStockQuotesQueryResult",
+        "#/components/schemas/StockQuotesVersionedQueryResult",
+    }
+
+    item_properties = schema["components"]["schemas"]["CurrentStockQuoteItem"]["properties"]
+    for field in (
+        "interval_start",
+        "interval_end",
+        "is_final",
+        "observed_at",
+        "last_trade_at",
+        "provider",
+        "source_semantics",
+        "observation_version",
+        "freshness_ms",
+        "degraded",
+        "market_status",
+    ):
+        assert item_properties[field]["description"]
+
+    meta_properties = schema["components"]["schemas"]["CurrentStockQuotesMeta"]["properties"]
+    assert meta_properties["effective_now"]["description"]
+    assert meta_properties["historical_dataset_version"]["description"]
+
+
 def test_current_bar_rejects_range_parameters(monkeypatch) -> None:
     monkeypatch.setattr(live_bars, "get_current_quotes", lambda _request: _current_result())
 

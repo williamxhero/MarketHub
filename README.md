@@ -12,6 +12,10 @@
 
 `QuoteMux` 帮你在这些底层库之上垫了一层。你的业务代码、HTTP API 或是管理界面，只需要和 `QuoteMux` 的**一套稳定接口**打交道，彻底把系统和特定的数据源解绑。
 
+## 股票当前交易周期 Bar API
+
+股票当前 1m/30m OHLCVA 沿用历史行情接口，通过 `GET /api/stocks/quotes?...&datetime=now&count=1` 查询；当前 Bar、5 分钟新鲜度、30m 完整前缀派生和完成后落入历史 fact 的语义见 [中国股票当前交易周期 Bar API](docs/china-stock-current-bars-api.md)。
+
 ## 期货实时 API
 
 MarketHub 提供由 TqSdk 驱动的中国期货引用与实时接口：实际合约目录与规格通过管理员 repair/capture 持久化为可审计的本地快照，普通 `GET /api/futures/contracts` 只读该快照，不会现场调用 provider 或写库；当前主力实际合约映射和指定实际交割合约的实时 quote 仍是调用时读取的非持久化数据。它们与 EDB T+1 和 Apex L0 历史序列严格分开。调用说明、字段和新鲜度口径见 [期货实时 API](docs/china-futures-realtime-api.md)。
