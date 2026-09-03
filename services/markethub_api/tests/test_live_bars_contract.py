@@ -186,6 +186,7 @@ def test_current_bar_gateway_maps_a_committed_worker_result(monkeypatch) -> None
     assert result.items[0].observation_version == "42"
     assert result.diagnostics == [{"code": "600519", "validator": "efinance", "status": "warning", "difference_ratio": 0.02}]
     assert json.loads(captured["kwargs"]["input"])["codes"] == ["600519"]
+    assert captured["kwargs"]["timeout"] == 15
 
 
 def test_current_bar_gateway_refreshes_stale_observations_but_never_uses_a_previous_interval(monkeypatch) -> None:
@@ -524,6 +525,7 @@ def test_current_bar_health_does_not_treat_active_staging_as_finalizer_backlog(m
     health = live_bars.get_current_bar_health()
 
     assert health["status"] == "healthy"
+    assert health["worker"]["deadline_seconds"] == 15
     assert health["finalizer"] == {"status": "ready", "staged_count": 2, "overdue_staged_count": 0, "oldest_overdue_interval": "", "failed_count": 0}
 
 

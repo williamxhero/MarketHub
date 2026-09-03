@@ -21,6 +21,14 @@ from services.common import require_adjust, require_codes, require_quote_freq
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
+def _live_ingest_deadline_seconds() -> int:
+    try:
+        configured = int(os.getenv("MHK_LIVE_INGEST_DEADLINE_SECONDS", "15"))
+    except ValueError:
+        configured = 15
+    return max(8, min(30, configured))
+
+
 @dataclass(frozen=True)
 class CurrentBarRequest:
     codes: tuple[str, ...]
@@ -360,7 +368,7 @@ class QuoteMuxWorkerGateway:
                 self._inflight[base_key] = future
         if not owner:
             try:
-                return future.result(timeout=8)
+                return future.result(timeout=_live_ingest_deadline_seconds())
             except Exception as exc:
                 raise LiveBarUnavailable(f"live-ingest concurrent refresh failed: {exc}") from exc
         try:
@@ -417,7 +425,7 @@ class QuoteMuxWorkerGateway:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
-                timeout=8,
+                timeout=_live_ingest_deadline_seconds(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise LiveBarUnavailable(f"live-ingest worker unavailable: {exc}") from exc
@@ -582,7 +590,7 @@ def get_current_bar_health() -> dict[str, object]:
         "status": status,
         "capabilities": ["1m", "30m"],
         "clock": clock,
-        "worker": {"status": "configured", "deadline_seconds": 8},
+        "worker": {"status": "configured", "deadline_seconds": _live_ingest_deadline_seconds()},
         "providers": {"primary": "mootdx", "fallback": "opentdx", "validator": "efinance"},
         "current_period_policy": {"30m": {"native": "mootdx", "fallback": "derived_core.complete_1m_prefix"}},
         "last_successful_observation": "" if row.get("last_selected_at") is None else str(row["last_selected_at"]),
