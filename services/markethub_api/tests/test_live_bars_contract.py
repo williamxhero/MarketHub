@@ -508,6 +508,25 @@ def test_health_keeps_live_bar_readiness_separate_from_historical_versions(monke
     assert "dataset_versions" in payload
 
 
+def test_current_bar_health_does_not_treat_active_staging_as_finalizer_backlog(monkeypatch) -> None:
+    monkeypatch.setattr(
+        live_bars,
+        "query_dataframe",
+        lambda *args, **kwargs: pd.DataFrame([{
+            "staged_count": 2, "overdue_staged_count": 0, "oldest_overdue_interval": None,
+            "last_selected_at": pd.Timestamp("2026-09-03 10:07:45+08:00"), "failed_count": 0,
+            "staged_1m_count": 1, "staged_30m_count": 1, "failed_1m_count": 0, "failed_30m_count": 0,
+            "last_selected_1m_at": pd.Timestamp("2026-09-03 10:07:45+08:00"),
+            "last_selected_30m_at": pd.Timestamp("2026-09-03 10:07:45+08:00"),
+        }]),
+    )
+
+    health = live_bars.get_current_bar_health()
+
+    assert health["status"] == "healthy"
+    assert health["finalizer"] == {"status": "ready", "staged_count": 2, "overdue_staged_count": 0, "oldest_overdue_interval": "", "failed_count": 0}
+
+
 def test_finalized_history_reader_preserves_naive_database_bar_time_as_shanghai(monkeypatch) -> None:
     monkeypatch.setattr(
         live_bars,

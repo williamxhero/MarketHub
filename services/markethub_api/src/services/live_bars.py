@@ -552,7 +552,10 @@ def get_current_bar_health() -> dict[str, object]:
     frame = query_dataframe(
         """
         select count(*) filter (where state='staged')::int as staged_count,
-               min(interval_start) filter (where state='staged') as oldest_staged_interval,
+               count(*) filter (where state='staged' and interval_start +
+                   (case freq when '30m' then interval '30 minutes' else interval '1 minute' end) + interval '7 seconds' < now())::int as overdue_staged_count,
+               min(interval_start) filter (where state='staged' and interval_start +
+                   (case freq when '30m' then interval '30 minutes' else interval '1 minute' end) + interval '7 seconds' < now()) as oldest_overdue_interval,
                max(selected_at) as last_selected_at,
                count(*) filter (where state='failed')::int as failed_count,
                count(*) filter (where freq='1m' and state='staged')::int as staged_1m_count,
@@ -572,8 +575,9 @@ def get_current_bar_health() -> dict[str, object]:
         }
     row = frame.iloc[0]
     staged_count = int(row.get("staged_count", 0) or 0)
+    overdue_staged_count = int(row.get("overdue_staged_count", 0) or 0)
     failed_count = int(row.get("failed_count", 0) or 0)
-    status = "unhealthy" if clock["status"] == "unhealthy" else "warning" if staged_count or failed_count else "healthy"
+    status = "unhealthy" if clock["status"] == "unhealthy" else "warning" if overdue_staged_count or failed_count else "healthy"
     return {
         "status": status,
         "capabilities": ["1m", "30m"],
@@ -587,9 +591,10 @@ def get_current_bar_health() -> dict[str, object]:
             "30m": {"staged_count": int(row.get("staged_30m_count", 0) or 0), "failed_count": int(row.get("failed_30m_count", 0) or 0), "last_selected_at": "" if row.get("last_selected_30m_at") is None else str(row["last_selected_30m_at"])},
         },
         "finalizer": {
-            "status": "backlog" if staged_count else "ready",
+            "status": "backlog" if overdue_staged_count else "ready",
             "staged_count": staged_count,
-            "oldest_overdue_interval": "" if row.get("oldest_staged_interval") is None else str(row["oldest_staged_interval"]),
+            "overdue_staged_count": overdue_staged_count,
+            "oldest_overdue_interval": "" if row.get("oldest_overdue_interval") is None else str(row["oldest_overdue_interval"]),
             "failed_count": failed_count,
         },
     }
