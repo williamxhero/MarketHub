@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import json
 
 import pytest
 
@@ -23,7 +24,7 @@ def test_health_gated_update_waits_for_due_capture_and_serializes_runs() -> None
     source = (SCRIPT_DIR / "global-data-update-with-health.sh").read_text(encoding="utf-8")
 
     assert 'MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"' in source
-    assert 'MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily}"' in source
+    assert 'MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily_snapshot}"' in source
     assert 'MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES"' in source
     assert 'flock -w "$MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS"' in source
     assert "未启动重复采集或发布" in source
@@ -53,6 +54,23 @@ def test_global_update_bounds_due_enqueue_and_waits_only_for_declared_dependenci
     assert 'capture_event=due_enqueue_failed endpoint=$MARKETHUB_CAPTURE_ENDPOINT reason=$reason' in source
     assert 'capture_event=due_enqueue_skipped reason=declared_dependencies_completed' in source
     assert '[ "$status" -eq 28 ] && reason="timeout"' in source
+
+
+def test_task_center_contract_schedules_final_snapshot_before_1520() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "reconcile_task_center.py"), "--print"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["task_id"] == "markethub_global_data_update"
+    assert payload["schedule_type"] == "cron"
+    assert payload["schedule_value"] == "5 15 * * *"
+    assert payload["timezone"] == "Asia/Shanghai"
+    assert payload["script_path"] == "/data/markethub/scripts/global-data-update-with-health.sh"
+    assert "15:20" in payload["description"]
 
 
 @pytest.mark.skipif(shutil.which("bash") is None or shutil.which("flock") is None, reason="requires bash and flock")
