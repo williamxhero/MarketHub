@@ -71,6 +71,13 @@ OBJECT_TIME_COLUMNS = {
     "fact.concept_daily_1d": "trade_date",
 }
 
+CORE_DATASET_FRESHNESS_OBJECTS = (
+    "fact.stock_daily_1d",
+    "fact.index_bar_1d",
+    "fact.concept_daily_1d",
+    "fact.board_daily_1d",
+)
+
 @dataclass(frozen=True)
 class CheckSpec:
     check_id: str
@@ -108,10 +115,16 @@ def _compute_data_health() -> dict[str, object]:
     fact_ref["status"] = _normalize_status(str(fact_ref.get("status", "warning")))
     objects = _objects_by_name(fact_ref)
     calendar = _check_trade_calendar(objects, db_available)
+    core_dataset_freshness = _core_dataset_freshness_summary(objects, db_available, calendar, check_cache)
     capabilities = [_build_capability_health(definition, profiles, objects, db_available, calendar, check_cache) for definition in definitions]
     groups = _build_group_health(capabilities)
     summary = _build_summary(capabilities)
-    status = _worst_status([str(summary["status"]), str(calendar["status"]), str(fact_ref.get("status", "warning"))])
+    status = _worst_status([
+        str(summary["status"]),
+        str(calendar["status"]),
+        str(core_dataset_freshness["status"]),
+        str(fact_ref.get("status", "warning")),
+    ])
     return {
         "status": status,
         "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -120,6 +133,7 @@ def _compute_data_health() -> dict[str, object]:
             "database": {"status": "healthy" if db_available else "unhealthy", "available": db_available},
             "fact_ref": fact_ref,
             "trade_calendar": calendar,
+            "core_dataset_freshness": core_dataset_freshness,
         },
         "groups": groups,
         "capabilities": capabilities,
@@ -244,6 +258,93 @@ def _check_trade_calendar(objects: dict[str, dict[str, object]], db_available: b
     if recent_open_days == 0:
         issues.append("ref.trade_calendar 最近 90 天没有交易日记录")
     return {"status": "healthy" if issues == [] else "unhealthy", "recent_days": recent_days, "recent_open_days": recent_open_days, "max_trade_date": max_trade_date, "issues": issues}
+
+
+def _core_dataset_freshness_summary(
+    objects: dict[str, dict[str, object]],
+    db_available: bool,
+    calendar: dict[str, object],
+    check_cache: dict[str, object],
+) -> dict[str, object]:
+    checks = _core_dataset_freshness_checks(objects, db_available, calendar, check_cache)
+    return {
+        "status": _status_from_checks([check.as_dict() for check in checks]),
+        "checks": [check.as_dict() for check in checks],
+    }
+
+
+def _core_dataset_freshness_checks(
+    objects: dict[str, dict[str, object]],
+    db_available: bool,
+    calendar: dict[str, object],
+    check_cache: dict[str, object],
+) -> list[CheckSpec]:
+    if not db_available:
+        return [CheckSpec(f"core_dataset_freshness:{object_name}", f"{object_name} 相对最新已完成交易日的新鲜度", "unknown", "未执行", DB_UNAVAILABLE_ERROR) for object_name in CORE_DATASET_FRESHNESS_OBJECTS]
+    if str(calendar.get("status", "unhealthy")) != "healthy":
+        return [CheckSpec(f"core_dataset_freshness:{object_name}", f"{object_name} 相对最新已完成交易日的新鲜度", "unknown", "未执行", "交易日历不可用，无法判断数据集新鲜度") for object_name in CORE_DATASET_FRESHNESS_OBJECTS]
+    missing = [object_name for object_name in CORE_DATASET_FRESHNESS_OBJECTS if not _object_exists(object_name, objects)]
+    if missing:
+        return [CheckSpec(f"core_dataset_freshness:{object_name}", f"{object_name} 相对最新已完成交易日的新鲜度", "unknown", "未执行", f"缺少依赖表：{', '.join(missing)}") for object_name in CORE_DATASET_FRESHNESS_OBJECTS]
+    cached_metrics = check_cache.get("core_dataset_freshness")
+    if cached_metrics is None:
+        metrics = _query_core_dataset_freshness()
+        check_cache["core_dataset_freshness"] = metrics
+    elif isinstance(cached_metrics, dict):
+        metrics = cached_metrics
+    else:
+        metrics = {}
+    if not isinstance(metrics, dict):
+        return [CheckSpec(f"core_dataset_freshness:{object_name}", f"{object_name} 相对最新已完成交易日的新鲜度", "unknown", "未执行", "新鲜度查询返回无效结果") for object_name in CORE_DATASET_FRESHNESS_OBJECTS]
+    target_trade_date = str(metrics.get("target_trade_date", "") or "")
+    if target_trade_date == "":
+        return [CheckSpec(f"core_dataset_freshness:{object_name}", f"{object_name} 相对最新已完成交易日的新鲜度", "unknown", "未执行", "未找到已完成交易日") for object_name in CORE_DATASET_FRESHNESS_OBJECTS]
+    checks: list[CheckSpec] = []
+    for object_name in CORE_DATASET_FRESHNESS_OBJECTS:
+        latest_trade_date = str(metrics.get(object_name, "") or "")
+        title = f"{object_name} 相对最新已完成交易日的新鲜度"
+        if latest_trade_date == target_trade_date:
+            checks.append(CheckSpec(f"core_dataset_freshness:{object_name}", title, "healthy", f"最新交易日 {latest_trade_date}"))
+        else:
+            checks.append(CheckSpec(f"core_dataset_freshness:{object_name}", title, "unhealthy", "滞后", f"目标交易日 {target_trade_date}，最新 {latest_trade_date or '无数据'}"))
+    return checks
+
+
+def _query_core_dataset_freshness() -> dict[str, str]:
+    frame = query_dataframe(
+        """
+        with local_clock as (
+            select now() at time zone 'Asia/Shanghai' as local_now
+        ), target as (
+            select max(calendar.trade_date) as trade_date
+            from ref.trade_calendar calendar
+            cross join local_clock
+            where calendar.is_open
+              and calendar.trade_date <= local_clock.local_now::date
+              and (
+                  calendar.trade_date < local_clock.local_now::date
+                  or local_clock.local_now::time >= time '15:05'
+              )
+        )
+        select
+            target.trade_date::text as target_trade_date,
+            (select max(rows.trade_date)::text from fact.stock_daily_1d rows cross join target where rows.trade_date <= target.trade_date) as stock_daily_1d,
+            (select max(rows.trade_date)::text from fact.index_bar_1d rows cross join target where rows.trade_date <= target.trade_date) as index_bar_1d,
+            (select max(rows.trade_date)::text from fact.concept_daily_1d rows cross join target where rows.trade_date <= target.trade_date) as concept_daily_1d,
+            (select max(rows.trade_date)::text from fact.board_daily_1d rows cross join target where rows.trade_date <= target.trade_date) as board_daily_1d
+        from target
+        """
+    )
+    if frame.empty:
+        return {}
+    row = frame.iloc[0]
+    return {
+        "target_trade_date": str(row.get("target_trade_date", "") or ""),
+        "fact.stock_daily_1d": str(row.get("stock_daily_1d", "") or ""),
+        "fact.index_bar_1d": str(row.get("index_bar_1d", "") or ""),
+        "fact.concept_daily_1d": str(row.get("concept_daily_1d", "") or ""),
+        "fact.board_daily_1d": str(row.get("board_daily_1d", "") or ""),
+    }
 
 
 def _build_capability_health(

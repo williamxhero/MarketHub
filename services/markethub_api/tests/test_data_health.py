@@ -514,6 +514,32 @@ def test_market_data_contract_latest_date_check_ignores_unclosed_partial_rows(mo
     assert "where stock_rows.trade_date <= target.trade_date" in captured_query
 
 
+def test_core_dataset_freshness_reports_each_dataset_against_calendar_target(monkeypatch) -> None:
+    import pandas as pd
+
+    monkeypatch.setattr(
+        data_health,
+        "_query_core_dataset_freshness",
+        lambda: {
+            "target_trade_date": "2026-09-07",
+            "fact.stock_daily_1d": "2026-09-04",
+            "fact.index_bar_1d": "2026-08-28",
+            "fact.concept_daily_1d": "2026-08-28",
+            "fact.board_daily_1d": "2026-08-28",
+        },
+    )
+
+    checks = data_health._core_dataset_freshness_checks(
+        {object_name: {"exists": True} for object_name in data_health.CORE_DATASET_FRESHNESS_OBJECTS},
+        True,
+        {"status": "healthy"},
+        {},
+    )
+
+    assert [check.status for check in checks] == ["unhealthy", "unhealthy", "unhealthy", "unhealthy"]
+    assert "目标交易日 2026-09-07，最新 2026-09-04" in checks[0].error_text
+
+
 def _empty_frame():
     import pandas as pd
 
