@@ -51,6 +51,7 @@ def test_publisher_only_promotes_complete_coverage_to_online() -> None:
     assert "def mark_stock_daily_publication_online" in content
     assert "set status='online'" in content
     assert "where dataset_id=%s and dataset_version=%s and coverage_ready and complete" in content
+    assert "mark_stock_daily_publication_ready = mark_stock_daily_publication_online" in content
 
 
 def test_dataset_version_matches_api_contract() -> None:

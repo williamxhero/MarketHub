@@ -336,6 +336,11 @@ def mark_stock_daily_publication_online(dataset_version: str) -> None:
             raise RuntimeError(f"complete coverage state unavailable for publication: {dataset_version}")
 
 
+# Keep rolling deployments compatible with an already-installed publisher
+# process while the runtime script is atomically updated to the new name.
+mark_stock_daily_publication_ready = mark_stock_daily_publication_online
+
+
 def load_stock_daily_coverage_summary(
     dataset_version: str,
     start_date: str,
