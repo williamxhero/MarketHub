@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 import psycopg
 from psycopg.rows import dict_row
 
-from services.daily_coverage_read_model import ensure_current_stock_daily_coverage, mark_stock_daily_publication_ready
+from services.daily_coverage_read_model import ensure_current_stock_daily_coverage, mark_stock_daily_publication_online
 
 
 DATASET_ID = "stock_daily_1d"
@@ -394,7 +394,7 @@ def _publish_locked(
             if current_dataset != dataset_version:
                 raise RuntimeError("dataset version changed before mapping existing publication")
             _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
-            mark_stock_daily_publication_ready(dataset_version)
+            mark_stock_daily_publication_online(dataset_version)
             return json.loads(manifest_path.read_text(encoding="utf-8"))
         staging, completed_months = _resume_staging(staging_parent, dataset_version, first, last)
         files: list[dict[str, object]] = []
@@ -447,7 +447,7 @@ def _publish_locked(
             manifest_sha = _sha256(manifest_path)
             os.replace(staging, final_root)
             _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
-            mark_stock_daily_publication_ready(dataset_version)
+            mark_stock_daily_publication_online(dataset_version)
             return manifest
         except BaseException:
             LOGGER.error(

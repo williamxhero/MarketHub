@@ -325,10 +325,10 @@ def ensure_current_stock_daily_coverage() -> dict[str, object]:
     }
 
 
-def mark_stock_daily_publication_ready(dataset_version: str) -> None:
+def mark_stock_daily_publication_online(dataset_version: str) -> None:
     with _connect(autocommit=True) as connection:
         result = connection.execute(
-            "update readmodel.dataset_build_state set status='ready',updated_at_utc=clock_timestamp() "
+            "update readmodel.dataset_build_state set status='online',updated_at_utc=clock_timestamp() "
             "where dataset_id=%s and dataset_version=%s and coverage_ready and complete",
             (STOCK_DAILY_DATASET_ID, dataset_version),
         )
