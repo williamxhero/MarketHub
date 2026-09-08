@@ -16,5 +16,9 @@ def test_audit_is_read_only_exhaustive_and_preserves_eligibility() -> None:
     assert "d.trade_date<u.delisted_date" in content
     assert "b.open is null" in content and "b.volume is null" in content
     assert "date '2021-11-15'" in content
+    assert "left(code,3)='920' and listed_date >= date '2024-04-22'" in content
+    assert "ref.stock_code_migration" in content
+    assert "migration.old_market='bjse' and migration.old_code=catalog.code" in content
+    assert "left(code,1) in ('4','8','9')" not in content
     for forbidden in ("insert into", "update fact.", "delete from", "on conflict"):
         assert forbidden not in content
