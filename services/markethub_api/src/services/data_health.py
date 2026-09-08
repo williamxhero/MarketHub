@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +12,8 @@ from core.config import DATA_ROOT
 from quotemux.capabilities.inventory import CapabilityDefinition, list_capability_definitions
 from quotemux.infra.db.availability import get_fact_ref_availability
 from quotemux.infra.db.client import is_db_available, query_dataframe
+from quotemux.models import ConceptMoneyFlowItem
+from quotemux.store import load_store_result
 
 
 KNOWN_OBJECT_NAMES = (
@@ -439,6 +442,11 @@ def _run_configured_check(
         column = str(check.get("column", ""))
         return [_cached_check(check_cache, f"non_negative:{object_name}:{column}", lambda: _non_negative_number_check(object_name, column, objects, db_available))]
     if check_type == "money_flow_values_valid":
+        capability_id = str(check.get("capability_id", ""))
+        if capability_id == "concepts.indicators.money_flow.snapshot":
+            metrics = check_cache.get("core_dataset_freshness", {})
+            target_trade_date = str(metrics.get("target_trade_date", "")) if isinstance(metrics, dict) else ""
+            return [_cached_check(check_cache, f"money_flow_values_valid:{capability_id}:{target_trade_date}", lambda: _concept_money_flow_value_check(target_trade_date, db_available))]
         return [_cached_check(check_cache, f"money_flow_values_valid:{object_name}", lambda: _money_flow_value_check(object_name, objects, db_available))]
     if check_type == "recent_coverage_90d":
         check_id = str(check.get("check_id", ""))
@@ -619,6 +627,32 @@ def _money_flow_value_check(object_name: str, objects: dict[str, dict[str, objec
     window_clause = _recent_window_clause(object_name)
     frame = query_dataframe(f"select count(*)::int as invalid_count from {object_name} where ({clauses}) {window_clause}")
     return _count_check_result("money_flow_values_valid", "inflow/outflow/net_inflow 数值合法", frame, "资金流字段出现非法数值")
+
+
+def _concept_money_flow_value_check(target_trade_date: str, db_available: bool = True) -> CheckSpec:
+    title = "inflow/outflow/net_inflow 数值合法"
+    if not db_available:
+        return CheckSpec("money_flow_values_valid", title, "unknown", "未执行", DB_UNAVAILABLE_ERROR)
+    if not _is_iso_date(target_trade_date):
+        return CheckSpec("money_flow_values_valid", title, "unknown", "未执行", "无法确定最新已完成交易日")
+    identity = {"concept_id": "", "trade_date": target_trade_date, "scope": "concept", "limit": 10000, "offset": 0}
+    try:
+        items, read_result = load_store_result("concepts.indicators.money_flow.snapshot", identity, ConceptMoneyFlowItem)
+    except Exception as error:
+        return CheckSpec("money_flow_values_valid", title, "unknown", "未执行", f"本地概念资金流快照读取失败: {type(error).__name__}")
+    if not bool(getattr(read_result, "hit", False) or getattr(read_result, "partial_hit", False)):
+        return CheckSpec("money_flow_values_valid", title, "unhealthy", "异常", f"最新已完成交易日 {target_trade_date} 无本地概念资金流快照")
+    matching_items = [item for item in items if item.trade_date == target_trade_date and item.scope == "concept"]
+    if matching_items == []:
+        return CheckSpec("money_flow_values_valid", title, "unhealthy", "异常", f"最新已完成交易日 {target_trade_date} 的概念资金流快照为空")
+    invalid_count = sum(
+        1
+        for item in matching_items
+        if any(value is None or not math.isfinite(float(value)) for value in (item.inflow, item.outflow, item.net_inflow))
+    )
+    if invalid_count > 0:
+        return CheckSpec("money_flow_values_valid", title, "unhealthy", "异常", f"概念资金流快照出现空值或非法数值: {invalid_count} 条")
+    return CheckSpec("money_flow_values_valid", title, "healthy", f"{target_trade_date} 快照 {len(matching_items)} 条均为有限数值")
 
 
 def _recent_coverage_check(check_id: str, title: str, object_name: str, column: str, provider_earliest_date: str, objects: dict[str, dict[str, object]], db_available: bool, calendar: dict[str, object]) -> CheckSpec:
