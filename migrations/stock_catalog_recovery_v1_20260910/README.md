@@ -8,9 +8,22 @@ catalog. It is fail-closed and has four operator-visible gates:
    reads and writes the JSON bundle to stdout; the controller persists it
    locally.
 2. `release_migration.py preflight` validates the bundle hash, all three
-   required authority shards, the captured database fingerprint, latest
-   completed trading day, current health token, and exact release inputs. Exit
-   code `20` means NO-GO and performs no mutation.
+   required authority shard keys and their direct-provider receipts, the
+   captured database fingerprint, latest completed trading day, current health
+   token, and exact release inputs. Exit code `20` means NO-GO and performs no
+   mutation.
+
+The listed shard must contain rows. Pending and delisted are status sets and may
+legitimately be empty only when their direct Tushare calls completed with the
+expected schema and the bundle carries matching row-count, payload, and
+normalized hashes. Missing keys, malformed or stale receipts, schema drift, and
+failed provider calls remain NO-GO conditions.
+
+Only canonical stock identities whose provider `symbol` is six ASCII digits
+and whose `ts_code` has the same symbol plus `.SH`, `.SZ`, or `.BJ` enter the
+catalog. Provider-only synthetic or malformed identifiers are not rewritten;
+they are excluded with a reason, count, and hash in each shard receipt, and
+preflight requires provider rows to equal accepted plus rejected rows.
 3. `release_migration.py rehearse` is accepted only when the target database
    name contains `spec3`, `rehearsal`, or `test`. It expands the schema,
    freezes/reconciles the authority input, repeats the same run key, publishes,

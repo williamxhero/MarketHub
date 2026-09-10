@@ -19,12 +19,28 @@ from psycopg.rows import dict_row
 FORMAT_VERSION = "markethub-stock-authority-bundle-v1"
 APPLY_TOKEN = "SPEC-3-CONTROLLER-APPLY"
 NO_GO_EXIT = 20
-REQUIRED_QUOTE_MUX_COMMIT = "6636e3dc6fef6709394ade267470b535fda6fb45"
+REQUIRED_QUOTE_MUX_COMMIT = "b57653327ad4a7e48a323eb21534663a3686b7bf"
+REQUIRED_QUOTE_MUX_PACKAGES_COMMIT = "7af2bc7c0c78788f0358035725590fce9f4c7f77"
 LEGACY_KNOWN_DIRTY_DATA_VERSION = (
     "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
 )
 DATA_VERSION = re.compile(r"^mhf-v1-[0-9a-f]{64}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 REHEARSAL_DATABASE = re.compile(r"(?:spec3|rehears|test)", re.IGNORECASE)
+CAPTURE_MODE = "direct_tushare_pro_stock_basic_no_cache_no_local_write"
+AUTHORITY_COLUMNS = sorted(
+    (
+        "area",
+        "delist_date",
+        "industry",
+        "list_date",
+        "list_status",
+        "market",
+        "name",
+        "symbol",
+        "ts_code",
+    )
+)
 SCHEMA_TABLES = (
     "stock",
     "stock_authority_input",
@@ -111,14 +127,96 @@ def _authority_shards(bundle: dict[str, Any]) -> dict[str, list[SimpleNamespace]
     }
 
 
+def _is_canonical_provider_identity(symbol: object, ts_code: object) -> bool:
+    normalized_symbol = str(symbol).strip()
+    normalized_ts_code = str(ts_code).strip().upper()
+    return re.fullmatch(r"[0-9]{6}", normalized_symbol, flags=re.ASCII) is not None and (
+        normalized_ts_code
+        in {
+            f"{normalized_symbol}.SH",
+            f"{normalized_symbol}.SZ",
+            f"{normalized_symbol}.BJ",
+        }
+    )
+
+
+def _validate_raw_receipts(bundle: dict[str, Any], counts: dict[str, int]) -> None:
+    if bundle.get("capture_mode") != CAPTURE_MODE:
+        raise NoGo("authority bundle capture mode is invalid")
+    source = bundle.get("authority_source")
+    if not isinstance(source, dict) or source.get("provider") != "tushare":
+        raise NoGo("authority source is invalid")
+    receipts = source.get("raw_receipt")
+    if not isinstance(receipts, dict):
+        raise NoGo("authority raw receipt is missing")
+
+    expected_status = {"listed": "L", "pending": "P", "delisted": "D"}
+    empty_hash = _canonical_sha256([])
+    for shard, status in expected_status.items():
+        receipt = receipts.get(shard)
+        if not isinstance(receipt, dict):
+            raise NoGo(f"authority raw receipt is missing or invalid: {shard}")
+        row_count = receipt.get("row_count")
+        provider_row_count = receipt.get("provider_row_count")
+        accepted_row_count = receipt.get("accepted_row_count")
+        rejected_row_count = receipt.get("rejected_row_count")
+        rejected_rows = receipt.get("rejected_rows")
+        columns = receipt.get("columns")
+        payload_hash = receipt.get("payload_sha256")
+        normalized_hash = receipt.get("normalized_sha256")
+        if receipt.get("list_status") != status:
+            raise NoGo(f"authority raw receipt status mismatch: {shard}")
+        if isinstance(row_count, bool) or row_count != counts[shard]:
+            raise NoGo(f"authority raw receipt row count mismatch: {shard}")
+        integer_counts = (provider_row_count, accepted_row_count, rejected_row_count)
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in integer_counts):
+            raise NoGo(f"authority raw receipt accounting is invalid: {shard}")
+        if (
+            accepted_row_count != counts[shard]
+            or provider_row_count != accepted_row_count + rejected_row_count
+        ):
+            raise NoGo(f"authority raw receipt accounting mismatch: {shard}")
+        if receipt.get("rejection_policy") != (
+            "canonical_six_digit_symbol_and_matching_ts_code"
+        ):
+            raise NoGo(f"authority raw receipt rejection policy mismatch: {shard}")
+        if not isinstance(rejected_rows, list) or len(rejected_rows) != rejected_row_count:
+            raise NoGo(f"authority raw receipt rejected rows mismatch: {shard}")
+        if any(
+            not isinstance(row, dict)
+            or set(row) != {"reason", "symbol", "ts_code"}
+            or row.get("reason") != "noncanonical_stock_identifier"
+            or not isinstance(row.get("symbol"), str)
+            or not isinstance(row.get("ts_code"), str)
+            or _is_canonical_provider_identity(row.get("symbol"), row.get("ts_code"))
+            for row in rejected_rows
+        ):
+            raise NoGo(f"authority raw receipt rejected row is invalid: {shard}")
+        if rejected_rows != sorted(
+            rejected_rows,
+            key=lambda row: (str(row["symbol"]), str(row["ts_code"])),
+        ):
+            raise NoGo(f"authority raw receipt rejected rows are not sorted: {shard}")
+        if receipt.get("rejected_rows_sha256") != _canonical_sha256(rejected_rows):
+            raise NoGo(f"authority raw receipt rejected rows hash mismatch: {shard}")
+        if columns != AUTHORITY_COLUMNS:
+            raise NoGo(f"authority raw receipt columns mismatch: {shard}")
+        if not isinstance(payload_hash, str) or SHA256.fullmatch(payload_hash) is None:
+            raise NoGo(f"authority raw receipt payload hash is invalid: {shard}")
+        if normalized_hash != _canonical_sha256(bundle["shards"][shard]):
+            raise NoGo(f"authority raw receipt normalized hash mismatch: {shard}")
+        if provider_row_count == 0 and payload_hash != empty_hash:
+            raise NoGo(f"authority empty raw receipt payload hash mismatch: {shard}")
+
+
 def _prepare_authority(bundle: dict[str, Any]) -> object:
     counts = _shard_counts(bundle)
-    missing = [shard for shard, count in counts.items() if count == 0]
-    if missing:
+    if counts["listed"] == 0:
         raise NoGo(
-            "stock authority input has empty required shards: " + ", ".join(missing),
+            "stock authority listed shard is empty",
             shard_counts=counts,
         )
+    _validate_raw_receipts(bundle, counts)
     shards = _authority_shards(bundle)
     try:
         refreshed_at = datetime.fromisoformat(str(bundle["captured_at_utc"]))
@@ -254,6 +352,13 @@ def _validate_release_inputs(args: argparse.Namespace) -> dict[str, str]:
             "release does not contain the accepted QuoteMux authority predecessor",
             expected=REQUIRED_QUOTE_MUX_COMMIT,
             actual=actual_quote_mux,
+        )
+    actual_packages = str(payload.get("quote_mux_packages_commit", ""))
+    if actual_packages != REQUIRED_QUOTE_MUX_PACKAGES_COMMIT:
+        raise NoGo(
+            "release does not contain the accepted QuoteMux_Packages authority provider",
+            expected=REQUIRED_QUOTE_MUX_PACKAGES_COMMIT,
+            actual=actual_packages,
         )
     return {key: str(payload.get(key, "")) for key in expected}
 

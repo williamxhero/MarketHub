@@ -13,6 +13,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -205,6 +206,35 @@ def _normalized_row(row: dict[str, object]) -> dict[str, str]:
     }
 
 
+def _is_canonical_stock_identity(row: dict[str, object]) -> bool:
+    symbol = str(row.get("symbol", "")).strip()
+    ts_code = str(row.get("ts_code", "")).strip().upper()
+    return re.fullmatch(r"[0-9]{6}", symbol, flags=re.ASCII) is not None and ts_code in {
+        f"{symbol}.SH",
+        f"{symbol}.SZ",
+        f"{symbol}.BJ",
+    }
+
+
+def _partition_stock_basic_rows(
+    raw_rows: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
+    accepted = [row for row in raw_rows if _is_canonical_stock_identity(row)]
+    rejected = sorted(
+        (
+            {
+                "reason": "noncanonical_stock_identifier",
+                "symbol": str(row.get("symbol", "")).strip(),
+                "ts_code": str(row.get("ts_code", "")).strip(),
+            }
+            for row in raw_rows
+            if not _is_canonical_stock_identity(row)
+        ),
+        key=lambda row: (row["symbol"], row["ts_code"]),
+    )
+    return accepted, rejected
+
+
 def _authority_shards(
     instance: object,
 ) -> tuple[dict[str, list[dict[str, str]]], dict[str, object]]:
@@ -224,14 +254,21 @@ def _authority_shards(
         if frame is None:
             raise RuntimeError(f"raw Tushare stock_basic returned None for {status}")
         raw_rows = frame.fillna("").astype(str).to_dict("records")
+        accepted_rows, rejected_rows = _partition_stock_basic_rows(raw_rows)
         normalized = sorted(
-            (_normalized_row(row) for row in raw_rows),
+            (_normalized_row(row) for row in accepted_rows),
             key=lambda row: (row["code"], row["exchange"]),
         )
         shards[shard] = normalized
         raw_receipt[shard] = {
             "list_status": status,
             "row_count": len(normalized),
+            "provider_row_count": len(raw_rows),
+            "accepted_row_count": len(normalized),
+            "rejected_row_count": len(rejected_rows),
+            "rejection_policy": "canonical_six_digit_symbol_and_matching_ts_code",
+            "rejected_rows": rejected_rows,
+            "rejected_rows_sha256": _canonical_sha256(rejected_rows),
             "columns": sorted(str(column) for column in frame.columns),
             "payload_sha256": _canonical_sha256(raw_rows),
             "normalized_sha256": _canonical_sha256(normalized),
