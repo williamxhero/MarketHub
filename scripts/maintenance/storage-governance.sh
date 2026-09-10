@@ -65,29 +65,36 @@ while IFS= read -r -d '' release; do
     [[ "$keep" -eq 1 ]] || remove_path "$resolved"
 done < <(find "$MARKETHUB_ROOT/releases" -mindepth 1 -maxdepth 1 -type d -print0)
 
-current_venv="$(systemctl show "$SERVICE_NAME.service" -p Environment --value \
+configured_venv_root="$(systemctl show "$SERVICE_NAME.service" -p Environment --value \
     | tr ' ' '\n' \
     | sed -n 's/^QUOTEMUX_PACKAGE_VENV_ROOT=//p' \
     | head -n 1)"
-[[ -n "$current_venv" && -d "$current_venv" ]] || {
+[[ -n "$configured_venv_root" && -d "$configured_venv_root" ]] || {
     echo "无法解析当前 QuoteMux provider 环境目录" >&2
     exit 11
 }
 package_venv_root="$RUNTIME_ROOT/package_venvs"
-current_venv="$(readlink -f "$current_venv")"
-[[ "$(dirname "$current_venv")" == "$(readlink -f "$package_venv_root")" ]] || {
-    echo "当前 QuoteMux provider 环境不是 package_venvs 的直接子目录，拒绝治理" >&2
-    exit 12
-}
+package_venv_root="$(readlink -f "$package_venv_root")"
+configured_venv_root="$(readlink -f "$configured_venv_root")"
 
-for venv in "$package_venv_root"/*; do
-    if [[ -L "$venv" && ! -e "$venv" ]]; then
-        remove_path "$venv"
-        continue
-    fi
-    [[ -d "$venv" ]] || continue
-    [[ "$(readlink -f "$venv")" == "$current_venv" ]] || remove_path "$venv"
-done
+# A deployment normally points QUOTEMUX_PACKAGE_VENV_ROOT at its own child
+# directory. Older shared-root deployments point it at package_venvs itself;
+# that does not identify a single disposable provider environment.
+if [[ "$configured_venv_root" == "$package_venv_root" ]]; then
+    log "Shared QuoteMux provider venv root; preserving all provider environments"
+elif [[ "$(dirname "$configured_venv_root")" == "$package_venv_root" ]]; then
+    for venv in "$package_venv_root"/*; do
+        if [[ -L "$venv" && ! -e "$venv" ]]; then
+            remove_path "$venv"
+            continue
+        fi
+        [[ -d "$venv" ]] || continue
+        [[ "$(readlink -f "$venv")" == "$configured_venv_root" ]] || remove_path "$venv"
+    done
+else
+    echo "Configured QuoteMux provider environment is outside package_venvs; refusing governance" >&2
+    exit 12
+fi
 
 while IFS= read -r -d '' archive; do
     remove_path "$archive"
