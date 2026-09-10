@@ -50,6 +50,14 @@ class StockNameHistoryPublicationRejected(RuntimeError):
     pass
 
 
+def _fetch_rows(result: Any) -> list[Any]:
+    fetchall = getattr(result, "fetchall", None)
+    if callable(fetchall):
+        return list(fetchall())
+    first = result.fetchone()
+    return [] if first is None else [first]
+
+
 @dataclass(frozen=True)
 class StockNameHistorySnapshot:
     catalog_version: str
@@ -176,16 +184,19 @@ def publish_stock_name_history_snapshot(
         "where catalog_version=%s",
         (catalog_version,),
     ).fetchone()
-    source_rows = connection.execute(
-        "select history.market,history.code,history.name,history.valid_from as start_date,"
-        "history.valid_to as end_date,history.ann_date,catalog.code is not null as in_catalog "
-        "from ref.stock_name_history history "
-        "left join readmodel.stock_catalog_item catalog "
-        "on catalog.catalog_version=%s and catalog.code=history.code "
-        "order by history.code,history.valid_from,history.valid_to nulls last,"
-        "history.name,history.market",
-        (catalog_version,),
-    ).fetchall()
+    source_rows = _fetch_rows(
+        connection.execute(
+            "select history.market,history.code,history.name,history.valid_from as start_date,"
+            "history.valid_to as end_date,history.ann_date,"
+            "catalog.code is not null as in_catalog "
+            "from ref.stock_name_history history "
+            "left join readmodel.stock_catalog_item catalog "
+            "on catalog.catalog_version=%s and catalog.code=history.code "
+            "order by history.code,history.valid_from,history.valid_to nulls last,"
+            "history.name,history.market",
+            (catalog_version,),
+        )
+    )
     if catalog_count_row is None:
         raise StockNameHistoryPublicationRejected("name history publication counts unavailable")
     accepted_rows = [row for row in source_rows if bool(row["in_catalog"])]
@@ -224,12 +235,14 @@ def publish_stock_name_history_snapshot(
             raise StockNameHistoryPublicationRejected(
                 "immutable stock name history snapshot conflicts with source"
             )
-        published_rows = connection.execute(
-            "select market,code,name,start_date,end_date,ann_date "
-            "from readmodel.stock_name_history_item where catalog_version=%s "
-            "order by code,start_date,end_date nulls last,name,market",
-            (catalog_version,),
-        ).fetchall()
+        published_rows = _fetch_rows(
+            connection.execute(
+                "select market,code,name,start_date,end_date,ann_date "
+                "from readmodel.stock_name_history_item where catalog_version=%s "
+                "order by code,start_date,end_date nulls last,name,market",
+                (catalog_version,),
+            )
+        )
         actual_rows = tuple(
             (
                 str(row["market"]),
