@@ -12,10 +12,16 @@ from core.config import DEFAULT_LIMIT
 from quotemux import QuoteMux, QuoteMuxPublicReader, StockQuotesRequest
 from quotemux.infra.db.client import query_dataframe
 from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, DividendPage, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, RightsIssuePage, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialPitRawItem, StockFinancialStatementItem, StockManagerItem, StockMarginItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, StockStrategyFactorItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
-from services.common import ensure_limit, require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
+from services.common import require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
 from services.market_data_version import require_market_data_version
 from services.dataset_versions import STOCK_DAILY_DATASET_ID, current_dataset_version, require_dataset_version
 from services.request_timing import record_stage_ms
+from services.stock_catalog_publication import (
+    ResolvedCatalogVersion,
+    catalog_publication_readiness,
+    read_stock_catalog_page,
+    resolve_stock_catalog_data_version,
+)
 from services.versioned_object_cache import get_or_build as get_or_build_object
 from services.versioned_response_cache import CacheValue, VersionedResponseCache
 
@@ -303,26 +309,110 @@ def get_finance_indicators(code: str, codes: str, report_period: str, start_peri
     return _QUOTEMUX.stocks.get_finance_indicators(code, codes, report_period, start_period, end_period)
 
 
+@dataclass(frozen=True)
+class _CatalogReadContext:
+    cache_version: str
+    legacy_market_version: str = ""
+    snapshot_version: ResolvedCatalogVersion | None = None
+
+
+def _catalog_read_context(data_version: str) -> _CatalogReadContext:
+    readiness = catalog_publication_readiness()
+    if readiness.registry_active:
+        snapshot_version = resolve_stock_catalog_data_version(data_version)
+        return _CatalogReadContext(
+            cache_version=f"{snapshot_version.data_version}:{snapshot_version.catalog_version}",
+            snapshot_version=snapshot_version,
+        )
+    market_version = require_market_data_version(data_version)
+    return _CatalogReadContext(
+        cache_version=f"legacy:{current_dataset_version('stock_reference')}",
+        legacy_market_version=market_version,
+    )
+
+
+def _load_catalog(
+    context: _CatalogReadContext,
+    actual_codes: list[str],
+    name: str,
+    exchange: str,
+    list_status: str,
+    include_delisted: bool,
+    limit: int,
+    offset: int,
+) -> list[StockBasicInfo]:
+    if context.snapshot_version is not None:
+        rows = read_stock_catalog_page(
+            context.snapshot_version,
+            codes=actual_codes,
+            name=name,
+            exchange=exchange,
+            list_status=list_status,
+            include_delisted=include_delisted,
+            limit=limit or DEFAULT_LIMIT,
+            offset=offset,
+        )
+        return [StockBasicInfo(**row) for row in rows]
+    return _QUOTEMUX.stocks.get_catalog(
+        actual_codes,
+        name,
+        exchange,
+        list_status,
+        include_delisted,
+        limit or DEFAULT_LIMIT,
+        offset,
+        data_version=context.legacy_market_version,
+    )
+
+
+def _catalog_cache_key(
+    prefix: str,
+    context: _CatalogReadContext,
+    actual_codes: list[str],
+    name: str,
+    exchange: str,
+    list_status: str,
+    include_delisted: bool,
+    limit: int,
+    offset: int,
+) -> str:
+    return "|".join(
+        (
+            prefix,
+            context.cache_version,
+            ",".join(sorted(actual_codes)),
+            name,
+            exchange,
+            list_status,
+            str(include_delisted),
+            str(limit),
+            str(offset),
+        )
+    )
+
+
 def get_catalog(codes: str, name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int, data_version: str) -> list[StockBasicInfo]:
     actual_codes = require_codes("", codes) if codes else []
-    market_version = require_market_data_version(data_version)
-    dataset_version = current_dataset_version("stock_reference")
-    key = "|".join(("catalog", dataset_version, ",".join(sorted(actual_codes)), name, exchange, list_status, str(include_delisted), str(limit), str(offset)))
+    context = _catalog_read_context(data_version)
+    key = _catalog_cache_key("catalog", context, actual_codes, name, exchange, list_status, include_delisted, limit, offset)
     result, _ = get_or_build_object(
         key,
-        lambda: _QUOTEMUX.stocks.get_catalog(actual_codes, name, exchange, list_status, include_delisted, limit or DEFAULT_LIMIT, offset, data_version=market_version),
+        lambda: _load_catalog(context, actual_codes, name, exchange, list_status, include_delisted, limit, offset),
     )
     return result
 
 
 def get_catalog_encoded(codes: str, name: str, exchange: str, list_status: str, include_delisted: bool, limit: int, offset: int, data_version: str) -> EncodedReferenceResponse:
     actual_codes = require_codes("", codes) if codes else []
-    market_version = require_market_data_version(data_version)
-    dataset_version = current_dataset_version("stock_reference")
-    key = "|".join(("catalog-json", dataset_version, ",".join(sorted(actual_codes)), name, exchange, list_status, str(include_delisted), str(limit), str(offset)))
+    context = _catalog_read_context(data_version)
+    key = _catalog_cache_key("catalog-json", context, actual_codes, name, exchange, list_status, include_delisted, limit, offset)
 
     def build() -> CacheValue[EncodedReferenceResponse]:
-        items = get_catalog(codes, name, exchange, list_status, include_delisted, limit, offset, market_version)
+        object_key = _catalog_cache_key("catalog", context, actual_codes, name, exchange, list_status, include_delisted, limit, offset)
+        items, _ = get_or_build_object(
+            object_key,
+            lambda: _load_catalog(context, actual_codes, name, exchange, list_status, include_delisted, limit, offset),
+        )
         payload = [item.model_dump(mode="json") for item in items]
         content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
         response = EncodedReferenceResponse(

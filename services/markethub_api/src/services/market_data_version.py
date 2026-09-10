@@ -108,7 +108,9 @@ def _version_from_state() -> str:
         "generation": generation,
         "adjustment_base_date": os.getenv("QUOTEMUX_ADJUSTMENT_BASE_DATE", "").strip(),
     }
-    encoded = json.dumps(fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = json.dumps(
+        fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
     return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
 
 
@@ -130,18 +132,50 @@ def _compute_market_data_version() -> str:
         "adjustment_base_date": os.getenv("QUOTEMUX_ADJUSTMENT_BASE_DATE", "").strip(),
         "sources": sources,
     }
-    encoded = json.dumps(fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = json.dumps(
+        fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
     return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
 
 
-def current_market_data_version() -> str:
-    """返回当前市场事实的可复算版本；任一受管事实写入会改变该值。"""
+def _current_market_data_base_version() -> str:
     state_version = _version_from_state()
     if state_version != "":
         return state_version
     # Backward-compatible bootstrap fallback. Production deployment installs
     # the trigger-backed state before switching the release symlink.
     return _compute_market_data_version()
+
+
+def market_data_version_for_stock_catalog(catalog_version: str) -> str:
+    """Bind the public health token to both market facts and catalog content."""
+    base_version = _current_market_data_base_version()
+    if base_version == "" or catalog_version == "":
+        return ""
+    payload = {
+        "contract": "markethub-market-facts-v1-catalog-publication",
+        "market_data_version": base_version,
+        "stock_catalog_version": catalog_version,
+    }
+    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
+    return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
+
+
+def current_market_data_version() -> str:
+    """Return a health token that cannot advertise an unverified catalog."""
+    base_version = _current_market_data_base_version()
+    if base_version == "":
+        return ""
+    from services.stock_catalog_publication import catalog_publication_readiness
+
+    readiness = catalog_publication_readiness()
+    if not readiness.registry_active:
+        return base_version
+    if readiness.current is None:
+        return ""
+    return market_data_version_for_stock_catalog(readiness.current.catalog_version)
 
 
 def current_market_data_lineage() -> list[dict[str, object]]:
@@ -163,9 +197,28 @@ def current_market_data_lineage() -> list[dict[str, object]]:
 def require_market_data_version(requested_version: str) -> str:
     actual_version = current_market_data_version()
     if actual_version == "":
-        raise HTTPException(status_code=503, detail={"code": "MARKET_DATA_VERSION_UNAVAILABLE", "message": "无法生成市场数据版本，拒绝读取未冻结市场事实"})
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "MARKET_DATA_VERSION_UNAVAILABLE",
+                "message": "无法生成市场数据版本，拒绝读取未冻结市场事实",
+            },
+        )
     if requested_version == "":
-        raise HTTPException(status_code=409, detail={"code": "MARKET_DATA_VERSION_REQUIRED", "message": "市场查询必须携带 /api/health 返回的 data_version"})
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MARKET_DATA_VERSION_REQUIRED",
+                "message": "市场查询必须携带 /api/health 返回的 data_version",
+            },
+        )
     if requested_version != actual_version:
-        raise HTTPException(status_code=409, detail={"code": "MARKET_DATA_VERSION_MISMATCH", "message": "请求版本已失效，请重新读取 /api/health", "details": actual_version})
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MARKET_DATA_VERSION_MISMATCH",
+                "message": "请求版本已失效，请重新读取 /api/health",
+                "details": actual_version,
+            },
+        )
     return actual_version
