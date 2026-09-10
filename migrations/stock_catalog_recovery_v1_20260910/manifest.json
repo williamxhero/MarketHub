@@ -1,0 +1,19 @@
+{
+  "migration_id": "markethub-stock-catalog-recovery-v1-20260910",
+  "format_version": 1,
+  "authority_provider": "tushare",
+  "market_hub_base_commit": "fe26c9adea20a1054c64c349f8eb3d9f3c8def61",
+  "required_quote_mux_commit": "6636e3dc6fef6709394ade267470b535fda6fb45",
+  "known_dirty_data_versions": [
+    "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
+  ],
+  "required_authority_shards": ["listed", "pending", "delisted"],
+  "phases": ["capture", "preflight", "rehearse", "apply", "verify"],
+  "no_go_exit_code": 20,
+  "apply_authority": "controller-only",
+  "rollback_contract": {
+    "before_apply": "keep the previously healthy service and database state",
+    "after_apply_starts": "never restart an incompatible legacy release; keep the service stopped on failure",
+    "after_verified_publication": "only a retained healthy compatible stock catalog data_version is eligible"
+  }
+}

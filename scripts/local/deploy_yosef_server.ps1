@@ -13,7 +13,10 @@ param(
     [string]$ReusePackageVenvRoot = "",
     [ValidateRange(30, 1800)][int]$CaptureDrainTimeoutSeconds = 300,
     [ValidateRange(1, 60)][int]$CaptureDrainRetrySeconds = 10,
-    [switch]$AllowCaptureDrainServiceStop
+    [switch]$AllowCaptureDrainServiceStop,
+    [string]$StockCatalogAuthorityBundle = "",
+    [string]$StockCatalogRunKey = "",
+    [string[]]$StockCatalogKnownDirtyDataVersion = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +53,24 @@ $quoteMuxPackagesRoot = (Resolve-Path -LiteralPath $quoteMuxPackagesRoot).Path
 foreach ($path in @($marketHubRoot, $quoteMuxRoot, $quoteMuxPackagesRoot)) {
     if (-not (Test-Path -LiteralPath $path -PathType Container)) {
         throw "缺少部署目录: $path"
+    }
+}
+$stockCatalogBundlePath = ""
+if (-not [string]::IsNullOrWhiteSpace($StockCatalogAuthorityBundle)) {
+    $stockCatalogBundlePath = (Resolve-Path -LiteralPath $StockCatalogAuthorityBundle).Path
+    if (-not (Test-Path -LiteralPath $stockCatalogBundlePath -PathType Leaf)) {
+        throw "Stock catalog authority bundle does not exist: $stockCatalogBundlePath"
+    }
+    if ([string]::IsNullOrWhiteSpace($StockCatalogRunKey)) {
+        throw "StockCatalogRunKey is required with StockCatalogAuthorityBundle"
+    }
+    if ($StockCatalogRunKey -notmatch '^[A-Za-z0-9._:-]+$') {
+        throw "StockCatalogRunKey contains unsupported characters"
+    }
+    foreach ($version in $StockCatalogKnownDirtyDataVersion) {
+        if ($version -notmatch '^mhf-v1-[0-9a-f]{64}$') {
+            throw "Invalid stock catalog dirty data_version: $version"
+        }
     }
 }
 if ([string]::IsNullOrWhiteSpace($ServiceUser)) {
@@ -90,6 +111,13 @@ finally {
 
 $remoteArchive = "/tmp/$releaseName.tgz"
 Invoke-NativeCommand -FilePath "scp" -Arguments @($archivePath, ($HostName + ':' + $remoteArchive))
+$remoteStockCatalogBundle = ""
+if (-not [string]::IsNullOrWhiteSpace($stockCatalogBundlePath)) {
+    $remoteStockCatalogBundle = "/tmp/$releaseName-stock-catalog-authority.json"
+    Invoke-NativeCommand -FilePath "scp" -Arguments @($stockCatalogBundlePath, ($HostName + ':' + $remoteStockCatalogBundle))
+}
+$stockCatalogDirtyJson = ConvertTo-Json -Compress -InputObject @($StockCatalogKnownDirtyDataVersion)
+$stockCatalogDirtyBase64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($stockCatalogDirtyJson))
 
 $remoteScript = @'
 set -euo pipefail
@@ -110,6 +138,9 @@ capture_drain_timeout_seconds="${14}"
 capture_drain_retry_seconds="${15}"
 allow_capture_drain_service_stop="${16}"
 reuse_package_venv_root="${17}"
+stock_catalog_bundle="${18}"
+stock_catalog_run_key="${19}"
+stock_catalog_dirty_base64="${20}"
 reader_env_path="$(dirname "$env_path")/quotemux-public-reader.env"
 publisher_env_path="$(dirname "$env_path")/quotemux-futures-partial-publisher.env"
 release_root="$remote_root/releases/$release_name"
@@ -130,6 +161,8 @@ reader_target_stage=""
 peer_runtime_access_changed=0
 peer_runtime_original_group=""
 peer_runtime_original_mode=""
+catalog_recovery_started=0
+catalog_data_version=""
 env_backup="/tmp/${service_name}-${release_name}.env.bak"
 unit_path="/etc/systemd/system/$service_name.service"
 unit_backup="/tmp/${service_name}-${release_name}.service.bak"
@@ -153,6 +186,13 @@ restart_on_exit() {
   if [ -n "$migration_stage" ]; then sudo -n rm -rf "$migration_stage" || true; fi
   if [ -n "$publisher_target_stage" ]; then sudo -n rm -f "$publisher_target_stage" || true; fi
   if [ -n "$reader_target_stage" ]; then sudo -n rm -f "$reader_target_stage" || true; fi
+  if [ "$catalog_recovery_started" = 1 ]; then
+    sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1 || true
+    rm -f "$remote_archive" || true
+    if [ -n "$stock_catalog_bundle" ]; then rm -f "$stock_catalog_bundle" || true; fi
+    echo "stock catalog recovery started; refusing incompatible legacy rollback and keeping MarketHub stopped" >&2
+    return
+  fi
   if [ "$current_switched" = 1 ] && [ -n "$previous_current" ]; then
     ln -sfn "$previous_current" "$remote_root/current.next"
     mv -Tf "$remote_root/current.next" "$remote_root/current"
@@ -211,6 +251,33 @@ sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/type=cache" || true
 sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/package_venvs" || true
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/install_all_packages.py"
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/scripts/deploy/bootstrap_database.py"
+catalog_common_args=()
+if [ -n "$stock_catalog_bundle" ]; then
+  test -f "$stock_catalog_bundle"
+  catalog_common_args=(
+    --bundle "$stock_catalog_bundle"
+    --run-key "$stock_catalog_run_key"
+    --release-inputs "$release_root/release-inputs.json"
+    --expected-market-hub-commit "$market_hub_commit"
+    --expected-quote-mux-commit "$quote_mux_commit"
+    --expected-quote-mux-packages-commit "$quote_mux_packages_commit"
+  )
+  while IFS= read -r dirty_version; do
+    if [ -n "$dirty_version" ]; then
+      catalog_common_args+=(--known-dirty-data-version "$dirty_version")
+    fi
+  done < <(
+    printf '%s' "$stock_catalog_dirty_base64" |
+      base64 --decode --ignore-garbage |
+      "$runtime_root/.venv/bin/python" -c 'import json,sys; [print(value) for value in json.load(sys.stdin)]'
+  )
+  catalog_preflight_json="$(
+    "$runtime_root/.venv/bin/python" \
+      "$release_root/MarketHub/migrations/stock_catalog_recovery_v1_20260910/release_migration.py" \
+      preflight "${catalog_common_args[@]}" --health-url "$health_url"
+  )"
+  printf 'stock catalog recovery preflight: %s\n' "$catalog_preflight_json"
+fi
 run_privileged_migration() {
 publisher_stage=""
 reader_stage=""
@@ -357,8 +424,22 @@ if [ "$service_stopped" != 1 ]; then
   service_stopped=1
 fi
 run_privileged_migration
+# Complete all release-owned database migrations before the atomic current switch.
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/live_stock_bar_v1_20260902/release_migration.py" apply
 "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/live_stock_bar_v2_20260902/release_migration.py" apply
+if [ -n "$stock_catalog_bundle" ]; then
+  catalog_recovery_started=1
+  catalog_apply_json="$(
+    "$runtime_root/.venv/bin/python" \
+      "$release_root/MarketHub/migrations/stock_catalog_recovery_v1_20260910/release_migration.py" \
+      apply "${catalog_common_args[@]}" --apply-token SPEC-3-CONTROLLER-APPLY
+  )"
+  printf 'stock catalog recovery apply: %s\n' "$catalog_apply_json"
+  catalog_data_version="$(
+    printf '%s' "$catalog_apply_json" |
+      "$runtime_root/.venv/bin/python" -c 'import json,sys; value=json.load(sys.stdin)["publication"]["data_version"]; assert value; print(value)'
+  )"
+fi
 # 某些构建后端会在源码包目录重新生成 egg-info；发布产物不允许带入 root-owned 构建目录。
 rm -rf "$release_root/QuoteMux_Packages/quotemux_packages.egg-info"
 rm -rf "$release_root/QuoteMux_Packages/build"
@@ -414,6 +495,18 @@ for attempt in $(seq 1 20); do
     api_base="${health_url%/api/health}"
     health_payload="$(curl -fsS "$health_url")"
     stock_data_version="$(printf '%s' "$health_payload" | "$runtime_root/.venv/bin/python" -c 'import json, sys, urllib.parse; value = json.load(sys.stdin).get("data_version"); assert isinstance(value, str) and value; print(urllib.parse.quote(value, safe=""))')"
+    if [ -n "$catalog_data_version" ] && [ "$stock_data_version" != "$catalog_data_version" ]; then
+      echo "stock catalog recovery data_version mismatch: expected=$catalog_data_version actual=$stock_data_version" >&2
+      exit 1
+    fi
+    if [ -n "$stock_catalog_bundle" ]; then
+      catalog_verify_json="$(
+        "$runtime_root/.venv/bin/python" \
+          "$release_root/MarketHub/migrations/stock_catalog_recovery_v1_20260910/release_migration.py" \
+          verify "${catalog_common_args[@]}" --expected-data-version "$catalog_data_version"
+      )"
+      printf 'stock catalog recovery verify: %s\n' "$catalog_verify_json"
+    fi
     curl -fsS "$api_base/api/stocks/quotes?code=600000&freq=1d&count=1&data_version=$stock_data_version" >/dev/null
     strict_status="$(curl -sS -o /tmp/markethub-strict-futures.json -w '%{http_code}' "$api_base/api/futures/quotes/1m?codes=ag,al,AP,CF,cu,hc,i,j,m,MA,ni,p,ru,sc,T,TA,TF,v,y,lh,SA,ao,si&series_type=back_adjusted_continuous&start_time=2012-01-01%2009%3A01%3A00&end_time=2026-08-11%2015%3A00%3A00")"
     if [ "$strict_status" != 409 ]; then
@@ -467,16 +560,21 @@ RECOVERY_TIMER
     current_switched=0
     trap - EXIT
     rm -f "$remote_archive" /tmp/markethub-service /tmp/markethub-live-bar-recovery.service /tmp/markethub-live-bar-recovery.timer
+    if [ -n "$stock_catalog_bundle" ]; then rm -f "$stock_catalog_bundle"; fi
     exit 0
   fi
   sleep 2
 done
-echo "new MarketHub release failed health check; restoring previous current release" >&2
+if [ "$catalog_recovery_started" = 1 ]; then
+  echo "new MarketHub release failed health check after catalog recovery; keeping service stopped" >&2
+else
+  echo "new MarketHub release failed health check; restoring previous current release" >&2
+fi
 exit 1
 '@
 $encodedRemoteScript = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($remoteScript.Replace("`r", "")))
 $captureDrainServiceStopFlag = if ($AllowCaptureDrainServiceStop) { "1" } else { "0" }
-$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath' '$CaptureDrainTimeoutSeconds' '$CaptureDrainRetrySeconds' '$captureDrainServiceStopFlag' '$ReusePackageVenvRoot'"
+$encodedRemoteScript | ssh $HostName "base64 --decode --ignore-garbage | bash -s -- '$RemoteRoot' '$releaseName' '$remoteArchive' '$RemoteRuntimeRoot' '$RemoteEnvPath' '$ServiceName' '$ServiceUser' '$HealthUrl' '$marketHubCommit' '$quoteMuxCommit' '$quoteMuxPackagesCommit' '$PrivilegedMigrationMode' '$PrivilegedMigrationEnvPath' '$CaptureDrainTimeoutSeconds' '$CaptureDrainRetrySeconds' '$captureDrainServiceStopFlag' '$ReusePackageVenvRoot' '$remoteStockCatalogBundle' '$StockCatalogRunKey' '$stockCatalogDirtyBase64'"
 if ($LASTEXITCODE -ne 0) {
     throw "远端发布失败"
 }
