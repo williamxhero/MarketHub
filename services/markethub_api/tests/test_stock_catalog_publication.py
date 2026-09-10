@@ -77,7 +77,9 @@ class _PublicationConnection:
     def execute(self, sql: str, _params: object = ()) -> _Result:
         self.calls.append(sql)
         if "from readmodel.stock_catalog_current" in sql:
-            return _Result({"catalog_version": self.previous_version} if self.previous_version else None)
+            return _Result(
+                {"catalog_version": self.previous_version} if self.previous_version else None
+            )
         if "count(*)::int as row_count" in sql:
             return _Result({"row_count": len(self.batch)})
         if "insert into audit.stock_catalog_publication_attempt" in sql and self.fail_audit:
@@ -93,7 +95,9 @@ class _PublicationConnection:
 
 def test_publication_serializes_and_switches_only_after_audited_snapshot_registration() -> None:
     connection = _PublicationConnection(previous_version="mhc-v1-previous")
-    candidate = build_stock_catalog_candidate([_row()], _evidence(), expected_fresh_through=date(2026, 9, 9))
+    candidate = build_stock_catalog_candidate(
+        [_row()], _evidence(), expected_fresh_through=date(2026, 9, 9)
+    )
 
     result = publish_stock_catalog_candidate(
         candidate,
@@ -105,9 +109,21 @@ def test_publication_serializes_and_switches_only_after_audited_snapshot_registr
     assert result.catalog_version == candidate.version
     assert result.previous_catalog_version == "mhc-v1-previous"
     assert result.row_count == 1
-    audit_index = next(index for index, call in enumerate(connection.calls) if "stock_catalog_publication_attempt" in call)
-    current_index = next(index for index, call in enumerate(connection.calls) if "insert into readmodel.stock_catalog_current" in call)
-    quarantine_index = next(index for index, call in enumerate(connection.calls) if "catalog integrity gate failed" in call)
+    audit_index = next(
+        index
+        for index, call in enumerate(connection.calls)
+        if "stock_catalog_publication_attempt" in call
+    )
+    current_index = next(
+        index
+        for index, call in enumerate(connection.calls)
+        if "insert into readmodel.stock_catalog_current" in call
+    )
+    quarantine_index = next(
+        index
+        for index, call in enumerate(connection.calls)
+        if "catalog integrity gate failed" in call
+    )
     assert audit_index < quarantine_index < current_index
     assert any("pg_advisory_xact_lock" in call for call in connection.calls)
     assert any("interval '24 hours'" in call for call in connection.calls)
@@ -115,7 +131,9 @@ def test_publication_serializes_and_switches_only_after_audited_snapshot_registr
 
 def test_failed_audit_cannot_partially_switch_current_or_cacheable_version() -> None:
     connection = _PublicationConnection(fail_audit=True)
-    candidate = build_stock_catalog_candidate([_row()], _evidence(), expected_fresh_through=date(2026, 9, 9))
+    candidate = build_stock_catalog_candidate(
+        [_row()], _evidence(), expected_fresh_through=date(2026, 9, 9)
+    )
 
     with pytest.raises(OSError, match="audit storage"):
         publish_stock_catalog_candidate(
@@ -126,7 +144,9 @@ def test_failed_audit_cannot_partially_switch_current_or_cacheable_version() -> 
         )
 
     assert any("pg_advisory_xact_lock" in call for call in connection.calls)
-    assert not any("insert into readmodel.stock_catalog_current" in call for call in connection.calls)
+    assert not any(
+        "insert into readmodel.stock_catalog_current" in call for call in connection.calls
+    )
 
 
 class _StateConnection:
@@ -145,7 +165,9 @@ class _StateConnection:
 
 def test_current_lookup_advertises_only_a_healthy_catalog_version() -> None:
     healthy = current_stock_catalog_version(
-        connection_factory=lambda: _StateConnection({"catalog_version": "mhc-v1-healthy", "activated_at_utc": "2026-09-10T00:00:00+00:00"})
+        connection_factory=lambda: _StateConnection(
+            {"catalog_version": "mhc-v1-healthy", "activated_at_utc": "2026-09-10T00:00:00+00:00"}
+        )
     )
     unavailable = current_stock_catalog_version(connection_factory=lambda: _StateConnection(None))
 
@@ -153,7 +175,9 @@ def test_current_lookup_advertises_only_a_healthy_catalog_version() -> None:
     assert unavailable is None
 
 
-def test_health_fails_closed_when_the_active_catalog_registry_has_no_healthy_current(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_health_fails_closed_when_the_active_catalog_registry_has_no_healthy_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         main,
         "catalog_publication_readiness",

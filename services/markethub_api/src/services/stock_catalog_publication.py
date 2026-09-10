@@ -185,7 +185,9 @@ def refresh_stock_catalog_publication(
 ) -> CatalogPublicationResult:
     """Build and publish the latest authority-backed snapshot as one release action."""
     candidate = build_current_stock_catalog_candidate(
-        connection_factory=_connect if candidate_connection_factory is None else candidate_connection_factory
+        connection_factory=_connect
+        if candidate_connection_factory is None
+        else candidate_connection_factory
     )
     from services.market_data_version import market_data_version_for_stock_catalog
 
@@ -195,7 +197,9 @@ def refresh_stock_catalog_publication(
     return publish_stock_catalog_candidate(
         candidate,
         data_version=data_version,
-        connection_factory=_connect if publication_connection_factory is None else publication_connection_factory,
+        connection_factory=_connect
+        if publication_connection_factory is None
+        else publication_connection_factory,
     )
 
 
@@ -209,7 +213,10 @@ def resolve_stock_catalog_data_version(
     if requested == "":
         raise HTTPException(
             status_code=409,
-            detail={"code": "CATALOG_DATA_VERSION_REQUIRED", "message": "目录读取必须携带 /api/health 返回的 data_version"},
+            detail={
+                "code": "CATALOG_DATA_VERSION_REQUIRED",
+                "message": "目录读取必须携带 /api/health 返回的 data_version",
+            },
         )
     with connection_factory() as connection:
         row = connection.execute(
@@ -231,7 +238,10 @@ def resolve_stock_catalog_data_version(
             detail={
                 "code": "CATALOG_DATA_VERSION_QUARANTINED",
                 "message": "请求的目录版本已隔离，请重新读取 /api/health 并从 offset=0 重新分页",
-                "details": {"requested_version": requested, "reason": str(row.get("reason", "") or "")},
+                "details": {
+                    "requested_version": requested,
+                    "reason": str(row.get("reason", "") or ""),
+                },
             },
         )
     raise HTTPException(
@@ -335,14 +345,18 @@ def publish_stock_catalog_candidate(
     normalized_data_version = data_version.strip()
     if normalized_data_version == "":
         raise CatalogCandidateRejected("published market data_version is required")
-    dirty_versions = tuple(sorted({version.strip() for version in known_dirty_data_versions if version.strip()}))
+    dirty_versions = tuple(
+        sorted({version.strip() for version in known_dirty_data_versions if version.strip()})
+    )
     if normalized_data_version in dirty_versions:
         raise CatalogCandidateRejected("a quarantined data_version cannot become current")
     if candidate.source.conflict_count != 0 or not candidate.items:
         raise CatalogCandidateRejected("only a complete, conflict-free candidate can be published")
     with connection_factory() as connection:
         connection.execute(_DDL)
-        connection.execute("select pg_advisory_xact_lock(hashtext('markethub:stock-catalog-publication'))")
+        connection.execute(
+            "select pg_advisory_xact_lock(hashtext('markethub:stock-catalog-publication'))"
+        )
         current = connection.execute(
             "select catalog_version from readmodel.stock_catalog_current where singleton=true for update"
         ).fetchone()
@@ -379,7 +393,9 @@ def publish_stock_catalog_candidate(
             (candidate.version,),
         ).fetchone()
         if count_row is None or int(count_row["row_count"]) != len(candidate.items):
-            raise RuntimeError("published catalog item count does not match its immutable candidate")
+            raise RuntimeError(
+                "published catalog item count does not match its immutable candidate"
+            )
         connection.execute(
             "insert into audit.stock_catalog_publication_attempt("
             "catalog_version,content_sha256,authority_input_id,authority_content_sha256,fresh_through,"
@@ -419,4 +435,6 @@ def publish_stock_catalog_candidate(
             "on conflict(singleton) do update set catalog_version=excluded.catalog_version,activated_at_utc=clock_timestamp()",
             (candidate.version,),
         )
-    return CatalogPublicationResult(candidate.version, previous_version, normalized_data_version, len(candidate.items))
+    return CatalogPublicationResult(
+        candidate.version, previous_version, normalized_data_version, len(candidate.items)
+    )

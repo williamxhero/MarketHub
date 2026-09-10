@@ -26,7 +26,16 @@ from services.stock_catalog_publication import (
 
 
 def _database_configured() -> bool:
-    return all(os.getenv(name, "") for name in ("MARKETHUB_DB_HOST", "MARKETHUB_DB_PORT", "MARKETHUB_DB_NAME", "MARKETHUB_DB_USER", "MARKETHUB_DB_PASSWORD"))
+    return all(
+        os.getenv(name, "")
+        for name in (
+            "MARKETHUB_DB_HOST",
+            "MARKETHUB_DB_PORT",
+            "MARKETHUB_DB_NAME",
+            "MARKETHUB_DB_USER",
+            "MARKETHUB_DB_PASSWORD",
+        )
+    )
 
 
 def _candidate(name: str):
@@ -59,8 +68,12 @@ def _candidate(name: str):
     )
 
 
-@pytest.mark.skipif(not _database_configured(), reason="requires an isolated PostgreSQL catalog test database")
-def test_postgres_publication_retains_old_snapshot_quarantines_dirty_version_and_serves_http_pages() -> None:
+@pytest.mark.skipif(
+    not _database_configured(), reason="requires an isolated PostgreSQL catalog test database"
+)
+def test_postgres_publication_retains_old_snapshot_quarantines_dirty_version_and_serves_http_pages() -> (
+    None
+):
     with psycopg.connect(
         host=os.environ["MARKETHUB_DB_HOST"],
         port=int(os.environ["MARKETHUB_DB_PORT"]),
@@ -73,7 +86,9 @@ def test_postgres_publication_retains_old_snapshot_quarantines_dirty_version_and
     old = _candidate("旧版本")
     new = _candidate("新版本")
     publish_stock_catalog_candidate(old, data_version="mhf-v1-old", known_dirty_data_versions=())
-    publish_stock_catalog_candidate(new, data_version="mhf-v1-new", known_dirty_data_versions=("mhf-v1-dirty",))
+    publish_stock_catalog_candidate(
+        new, data_version="mhf-v1-new", known_dirty_data_versions=("mhf-v1-dirty",)
+    )
 
     assert current_stock_catalog_version() is not None
     assert resolve_stock_catalog_data_version("mhf-v1-old").catalog_version == old.version
@@ -85,8 +100,12 @@ def test_postgres_publication_retains_old_snapshot_quarantines_dirty_version_and
     versioned_object_cache.clear()
     stocks._REFERENCE_RESPONSE_CACHE.clear()
     client = TestClient(app)
-    old_page = client.get("/api/stocks/catalog?include_delisted=true&limit=5000&offset=0&data_version=mhf-v1-old")
-    new_page = client.get("/api/stocks/catalog?include_delisted=true&limit=5000&offset=0&data_version=mhf-v1-new")
+    old_page = client.get(
+        "/api/stocks/catalog?include_delisted=true&limit=5000&offset=0&data_version=mhf-v1-old"
+    )
+    new_page = client.get(
+        "/api/stocks/catalog?include_delisted=true&limit=5000&offset=0&data_version=mhf-v1-new"
+    )
     not_modified = client.get(
         "/api/stocks/catalog?include_delisted=true&limit=5000&offset=0&data_version=mhf-v1-new",
         headers={"If-None-Match": new_page.headers["ETag"]},

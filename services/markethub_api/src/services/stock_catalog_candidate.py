@@ -16,7 +16,16 @@ from psycopg.rows import dict_row
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CODE = re.compile(r"^[0-9]{6}$")
 _PUBLIC_FIELDS = (
-    "code", "name", "exchange", "market", "list_status", "list_date", "delist_date", "industry", "listing_board", "area",
+    "code",
+    "name",
+    "exchange",
+    "market",
+    "list_status",
+    "list_date",
+    "delist_date",
+    "industry",
+    "listing_board",
+    "area",
 )
 
 _AUTHORITATIVE_SOURCE_QUERY = """
@@ -123,15 +132,25 @@ def _normalize_date(value: object, field: str) -> str:
         raise CatalogCandidateRejected(f"{field} must be an ISO date") from exc
 
 
-def _validated_evidence(evidence: CatalogSourceEvidence, expected_fresh_through: date) -> CatalogSourceEvidence:
+def _validated_evidence(
+    evidence: CatalogSourceEvidence, expected_fresh_through: date
+) -> CatalogSourceEvidence:
     if evidence.provider != "tushare":
         raise CatalogCandidateRejected("authoritative provider must be tushare")
-    if _SHA256.fullmatch(evidence.input_id) is None or _SHA256.fullmatch(evidence.content_sha256) is None:
+    if (
+        _SHA256.fullmatch(evidence.input_id) is None
+        or _SHA256.fullmatch(evidence.content_sha256) is None
+    ):
         raise CatalogCandidateRejected("authority input identity must be SHA-256")
-    if evidence.source_refreshed_at.tzinfo is None or evidence.source_refreshed_at.utcoffset() is None:
+    if (
+        evidence.source_refreshed_at.tzinfo is None
+        or evidence.source_refreshed_at.utcoffset() is None
+    ):
         raise CatalogCandidateRejected("source_refreshed_at must be timezone-aware")
     if evidence.fresh_through < expected_fresh_through:
-        raise CatalogCandidateRejected("authority input is not fresh through the required trading day")
+        raise CatalogCandidateRejected(
+            "authority input is not fresh through the required trading day"
+        )
     if evidence.provisional_count < 0 or evidence.conflict_count < 0:
         raise CatalogCandidateRejected("authority audit counts must be non-negative")
     if evidence.conflict_count != 0:
@@ -162,14 +181,24 @@ def _normalize_item(row: Mapping[str, object]) -> StockCatalogItem:
     if list_status == "D" and delist_date == "":
         raise CatalogCandidateRejected("delisted catalog item requires delisted_date")
     return StockCatalogItem(
-        code=code, name=name, exchange=exchange, market=listing_board, list_status=list_status,
-        list_date=_normalize_date(row.get("listed_date"), "listed_date"), delist_date=delist_date,
-        industry=_text(row.get("industry"), "industry"), listing_board=listing_board, area=_text(row.get("area"), "area"),
+        code=code,
+        name=name,
+        exchange=exchange,
+        market=listing_board,
+        list_status=list_status,
+        list_date=_normalize_date(row.get("listed_date"), "listed_date"),
+        delist_date=delist_date,
+        industry=_text(row.get("industry"), "industry"),
+        listing_board=listing_board,
+        area=_text(row.get("area"), "area"),
     )
 
 
 def build_stock_catalog_candidate(
-    rows: Iterable[Mapping[str, object]], evidence: CatalogSourceEvidence, *, expected_fresh_through: date,
+    rows: Iterable[Mapping[str, object]],
+    evidence: CatalogSourceEvidence,
+    *,
+    expected_fresh_through: date,
 ) -> StockCatalogCandidate:
     """Freeze a full, authoritative public catalog before any version is published."""
     source = _validated_evidence(evidence, expected_fresh_through)
@@ -189,16 +218,25 @@ def build_stock_catalog_candidate(
     if not items:
         raise CatalogCandidateRejected("authoritative catalog candidate is empty")
     frozen_items = tuple(sorted(items, key=lambda item: (item.code, item.exchange)))
-    encoded = json.dumps([item.public_payload() for item in frozen_items], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(
+        [item.public_payload() for item in frozen_items],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     content_sha256 = hashlib.sha256(encoded).hexdigest()
     return StockCatalogCandidate(f"mhc-v1-{content_sha256}", content_sha256, frozen_items, source)
 
 
 def _connect() -> psycopg.Connection[Any]:
     return psycopg.connect(
-        host=os.environ["MARKETHUB_DB_HOST"], port=int(os.environ["MARKETHUB_DB_PORT"]),
-        dbname=os.environ["MARKETHUB_DB_NAME"], user=os.environ["MARKETHUB_DB_USER"],
-        password=os.environ["MARKETHUB_DB_PASSWORD"], connect_timeout=10, row_factory=dict_row,
+        host=os.environ["MARKETHUB_DB_HOST"],
+        port=int(os.environ["MARKETHUB_DB_PORT"]),
+        dbname=os.environ["MARKETHUB_DB_NAME"],
+        user=os.environ["MARKETHUB_DB_USER"],
+        password=os.environ["MARKETHUB_DB_PASSWORD"],
+        connect_timeout=10,
+        row_factory=dict_row,
         application_name="markethub-stock-catalog-candidate",
     )
 
@@ -236,7 +274,9 @@ def _parse_timestamp(value: object, field: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def build_current_stock_catalog_candidate(*, connection_factory: Callable[[], Any] = _connect) -> StockCatalogCandidate:
+def build_current_stock_catalog_candidate(
+    *, connection_factory: Callable[[], Any] = _connect
+) -> StockCatalogCandidate:
     """Read the completed authoritative reconciliation into an immutable candidate."""
     with connection_factory() as connection:
         expected_row = connection.execute(_LATEST_COMPLETED_TRADING_DAY_QUERY).fetchone()
@@ -244,13 +284,20 @@ def build_current_stock_catalog_candidate(*, connection_factory: Callable[[], An
         rows = connection.execute(_AUTHORITATIVE_SOURCE_QUERY).fetchall()
     if expected_row is None or evidence_row is None:
         raise CatalogCandidateRejected("fresh authoritative source evidence is unavailable")
-    expected_fresh_through = _parse_date(_record_value(expected_row, "trade_date"), "latest completed trading day")
+    expected_fresh_through = _parse_date(
+        _record_value(expected_row, "trade_date"), "latest completed trading day"
+    )
     evidence = CatalogSourceEvidence(
-        input_id=str(_record_value(evidence_row, "input_id") or ""), content_sha256=str(_record_value(evidence_row, "content_sha256") or ""),
+        input_id=str(_record_value(evidence_row, "input_id") or ""),
+        content_sha256=str(_record_value(evidence_row, "content_sha256") or ""),
         provider=str(_record_value(evidence_row, "provider") or ""),
-        source_refreshed_at=_parse_timestamp(_record_value(evidence_row, "source_refreshed_at"), "source_refreshed_at"),
+        source_refreshed_at=_parse_timestamp(
+            _record_value(evidence_row, "source_refreshed_at"), "source_refreshed_at"
+        ),
         fresh_through=_parse_date(_record_value(evidence_row, "fresh_through"), "fresh_through"),
         provisional_count=int(_record_value(evidence_row, "provisional_count") or 0),
         conflict_count=int(_record_value(evidence_row, "conflict_count") or 0),
     )
-    return build_stock_catalog_candidate(rows, evidence, expected_fresh_through=expected_fresh_through)
+    return build_stock_catalog_candidate(
+        rows, evidence, expected_fresh_through=expected_fresh_through
+    )

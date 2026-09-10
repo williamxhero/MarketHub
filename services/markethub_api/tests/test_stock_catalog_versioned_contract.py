@@ -25,7 +25,9 @@ from app import app
 
 
 class _Result:
-    def __init__(self, row: dict[str, object] | None = None, rows: list[dict[str, object]] | None = None) -> None:
+    def __init__(
+        self, row: dict[str, object] | None = None, rows: list[dict[str, object]] | None = None
+    ) -> None:
         self.row = row
         self.rows = rows or []
 
@@ -55,7 +57,14 @@ class _VersionConnection:
 def test_resolver_accepts_retained_healthy_version_and_rejects_quarantine() -> None:
     healthy = resolve_stock_catalog_data_version(
         "mhf-v1-healthy",
-        connection_factory=lambda: _VersionConnection({"data_version": "mhf-v1-healthy", "catalog_version": "mhc-v1-healthy", "status": "healthy", "reason": ""}),
+        connection_factory=lambda: _VersionConnection(
+            {
+                "data_version": "mhf-v1-healthy",
+                "catalog_version": "mhc-v1-healthy",
+                "status": "healthy",
+                "reason": "",
+            }
+        ),
     )
 
     assert healthy == ResolvedCatalogVersion("mhf-v1-healthy", "mhc-v1-healthy")
@@ -63,7 +72,14 @@ def test_resolver_accepts_retained_healthy_version_and_rejects_quarantine() -> N
     with pytest.raises(HTTPException) as error:
         resolve_stock_catalog_data_version(
             "mhf-v1-quarantined",
-            connection_factory=lambda: _VersionConnection({"data_version": "mhf-v1-quarantined", "catalog_version": None, "status": "quarantined", "reason": "bad names"}),
+            connection_factory=lambda: _VersionConnection(
+                {
+                    "data_version": "mhf-v1-quarantined",
+                    "catalog_version": None,
+                    "status": "quarantined",
+                    "reason": "bad names",
+                }
+            ),
         )
 
     assert error.value.status_code == 409
@@ -95,8 +111,30 @@ class _PageConnection:
         self.params = params
         return _Result(
             rows=[
-                {"code": "301699", "name": "样例一", "exchange": "SZSE", "market": "创业板", "list_status": "L", "list_date": "2026-09-08", "delist_date": "", "industry": "", "listing_board": "创业板", "area": ""},
-                {"code": "920268", "name": "样例二", "exchange": "BJSE", "market": "北交所", "list_status": "L", "list_date": "2026-09-08", "delist_date": "", "industry": "", "listing_board": "北交所", "area": ""},
+                {
+                    "code": "301699",
+                    "name": "样例一",
+                    "exchange": "SZSE",
+                    "market": "创业板",
+                    "list_status": "L",
+                    "list_date": "2026-09-08",
+                    "delist_date": "",
+                    "industry": "",
+                    "listing_board": "创业板",
+                    "area": "",
+                },
+                {
+                    "code": "920268",
+                    "name": "样例二",
+                    "exchange": "BJSE",
+                    "market": "北交所",
+                    "list_status": "L",
+                    "list_date": "2026-09-08",
+                    "delist_date": "",
+                    "industry": "",
+                    "listing_board": "北交所",
+                    "area": "",
+                },
             ]
         )
 
@@ -105,7 +143,13 @@ def test_page_reads_one_immutable_snapshot_with_a_stable_scope() -> None:
     connection = _PageConnection()
     items = read_stock_catalog_page(
         ResolvedCatalogVersion("mhf-v1-health", "mhc-v1-snapshot"),
-        codes=[], name="", exchange="", list_status="", include_delisted=True, limit=5000, offset=0,
+        codes=[],
+        name="",
+        exchange="",
+        list_status="",
+        include_delisted=True,
+        limit=5000,
+        offset=0,
         connection_factory=lambda: connection,
     )
 
@@ -115,7 +159,9 @@ def test_page_reads_one_immutable_snapshot_with_a_stable_scope() -> None:
     assert connection.params[0] == "mhc-v1-snapshot"
 
 
-def test_catalog_cache_uses_snapshot_version_and_never_calls_live_reader_when_registry_is_active(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_catalog_cache_uses_snapshot_version_and_never_calls_live_reader_when_registry_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     versioned_object_cache.clear()
     stocks._REFERENCE_RESPONSE_CACHE.clear()
     calls: list[str] = []
@@ -123,7 +169,9 @@ def test_catalog_cache_uses_snapshot_version_and_never_calls_live_reader_when_re
     monkeypatch.setattr(
         stocks,
         "catalog_publication_readiness",
-        lambda: CatalogPublicationReadiness(True, CatalogCurrentVersion(current["version"], "2026-09-10T00:00:00+00:00")),
+        lambda: CatalogPublicationReadiness(
+            True, CatalogCurrentVersion(current["version"], "2026-09-10T00:00:00+00:00")
+        ),
     )
     monkeypatch.setattr(
         stocks,
@@ -133,11 +181,31 @@ def test_catalog_cache_uses_snapshot_version_and_never_calls_live_reader_when_re
     monkeypatch.setattr(
         stocks,
         "read_stock_catalog_page",
-        lambda version, **_kwargs: calls.append(version.catalog_version) or [
-            {"code": "600000", "name": "浦发银行", "exchange": "SHSE", "market": "主板", "list_status": "L", "list_date": "1999-11-10", "delist_date": "", "industry": "", "listing_board": "主板", "area": ""}
-        ],
+        lambda version, **_kwargs: (
+            calls.append(version.catalog_version)
+            or [
+                {
+                    "code": "600000",
+                    "name": "浦发银行",
+                    "exchange": "SHSE",
+                    "market": "主板",
+                    "list_status": "L",
+                    "list_date": "1999-11-10",
+                    "delist_date": "",
+                    "industry": "",
+                    "listing_board": "主板",
+                    "area": "",
+                }
+            ]
+        ),
     )
-    monkeypatch.setattr(stocks._QUOTEMUX.stocks, "get_catalog", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("snapshot path must not use the live reader")))
+    monkeypatch.setattr(
+        stocks._QUOTEMUX.stocks,
+        "get_catalog",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("snapshot path must not use the live reader")
+        ),
+    )
 
     first = stocks.get_catalog_encoded("", "", "", "", True, 5000, 0, "mhf-v1-health")
     same_snapshot = stocks.get_catalog_encoded("", "", "", "", True, 5000, 0, "mhf-v1-health")
@@ -155,12 +223,18 @@ def test_catalog_cache_uses_snapshot_version_and_never_calls_live_reader_when_re
     assert next_snapshot.content == first.content
 
 
-def test_health_data_version_changes_only_when_catalog_snapshot_or_market_facts_change(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_health_data_version_changes_only_when_catalog_snapshot_or_market_facts_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     current = {"catalog_version": "mhc-v1-first"}
-    monkeypatch.setattr(market_data_version, "_current_market_data_base_version", lambda: "mhf-v1-facts")
+    monkeypatch.setattr(
+        market_data_version, "_current_market_data_base_version", lambda: "mhf-v1-facts"
+    )
     monkeypatch.setattr(
         "services.stock_catalog_publication.catalog_publication_readiness",
-        lambda: CatalogPublicationReadiness(True, CatalogCurrentVersion(current["catalog_version"], "2026-09-10T00:00:00+00:00")),
+        lambda: CatalogPublicationReadiness(
+            True, CatalogCurrentVersion(current["catalog_version"], "2026-09-10T00:00:00+00:00")
+        ),
     )
 
     first = market_data_version.current_market_data_version()
@@ -172,28 +246,49 @@ def test_health_data_version_changes_only_when_catalog_snapshot_or_market_facts_
     assert switched != first
 
 
-def test_catalog_http_keeps_success_shape_etag_and_304_while_quarantine_bypasses_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_catalog_http_keeps_success_shape_etag_and_304_while_quarantine_bypasses_caches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     versioned_object_cache.clear()
     stocks._REFERENCE_RESPONSE_CACHE.clear()
     page_calls: list[str] = []
     monkeypatch.setattr(
         stocks,
         "catalog_publication_readiness",
-        lambda: CatalogPublicationReadiness(True, CatalogCurrentVersion("mhc-v1-current", "2026-09-10T00:00:00+00:00")),
+        lambda: CatalogPublicationReadiness(
+            True, CatalogCurrentVersion("mhc-v1-current", "2026-09-10T00:00:00+00:00")
+        ),
     )
 
     def resolve(data_version: str) -> ResolvedCatalogVersion:
         if data_version == "mhf-v1-quarantined":
-            raise HTTPException(status_code=409, detail={"code": "CATALOG_DATA_VERSION_QUARANTINED", "message": "re-pin"})
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "CATALOG_DATA_VERSION_QUARANTINED", "message": "re-pin"},
+            )
         return ResolvedCatalogVersion(data_version, "mhc-v1-current")
 
     monkeypatch.setattr(stocks, "resolve_stock_catalog_data_version", resolve)
     monkeypatch.setattr(
         stocks,
         "read_stock_catalog_page",
-        lambda version, **_kwargs: page_calls.append(version.catalog_version) or [
-            {"code": "600000", "name": "浦发银行", "exchange": "SHSE", "market": "主板", "list_status": "L", "list_date": "1999-11-10", "delist_date": "", "industry": "", "listing_board": "主板", "area": ""}
-        ],
+        lambda version, **_kwargs: (
+            page_calls.append(version.catalog_version)
+            or [
+                {
+                    "code": "600000",
+                    "name": "浦发银行",
+                    "exchange": "SHSE",
+                    "market": "主板",
+                    "list_status": "L",
+                    "list_date": "1999-11-10",
+                    "delist_date": "",
+                    "industry": "",
+                    "listing_board": "主板",
+                    "area": "",
+                }
+            ]
+        ),
     )
     client = TestClient(app)
 
@@ -205,14 +300,29 @@ def test_catalog_http_keeps_success_shape_etag_and_304_while_quarantine_bypasses
     quarantined = client.get("/api/stocks/catalog?data_version=mhf-v1-quarantined")
 
     assert healthy.status_code == 200
-    assert healthy.json() == [{"code": "600000", "name": "浦发银行", "exchange": "SHSE", "market": "主板", "list_status": "L", "list_date": "1999-11-10", "delist_date": "", "industry": "", "listing_board": "主板", "area": ""}]
+    assert healthy.json() == [
+        {
+            "code": "600000",
+            "name": "浦发银行",
+            "exchange": "SHSE",
+            "market": "主板",
+            "list_status": "L",
+            "list_date": "1999-11-10",
+            "delist_date": "",
+            "industry": "",
+            "listing_board": "主板",
+            "area": "",
+        }
+    ]
     assert cached.status_code == 304
     assert quarantined.status_code == 409
     assert quarantined.json()["code"] == "CATALOG_DATA_VERSION_QUARANTINED"
     assert page_calls == ["mhc-v1-current"]
 
 
-def test_concurrent_pages_stay_with_their_pinned_immutable_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_concurrent_pages_stay_with_their_pinned_immutable_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     versioned_object_cache.clear()
     snapshots = {
         "mhf-v1-old": "mhc-v1-old",
@@ -221,7 +331,9 @@ def test_concurrent_pages_stay_with_their_pinned_immutable_snapshot(monkeypatch:
     monkeypatch.setattr(
         stocks,
         "catalog_publication_readiness",
-        lambda: CatalogPublicationReadiness(True, CatalogCurrentVersion("mhc-v1-new", "2026-09-10T00:00:00+00:00")),
+        lambda: CatalogPublicationReadiness(
+            True, CatalogCurrentVersion("mhc-v1-new", "2026-09-10T00:00:00+00:00")
+        ),
     )
     monkeypatch.setattr(
         stocks,

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "markethub-api"
+version = "0.1.0"
+description = "MarketHub HTTP API service"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.116.1",
+    "httpx>=0.28,<0.29",
+    "pandas==2.3.3",
+    "psycopg[binary]==3.3.3",
+    "pyarrow==21.0.0",
+    "quotemux @ git+https://github.com/williamxhero/QuoteMux.git@6636e3dc6fef6709394ade267470b535fda6fb45",
+    "uvicorn[standard]==0.35.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["app", "data_threads", "main", "openapi_docs", "runtime_paths"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["core*", "routers*", "services*"]
