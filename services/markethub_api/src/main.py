@@ -43,6 +43,7 @@ from services import adj_factor_warmup, daily_window, live_bars, reader_packages
 from services.dataset_versions import VERSION_CONTRACT, current_dataset_publications, current_dataset_versions
 from services.versioned_object_cache import snapshot as object_cache_metrics
 from services.market_data_version import current_market_data_version
+from services.stock_catalog_publication import catalog_publication_readiness
 from services.performance_metrics import PerformanceMetrics, PerformanceMetricsMiddleware
 from starlette.routing import Match
 
@@ -265,6 +266,15 @@ async def console_config() -> dict[str, str]:
 )
 async def health() -> dict[str, object]:
     # 健康检查只做轻量存活探针，避免把索引构建耗时耦合进监控。
+    catalog_readiness = catalog_publication_readiness()
+    if catalog_readiness.registry_active and catalog_readiness.current is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "CATALOG_UNAVAILABLE",
+                "message": "权威股票目录尚无健康版本，拒绝广告 data_version",
+            },
+        )
     dataset_versions = current_dataset_versions()
     return {
         "service": "integration_api",
