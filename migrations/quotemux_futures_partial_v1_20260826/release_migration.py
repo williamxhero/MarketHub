@@ -78,14 +78,18 @@ def _write_secret_env(path: Path, lines: tuple[str, ...]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
     try:
-        os.fchmod(descriptor, 0o600)
+        # Windows does not expose fchmod.  The deployment target is Linux,
+        # where this protects the descriptor before its contents are written.
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             descriptor = -1
             handle.write("\n".join(lines) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
-        os.chmod(path, 0o600)
+        if os.name != "nt":
+            os.chmod(path, 0o600)
     finally:
         if descriptor >= 0:
             os.close(descriptor)
