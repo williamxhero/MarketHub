@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -17,6 +18,7 @@ from services.stock_catalog_candidate import (
 
 RETAIN_HEALTHY_VERSION_FOR_HOURS = 24
 KNOWN_DIRTY_DATA_VERSION = "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
+_DATA_VERSION = re.compile(r"^mhf-v1-[0-9a-f]{64}$")
 
 _DDL = """
 create schema if not exists readmodel;
@@ -245,6 +247,7 @@ def resolve_stock_catalog_data_version(
     requested_data_version: str,
     *,
     connection_factory: Callable[[], Any] = _connect,
+    current_data_version_factory: Callable[[], str] | None = None,
 ) -> ResolvedCatalogVersion:
     """Resolve a retained healthy snapshot or return a stable re-pin error."""
     requested = requested_data_version.strip()
@@ -285,6 +288,34 @@ def resolve_stock_catalog_data_version(
                 },
             },
         )
+    if _DATA_VERSION.fullmatch(requested):
+        if current_data_version_factory is None:
+            from services.market_data_version import current_market_data_version
+
+            version_factory = current_market_data_version
+        else:
+            version_factory = current_data_version_factory
+        with connection_factory() as connection:
+            current = connection.execute(
+                "select current.catalog_version "
+                "from readmodel.stock_catalog_current current "
+                "join readmodel.stock_catalog_version version "
+                "on version.catalog_version=current.catalog_version "
+                "where current.singleton=true and version.status='healthy' "
+                "for share of current"
+            ).fetchone()
+            if current is not None and requested == version_factory():
+                catalog_version = str(current["catalog_version"])
+                connection.execute(
+                    "insert into readmodel.stock_catalog_data_version("
+                    "data_version,catalog_version,status,serve_until_utc,reason) "
+                    "values(%s,%s,'healthy',clock_timestamp() + interval '24 hours','') "
+                    "on conflict(data_version) do update set "
+                    "catalog_version=excluded.catalog_version,status='healthy',"
+                    "serve_until_utc=excluded.serve_until_utc,reason=''",
+                    (requested, catalog_version),
+                )
+                return ResolvedCatalogVersion(requested, catalog_version)
     raise HTTPException(
         status_code=409,
         detail={
