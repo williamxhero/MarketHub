@@ -12,7 +12,7 @@ from core.config import DEFAULT_LIMIT
 from quotemux import QuoteMux, QuoteMuxPublicReader, StockQuotesRequest
 from quotemux.infra.db.client import query_dataframe
 from quotemux.models import AdjFactorItem, AuditItem, AuctionItem, BSECodeMappingItem, CcassHoldingDetailItem, CcassHoldingItem, ChipDistributionItem, ChipPerformanceItem, DisclosureDateItem, DividendItem, DividendPage, ExpressItem, ForecastItem, HKConnectHoldingItem, HKConnectTargetItem, HLSignalItem, LimitOrderAmountItem, MainBusinessItem, ManagementRewardItem, NameHistoryItem, NineTurnItem, PledgeDetailItem, PledgeStatItem, RepurchaseItem, ResearchReportItem, RightsIssueItem, RightsIssuePage, ShareChangeItem, ShareholderChangeItem, ShareholderCountItem, ShareholderTop10Item, StockAHComparisonItem, StockArchiveItem, StockBasicInfo, StockDailyBasicItem, StockDailyMarketValueItem, StockDailyValuationItem, StockFinanceIndicatorItem, StockFinancialPitRawItem, StockFinancialStatementItem, StockManagerItem, StockMarginItem, StockMoneyFlowItem, StockPremarketItem, StockProfileItem, StockQuoteItem, StockQuotesQueryResult, StockRiskFlagItem, StockStrategyFactorItem, SurveyItem, TechnicalFactorItem, UnlockScheduleItem
-from services.common import ensure_limit, require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
+from services.common import require_adjust, require_codes, require_money_flow_view, require_quote_freq, require_report_type
 from services.market_data_version import require_market_data_version
 from services.dataset_versions import STOCK_DAILY_DATASET_ID, current_dataset_version, require_dataset_version
 from services.request_timing import record_stage_ms
