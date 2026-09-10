@@ -325,15 +325,20 @@ def ensure_current_stock_daily_coverage() -> dict[str, object]:
     }
 
 
-def mark_stock_daily_publication_ready(dataset_version: str) -> None:
+def mark_stock_daily_publication_online(dataset_version: str) -> None:
     with _connect(autocommit=True) as connection:
         result = connection.execute(
-            "update readmodel.dataset_build_state set status='ready',updated_at_utc=clock_timestamp() "
+            "update readmodel.dataset_build_state set status='online',updated_at_utc=clock_timestamp() "
             "where dataset_id=%s and dataset_version=%s and coverage_ready and complete",
             (STOCK_DAILY_DATASET_ID, dataset_version),
         )
         if result.rowcount != 1:
             raise RuntimeError(f"complete coverage state unavailable for publication: {dataset_version}")
+
+
+# Keep rolling deployments compatible with an already-installed publisher
+# process while the runtime script is atomically updated to the new name.
+mark_stock_daily_publication_ready = mark_stock_daily_publication_online
 
 
 def load_stock_daily_coverage_summary(

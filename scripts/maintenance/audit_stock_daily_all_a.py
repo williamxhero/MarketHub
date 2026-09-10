@@ -28,7 +28,16 @@ with catalog as materialized (
       and (case when market='BJSE' then greatest(listed_date,date '2021-11-15') else listed_date end) < coalesce(delisted_date,date 'infinity')
       and ((market='SHSE' and left(code,1)='6')
         or (market='SZSE' and left(code,1) in ('0','3'))
-        or (market='BJSE' and left(code,1) in ('4','8','9')))
+        or (
+            market='BJSE'
+            and (
+                (left(code,3)='920' and listed_date >= date '2024-04-22')
+                or exists (
+                    select 1 from ref.stock_code_migration migration
+                    where migration.old_market='BJSE' and migration.old_code=catalog.code
+                )
+            )
+        ))
 ), open_dates as materialized (
     select trade_date
     from ref.trade_calendar

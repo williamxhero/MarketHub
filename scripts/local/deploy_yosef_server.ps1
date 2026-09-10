@@ -386,7 +386,9 @@ EnvironmentFile=$reader_env_path
 Environment=MARKETHUB_RUNTIME_ROOT=$runtime_root
 Environment=MARKETHUB_DATA_ROOT=$runtime_root/store
 Environment=MARKETHUB_RELEASE=$release_name
-Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root
+# Keep QuoteMux's configuration state separate from MarketHub's data/runtime
+# root.  Production profiles and their audit history live under this directory.
+Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime
 Environment=PYTHONPATH=$remote_root/current/QuoteMux/src:$remote_root/current/MarketHub/services/markethub_api/src
 Environment=QUOTEMUX_PACKAGE_REPO_SPEC=$remote_root/current/QuoteMux_Packages
 Environment=QUOTEMUX_PACKAGE_VENV_ROOT=$package_venv_root

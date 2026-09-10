@@ -6,6 +6,7 @@ import sys
 
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "publisher" / "publish_stock_daily_parquet.py"
+DAILY_COVERAGE_READ_MODEL = Path(__file__).resolve().parents[1] / "src" / "services" / "daily_coverage_read_model.py"
 SPEC = importlib.util.spec_from_file_location("publish_stock_daily_parquet", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -26,7 +27,7 @@ def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
     assert '"url": f"/api/exports/{DATASET_ID}/{dataset_version}/files/{relative_path}"' in content
     assert "date '2021-11-15'" in content
     assert "ensure_current_stock_daily_coverage" in content
-    assert "mark_stock_daily_publication_ready" in content
+    assert "mark_stock_daily_publication_online" in content
     assert "pg_try_advisory_lock" in content
     assert "Parquet publication lock timeout" in content
     assert "resuming stock daily Parquet publication" in content
@@ -42,6 +43,15 @@ def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
         "market", "code", "trade_date", "open", "high", "low", "close", "volume", "amount",
         "is_suspended", "is_st", "pre_close", "change", "pct_chg", "adj_factor", "loaded_at",
     )
+
+
+def test_publisher_only_promotes_complete_coverage_to_online() -> None:
+    content = DAILY_COVERAGE_READ_MODEL.read_text(encoding="utf-8")
+
+    assert "def mark_stock_daily_publication_online" in content
+    assert "set status='online'" in content
+    assert "where dataset_id=%s and dataset_version=%s and coverage_ready and complete" in content
+    assert "mark_stock_daily_publication_ready = mark_stock_daily_publication_online" in content
 
 
 def test_dataset_version_matches_api_contract() -> None:

@@ -142,9 +142,8 @@
     "concepts.indicators.money_flow": {
       "group": "资金流/市场指标",
       "logic_scope": "concept_id + trade_date + scope 的概念资金流",
-      "reference_data": "ref.trade_calendar; ref.concept; ref.concept_stock_membership; fact.stock_daily_1d",
+      "reference_data": "ref.trade_calendar; ref.concept; ref.concept_stock_membership; concepts.indicators.money_flow.snapshot 本地持久化产物",
       "reference_objects": [
-        "fact.stock_daily_1d",
         "ref.trade_calendar",
         "ref.concept",
         "ref.concept_stock_membership"
@@ -257,7 +256,7 @@
         },
         {
           "type": "money_flow_values_valid",
-          "object": "fact.stock_daily_1d"
+          "capability_id": "concepts.indicators.money_flow.snapshot"
         },
         {
           "type": "long_empty",
@@ -370,7 +369,7 @@
         },
         {
           "type": "money_flow_values_valid",
-          "object": "fact.stock_daily_1d"
+          "capability_id": "concepts.indicators.money_flow.snapshot"
         },
         {
           "type": "long_empty",

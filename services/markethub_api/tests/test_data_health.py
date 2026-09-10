@@ -25,7 +25,7 @@ def test_data_health_profiles_are_loaded_from_service_json() -> None:
     profiles = data_health._load_profiles()
     assert len(profiles) >= 83
     money_flow = profiles["concepts.indicators.money_flow"]
-    assert money_flow["reference_objects"] == ["fact.stock_daily_1d", "ref.trade_calendar", "ref.concept", "ref.concept_stock_membership"]
+    assert money_flow["reference_objects"] == ["ref.trade_calendar", "ref.concept", "ref.concept_stock_membership"]
     assert {check["type"] for check in money_flow["checks"]} >= {"database_available", "table_exists", "reference_valid", "fixed_field", "money_flow_values_valid"}
 
 
@@ -165,6 +165,54 @@ def test_status_from_checks_priority() -> None:
     assert data_health._status_from_checks([{"status": "healthy"}, {"status": "warning"}]) == "warning"
     assert data_health._status_from_checks([{"status": "healthy"}, {"status": "unknown"}]) == "warning"
     assert data_health._status_from_checks([{"status": "warning"}, {"status": "unhealthy"}]) == "unhealthy"
+
+
+def test_concept_money_flow_value_check_reads_latest_snapshot_payload(monkeypatch) -> None:
+    from quotemux.models import ConceptMoneyFlowItem
+
+    captured: dict[str, object] = {}
+
+    def fake_load_store_result(capability_id: str, identity: dict[str, object], model_type):
+        captured["capability_id"] = capability_id
+        captured["identity"] = identity
+        captured["model_type"] = model_type
+        return (
+            [
+                ConceptMoneyFlowItem(
+                    concept_id="C1",
+                    trade_date="2026-09-08",
+                    scope="concept",
+                    inflow=12.5,
+                    outflow=10.0,
+                    net_inflow=2.5,
+                )
+            ],
+            type("Read", (), {"hit": True, "partial_hit": False})(),
+        )
+
+    monkeypatch.setattr(data_health, "load_store_result", fake_load_store_result)
+
+    check = data_health._concept_money_flow_value_check("2026-09-08")
+
+    assert check.status == "healthy"
+    assert captured == {
+        "capability_id": "concepts.indicators.money_flow.snapshot",
+        "identity": {"concept_id": "", "trade_date": "2026-09-08", "scope": "concept", "limit": 10000, "offset": 0},
+        "model_type": ConceptMoneyFlowItem,
+    }
+
+
+def test_concept_money_flow_value_check_rejects_missing_latest_snapshot(monkeypatch) -> None:
+    monkeypatch.setattr(
+        data_health,
+        "load_store_result",
+        lambda *_args, **_kwargs: ([], type("Read", (), {"hit": False, "partial_hit": False})()),
+    )
+
+    check = data_health._concept_money_flow_value_check("2026-09-08")
+
+    assert check.status == "unhealthy"
+    assert "2026-09-08" in check.error_text
 
 
 def test_duplicate_check_uses_primary_key_index_without_scanning(monkeypatch) -> None:
@@ -512,6 +560,32 @@ def test_market_data_contract_latest_date_check_ignores_unclosed_partial_rows(mo
 
     assert "where index_rows.trade_date <= target.trade_date" in captured_query
     assert "where stock_rows.trade_date <= target.trade_date" in captured_query
+
+
+def test_core_dataset_freshness_reports_each_dataset_against_calendar_target(monkeypatch) -> None:
+    import pandas as pd
+
+    monkeypatch.setattr(
+        data_health,
+        "_query_core_dataset_freshness",
+        lambda: {
+            "target_trade_date": "2026-09-07",
+            "fact.stock_daily_1d": "2026-09-04",
+            "fact.index_bar_1d": "2026-08-28",
+            "fact.concept_daily_1d": "2026-08-28",
+            "fact.board_daily_1d": "2026-08-28",
+        },
+    )
+
+    checks = data_health._core_dataset_freshness_checks(
+        {object_name: {"exists": True} for object_name in data_health.CORE_DATASET_FRESHNESS_OBJECTS},
+        True,
+        {"status": "healthy"},
+        {},
+    )
+
+    assert [check.status for check in checks] == ["unhealthy", "unhealthy", "unhealthy", "unhealthy"]
+    assert "目标交易日 2026-09-07，最新 2026-09-04" in checks[0].error_text
 
 
 def _empty_frame():
