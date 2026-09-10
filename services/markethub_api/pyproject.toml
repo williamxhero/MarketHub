@@ -19,7 +19,7 @@ dependencies = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["app", "data_threads", "main", "openapi_docs", "runtime_paths"]
+py-modules = ["data_threads", "main", "openapi_docs"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
