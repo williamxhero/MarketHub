@@ -109,3 +109,11 @@ def test_candidate_fails_closed_for_stale_or_conflicted_authority_input() -> Non
         build_stock_catalog_candidate(
             [_row()], _evidence(conflict_count=1), expected_fresh_through=date(2026, 9, 9)
         )
+
+
+@pytest.mark.parametrize("invalid_code", ("123", "1234567", "12A456"))
+def test_candidate_does_not_normalize_malformed_stock_identity_codes(invalid_code: str) -> None:
+    with pytest.raises(CatalogCandidateRejected, match="six-digit"):
+        build_stock_catalog_candidate(
+            [_row(code=invalid_code)], _evidence(), expected_fresh_through=date(2026, 9, 9)
+        )

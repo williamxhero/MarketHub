@@ -247,14 +247,18 @@ def test_catalog_cache_uses_snapshot_version_and_never_calls_live_reader_when_re
     versioned_object_cache.clear()
     stocks._REFERENCE_RESPONSE_CACHE.clear()
     restarted = stocks.get_catalog_encoded("", "", "", "", True, 5000, 0, "mhf-v1-health")
+    same_snapshot_different_data_version = stocks.get_catalog_encoded(
+        "", "", "", "", True, 5000, 0, "mhf-v1-health-alias"
+    )
     current["version"] = "mhc-v1-second"
     next_snapshot = stocks.get_catalog_encoded("", "", "", "", True, 5000, 0, "mhf-v1-new-health")
 
-    assert calls == ["mhc-v1-first", "mhc-v1-first", "mhc-v1-second"]
+    assert calls == ["mhc-v1-first", "mhc-v1-first", "mhc-v1-first", "mhc-v1-second"]
     assert first.content == same_snapshot.content
     assert first.headers["ETag"] == same_snapshot.headers["ETag"]
     assert restarted.content == first.content
     assert restarted.headers["ETag"] == first.headers["ETag"]
+    assert same_snapshot_different_data_version.content == first.content
     assert next_snapshot.content == first.content
 
 

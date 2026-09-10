@@ -320,7 +320,10 @@ def _catalog_read_context(data_version: str) -> _CatalogReadContext:
     readiness = catalog_publication_readiness()
     if readiness.registry_active:
         snapshot_version = resolve_stock_catalog_data_version(data_version)
-        return _CatalogReadContext(cache_version=snapshot_version.catalog_version, snapshot_version=snapshot_version)
+        return _CatalogReadContext(
+            cache_version=f"{snapshot_version.data_version}:{snapshot_version.catalog_version}",
+            snapshot_version=snapshot_version,
+        )
     market_version = require_market_data_version(data_version)
     return _CatalogReadContext(
         cache_version=f"legacy:{current_dataset_version('stock_reference')}",

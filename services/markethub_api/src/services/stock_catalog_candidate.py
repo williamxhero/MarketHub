@@ -162,7 +162,7 @@ def _normalize_item(row: Mapping[str, object]) -> StockCatalogItem:
     identity_source = _text(row.get("identity_source"), "identity_source", required=True)
     if identity_source != "tushare_catalog":
         raise CatalogCandidateRejected("authoritative identity has an unsupported provenance")
-    code = _text(row.get("code"), "code", required=True).zfill(6)
+    code = _text(row.get("code"), "code", required=True)
     if _CODE.fullmatch(code) is None:
         raise CatalogCandidateRejected("code must be a six-digit stock code")
     name = _text(row.get("name"), "name", required=True)
