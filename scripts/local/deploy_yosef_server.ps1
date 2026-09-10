@@ -237,6 +237,7 @@ sudo -n chown "$service_user:$service_group" "$env_path"
 set -a
 . "$env_path"
 set +a
+application_db_owner="$MARKETHUB_DB_USER"
 # 环境文件可能保留旧 current 的包源，安装当前 release 前必须以本次发布目录为准。
 export QUOTEMUX_PACKAGE_REPO_SPEC="$release_root/QuoteMux_Packages"
 export MARKETHUB_RUNTIME_ROOT="$runtime_root"
@@ -292,8 +293,12 @@ case "$migration_mode" in
     publisher_stage="$migration_stage/publisher.env"
     reader_stage="$migration_stage/reader.env"
     mkdir -p "$migration_stage/code"
+    mkdir -p "$migration_stage/code/services"
     cp -a "$release_root/QuoteMux/src/quotemux" "$migration_stage/code/quotemux"
     install -m 0644 "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py" "$migration_stage/code/release_migration.py"
+    install -m 0644 "$release_root/MarketHub/migrations/stock_name_history_snapshot_v1_20260911/release_migration.py" "$migration_stage/code/stock_name_history_release_migration.py"
+    install -m 0644 "$release_root/MarketHub/services/markethub_api/src/services/__init__.py" "$migration_stage/code/services/__init__.py"
+    install -m 0644 "$release_root/MarketHub/services/markethub_api/src/services/stock_name_history_publication.py" "$migration_stage/code/services/stock_name_history_publication.py"
     if test -f "$publisher_env_path"; then cp "$publisher_env_path" "$publisher_stage"; fi
     if test -f "$reader_env_path"; then cp "$reader_env_path" "$reader_stage"; fi
     sudo -n chown -R postgres:postgres "$migration_stage"
@@ -317,6 +322,16 @@ case "$migration_mode" in
       MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT=1 \
       PYTHONPATH="$migration_stage/code" \
       "$runtime_root/.venv/bin/python" "$migration_stage/code/release_migration.py"
+    reader_role="$(sudo -n -u postgres sed -n 's/^QUOTEMUX_READ_DB_USER=//p' "$reader_stage" | tail -n 1)"
+    test -n "$reader_role"
+    sudo -n -u postgres env \
+      PYTHONPATH="$migration_stage/code" \
+      "$runtime_root/.venv/bin/python" "$migration_stage/code/stock_name_history_release_migration.py" apply \
+      --db-host /var/run/postgresql \
+      --db-port "$MARKETHUB_DB_PORT" \
+      --db-name "$MARKETHUB_DB_NAME" \
+      --owner-role "$application_db_owner" \
+      --reader-role "$reader_role"
     restore_peer_runtime_access
     publisher_target_stage="${publisher_env_path}.${release_name}.new"
     reader_target_stage="${reader_env_path}.${release_name}.new"
@@ -343,8 +358,19 @@ case "$migration_mode" in
     MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_PUBLISHER_ENV="$publisher_stage" \
       MARKETHUB_QUOTEMUX_PUBLIC_READER_ENV="$reader_stage" \
       MARKETHUB_HEALTH_URL="$health_url" \
-      MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT=1 \
+    MARKETHUB_QUOTEMUX_FUTURES_PARTIAL_SKIP_HEALTH_SNAPSHOT=1 \
       "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"
+    reader_role="$(sed -n 's/^QUOTEMUX_READ_DB_USER=//p' "$reader_stage" | tail -n 1)"
+    test -n "$reader_role"
+    PYTHONPATH="$release_root/MarketHub/services/markethub_api/src" \
+      PGUSER="$MARKETHUB_DB_USER" PGPASSWORD="$MARKETHUB_DB_PASSWORD" \
+      "$runtime_root/.venv/bin/python" \
+      "$release_root/MarketHub/migrations/stock_name_history_snapshot_v1_20260911/release_migration.py" apply \
+      --db-host "$MARKETHUB_DB_HOST" \
+      --db-port "$MARKETHUB_DB_PORT" \
+      --db-name "$MARKETHUB_DB_NAME" \
+      --owner-role "$application_db_owner" \
+      --reader-role "$reader_role"
     publisher_target_stage="${publisher_env_path}.${release_name}.new"
     reader_target_stage="${reader_env_path}.${release_name}.new"
     sudo -n install -o "$service_user" -g "$service_group" -m 0600 "$publisher_stage" "$publisher_target_stage"
@@ -507,6 +533,8 @@ for attempt in $(seq 1 20); do
       )"
       printf 'stock catalog recovery verify: %s\n' "$catalog_verify_json"
     fi
+    curl -fsS "$api_base/api/stocks/name-history?limit=1&offset=0&data_version=$stock_data_version" |
+      "$runtime_root/.venv/bin/python" -c 'import json,sys; value=json.load(sys.stdin); assert value["data_version"] and value["total"] >= 1 and len(value["items"]) == 1'
     curl -fsS "$api_base/api/stocks/quotes?code=600000&freq=1d&count=1&data_version=$stock_data_version" >/dev/null
     strict_status="$(curl -sS -o /tmp/markethub-strict-futures.json -w '%{http_code}' "$api_base/api/futures/quotes/1m?codes=ag,al,AP,CF,cu,hc,i,j,m,MA,ni,p,ru,sc,T,TA,TF,v,y,lh,SA,ao,si&series_type=back_adjusted_continuous&start_time=2012-01-01%2009%3A01%3A00&end_time=2026-08-11%2015%3A00%3A00")"
     if [ "$strict_status" != 409 ]; then

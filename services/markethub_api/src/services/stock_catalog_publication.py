@@ -15,6 +15,10 @@ from services.stock_catalog_candidate import (
     StockCatalogCandidate,
     build_current_stock_catalog_candidate,
 )
+from services.stock_name_history_publication import (
+    DDL as _STOCK_NAME_HISTORY_DDL,
+    publish_stock_name_history_snapshot,
+)
 
 RETAIN_HEALTHY_VERSION_FOR_HOURS = 24
 KNOWN_DIRTY_DATA_VERSION = "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
@@ -90,7 +94,7 @@ create table if not exists audit.stock_catalog_publication_attempt (
     reason text not null default '',
     created_at_utc timestamp with time zone not null default clock_timestamp()
 );
-"""
+""" + _STOCK_NAME_HISTORY_DDL
 
 
 def _connect() -> psycopg.Connection[Any]:
@@ -473,6 +477,7 @@ def publish_stock_catalog_candidate(
             raise RuntimeError(
                 "published catalog item count does not match its immutable candidate"
             )
+        publish_stock_name_history_snapshot(connection, candidate.version)
         connection.execute(
             "insert into audit.stock_catalog_publication_attempt("
             "catalog_version,content_sha256,authority_input_id,authority_content_sha256,fresh_through,"

@@ -1,0 +1,13 @@
+{
+  "migration_id": "markethub-stock-name-history-snapshot-v1-20260911",
+  "format_version": 1,
+  "dataset": "stock_reference",
+  "source": "ref.stock_name_history",
+  "snapshot_key": "catalog_version",
+  "read_contract": "/api/stocks/name-history",
+  "ordering": ["code", "start_date", "end_date", "name"],
+  "missing_history_semantics": "catalog codes with no history rows are valid and absent from items",
+  "request_thread_policy": "repeatable-read, read-only, least-privilege database reader; no provider, dependency install, cache write, or database write",
+  "retention": "healthy stock catalog data_version mappings remain serviceable until their existing serve_until_utc",
+  "rollback": "schema expansion is additive; old API releases ignore the readmodel"
+}
