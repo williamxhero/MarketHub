@@ -1,32 +1,31 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from pathlib import Path
 import sys
+from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from services import stock_catalog_publication
-from services.stock_catalog_candidate import (
+import main  # noqa: E402
+from app import app  # noqa: E402
+from services import stock_catalog_publication  # noqa: E402
+from services.stock_catalog_candidate import (  # noqa: E402
     CatalogCandidateRejected,
     CatalogSourceEvidence,
     build_stock_catalog_candidate,
 )
-from services.stock_catalog_publication import (
+from services.stock_catalog_publication import (  # noqa: E402
     CatalogPublicationReadiness,
     catalog_publication_readiness,
     current_stock_catalog_version,
     publish_stock_catalog_candidate,
     refresh_stock_catalog_publication,
 )
-from app import app
-import main
 
 
 def _evidence(**changes: object) -> CatalogSourceEvidence:
@@ -34,7 +33,7 @@ def _evidence(**changes: object) -> CatalogSourceEvidence:
         "input_id": "a" * 64,
         "content_sha256": "b" * 64,
         "provider": "tushare",
-        "source_refreshed_at": datetime(2026, 9, 10, 9, tzinfo=timezone.utc),
+        "source_refreshed_at": datetime(2026, 9, 10, 9, tzinfo=UTC),
         "fresh_through": date(2026, 9, 9),
         "provisional_count": 1,
         "conflict_count": 0,

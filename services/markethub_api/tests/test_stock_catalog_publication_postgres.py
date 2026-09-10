@@ -1,24 +1,26 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
 import os
-from pathlib import Path
 import sys
+from datetime import UTC, date, datetime
+from pathlib import Path
 
 import psycopg
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from app import app
-from services import stocks, versioned_object_cache
-from services.stock_catalog_candidate import CatalogSourceEvidence, build_stock_catalog_candidate
-from services.stock_catalog_publication import (
+from app import app  # noqa: E402
+from services import stocks, versioned_object_cache  # noqa: E402
+from services.stock_catalog_candidate import (  # noqa: E402
+    CatalogSourceEvidence,
+    build_stock_catalog_candidate,
+)
+from services.stock_catalog_publication import (  # noqa: E402
     current_stock_catalog_version,
     publish_stock_catalog_candidate,
     resolve_stock_catalog_data_version,
@@ -59,7 +61,7 @@ def _candidate(name: str):
             input_id="a" * 64,
             content_sha256="b" * 64,
             provider="tushare",
-            source_refreshed_at=datetime(2026, 9, 10, 9, tzinfo=timezone.utc),
+            source_refreshed_at=datetime(2026, 9, 10, 9, tzinfo=UTC),
             fresh_through=date(2026, 9, 9),
             provisional_count=0,
             conflict_count=0,
@@ -71,9 +73,7 @@ def _candidate(name: str):
 @pytest.mark.skipif(
     not _database_configured(), reason="requires an isolated PostgreSQL catalog test database"
 )
-def test_postgres_publication_retains_old_snapshot_quarantines_dirty_version_and_serves_http_pages() -> (
-    None
-):
+def test_postgres_publication_integrity_and_pages() -> None:
     with psycopg.connect(
         host=os.environ["MARKETHUB_DB_HOST"],
         port=int(os.environ["MARKETHUB_DB_PORT"]),

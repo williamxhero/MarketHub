@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
-from datetime import date, datetime, timezone
 import hashlib
 import json
 import os
 import re
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
-
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CODE = re.compile(r"^[0-9]{6}$")
@@ -46,7 +45,8 @@ select reconciliation.input_id, authority_input.content_sha256, authority_input.
        authority_input.source_refreshed_at, authority_input.fresh_through,
        reconciliation.provisional_count, reconciliation.conflict_count
 from audit.stock_reference_reconciliation reconciliation
-join audit.stock_authority_input authority_input on authority_input.input_id = reconciliation.input_id
+join audit.stock_authority_input authority_input
+  on authority_input.input_id = reconciliation.input_id
 where authority_input.request_status = 'accepted'
   and reconciliation.transaction_result = 'committed'
 order by reconciliation.committed_at desc
@@ -271,7 +271,7 @@ def _parse_timestamp(value: object, field: str) -> datetime:
         raise CatalogCandidateRejected(f"{field} must be a timestamp")
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise CatalogCandidateRejected(f"{field} must be timezone-aware")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def build_current_stock_catalog_candidate(

@@ -1,27 +1,26 @@
 from __future__ import annotations
 
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import sys
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from services import market_data_version, stocks, versioned_object_cache
-from services.stock_catalog_publication import (
+from app import app  # noqa: E402
+from services import market_data_version, stocks, versioned_object_cache  # noqa: E402
+from services.stock_catalog_publication import (  # noqa: E402
     CatalogCurrentVersion,
     CatalogPublicationReadiness,
     ResolvedCatalogVersion,
     read_stock_catalog_page,
     resolve_stock_catalog_data_version,
 )
-from app import app
 
 
 class _Result:
