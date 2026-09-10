@@ -84,6 +84,9 @@ class _PublicationConnection:
             raise OSError("audit storage unavailable")
         return _Result()
 
+    def cursor(self) -> _PublicationConnection:
+        return self
+
     def executemany(self, _sql: str, values: list[tuple[object, ...]]) -> None:
         self.batch.extend(values)
 

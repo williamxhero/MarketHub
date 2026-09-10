@@ -366,13 +366,14 @@ def publish_stock_catalog_candidate(
                 len(candidate.items),
             ),
         )
-        connection.executemany(
-            "insert into readmodel.stock_catalog_item("
-            "catalog_version,code,name,exchange,market,list_status,list_date,delist_date,industry,listing_board,area) "
-            "values(%s,%s,%s,%s,%s,%s,%s::date,%s::date,%s,%s,%s) "
-            "on conflict(catalog_version,code) do nothing",
-            _catalog_item_values(candidate),
-        )
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                "insert into readmodel.stock_catalog_item("
+                "catalog_version,code,name,exchange,market,list_status,list_date,delist_date,industry,listing_board,area) "
+                "values(%s,%s,%s,%s,%s,%s,%s::date,%s::date,%s,%s,%s) "
+                "on conflict(catalog_version,code) do nothing",
+                _catalog_item_values(candidate),
+            )
         count_row = connection.execute(
             "select count(*)::int as row_count from readmodel.stock_catalog_item where catalog_version=%s",
             (candidate.version,),
