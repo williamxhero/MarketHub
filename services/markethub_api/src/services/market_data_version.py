@@ -108,7 +108,9 @@ def _version_from_state() -> str:
         "generation": generation,
         "adjustment_base_date": os.getenv("QUOTEMUX_ADJUSTMENT_BASE_DATE", "").strip(),
     }
-    encoded = json.dumps(fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = json.dumps(
+        fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
     return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
 
 
@@ -130,7 +132,9 @@ def _compute_market_data_version() -> str:
         "adjustment_base_date": os.getenv("QUOTEMUX_ADJUSTMENT_BASE_DATE", "").strip(),
         "sources": sources,
     }
-    encoded = json.dumps(fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = json.dumps(
+        fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
     return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
 
 
@@ -153,7 +157,9 @@ def market_data_version_for_stock_catalog(catalog_version: str) -> str:
         "market_data_version": base_version,
         "stock_catalog_version": catalog_version,
     }
-    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
     return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
 
 
@@ -191,9 +197,28 @@ def current_market_data_lineage() -> list[dict[str, object]]:
 def require_market_data_version(requested_version: str) -> str:
     actual_version = current_market_data_version()
     if actual_version == "":
-        raise HTTPException(status_code=503, detail={"code": "MARKET_DATA_VERSION_UNAVAILABLE", "message": "无法生成市场数据版本，拒绝读取未冻结市场事实"})
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "MARKET_DATA_VERSION_UNAVAILABLE",
+                "message": "无法生成市场数据版本，拒绝读取未冻结市场事实",
+            },
+        )
     if requested_version == "":
-        raise HTTPException(status_code=409, detail={"code": "MARKET_DATA_VERSION_REQUIRED", "message": "市场查询必须携带 /api/health 返回的 data_version"})
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MARKET_DATA_VERSION_REQUIRED",
+                "message": "市场查询必须携带 /api/health 返回的 data_version",
+            },
+        )
     if requested_version != actual_version:
-        raise HTTPException(status_code=409, detail={"code": "MARKET_DATA_VERSION_MISMATCH", "message": "请求版本已失效，请重新读取 /api/health", "details": actual_version})
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MARKET_DATA_VERSION_MISMATCH",
+                "message": "请求版本已失效，请重新读取 /api/health",
+                "details": actual_version,
+            },
+        )
     return actual_version
