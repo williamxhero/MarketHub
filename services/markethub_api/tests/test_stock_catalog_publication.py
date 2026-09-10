@@ -12,11 +12,18 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from services.stock_catalog_candidate import CatalogSourceEvidence, build_stock_catalog_candidate
+from services import stock_catalog_publication
+from services.stock_catalog_candidate import (
+    CatalogCandidateRejected,
+    CatalogSourceEvidence,
+    build_stock_catalog_candidate,
+)
 from services.stock_catalog_publication import (
     CatalogPublicationReadiness,
+    catalog_publication_readiness,
     current_stock_catalog_version,
     publish_stock_catalog_candidate,
+    refresh_stock_catalog_publication,
 )
 from app import app
 import main
@@ -149,6 +156,30 @@ def test_failed_audit_cannot_partially_switch_current_or_cacheable_version() -> 
     )
 
 
+def test_rejected_candidate_refresh_is_audited_without_switching_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = _PublicationConnection(previous_version="mhc-v1-previous")
+
+    def reject_candidate(*_args: object, **_kwargs: object) -> None:
+        raise CatalogCandidateRejected("name must be non-empty after Unicode trim")
+
+    monkeypatch.setattr(
+        stock_catalog_publication, "build_current_stock_catalog_candidate", reject_candidate
+    )
+
+    with pytest.raises(CatalogCandidateRejected, match="Unicode trim"):
+        refresh_stock_catalog_publication(
+            candidate_connection_factory=lambda: object(),
+            publication_connection_factory=lambda: connection,
+        )
+
+    assert any("result,reason" in call for call in connection.calls)
+    assert not any(
+        "insert into readmodel.stock_catalog_current" in call for call in connection.calls
+    )
+
+
 class _StateConnection:
     def __init__(self, row: dict[str, object] | None) -> None:
         self.row = row
@@ -173,6 +204,25 @@ def test_current_lookup_advertises_only_a_healthy_catalog_version() -> None:
 
     assert healthy is not None and healthy.catalog_version == "mhc-v1-healthy"
     assert unavailable is None
+
+
+class _MissingRegistryConnection:
+    def __enter__(self) -> _MissingRegistryConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> bool:
+        return False
+
+    def execute(self, _sql: str) -> _Result:
+        return _Result({"relation_name": None})
+
+
+def test_configured_database_without_catalog_registry_fails_closed() -> None:
+    readiness = catalog_publication_readiness(
+        connection_factory=lambda: _MissingRegistryConnection()
+    )
+
+    assert readiness == CatalogPublicationReadiness(registry_active=True, current=None)
 
 
 def test_health_fails_closed_when_the_active_catalog_registry_has_no_healthy_current(

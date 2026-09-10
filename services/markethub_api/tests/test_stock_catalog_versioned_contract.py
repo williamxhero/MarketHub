@@ -49,6 +49,10 @@ class _VersionConnection:
         return False
 
     def execute(self, sql: str, _params: object) -> _Result:
+        if "mapping.status='healthy'" in sql and (
+            self.row is None or self.row.get("status") != "healthy"
+        ):
+            return _Result(None)
         if "select 1 as retained" in sql:
             return _Result({"retained": 1})
         return _Result(self.row)
@@ -93,6 +97,37 @@ def test_resolver_accepts_retained_healthy_version_and_rejects_quarantine() -> N
 
     assert stale_error.value.status_code == 409
     assert stale_error.value.detail["code"] == "CATALOG_DATA_VERSION_STALE"
+
+
+class _UnhealthySnapshotVersionConnection:
+    def __enter__(self) -> _UnhealthySnapshotVersionConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> bool:
+        return False
+
+    def execute(self, sql: str, _params: object) -> _Result:
+        if "join readmodel.stock_catalog_version" in sql:
+            return _Result(None)
+        return _Result(
+            {
+                "data_version": "mhf-v1-corrupt",
+                "catalog_version": "mhc-v1-quarantined",
+                "status": "healthy",
+                "reason": "",
+            }
+        )
+
+
+def test_resolver_fails_closed_when_a_healthy_mapping_points_to_an_unhealthy_snapshot() -> None:
+    with pytest.raises(HTTPException) as error:
+        resolve_stock_catalog_data_version(
+            "mhf-v1-corrupt",
+            connection_factory=lambda: _UnhealthySnapshotVersionConnection(),
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "CATALOG_DATA_VERSION_STALE"
 
 
 class _PageConnection:

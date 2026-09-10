@@ -21,6 +21,7 @@ KNOWN_DIRTY_DATA_VERSION = "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a
 
 _DDL = """
 create schema if not exists readmodel;
+create schema if not exists audit;
 create table if not exists readmodel.stock_catalog_version (
     catalog_version text primary key check (catalog_version ~ '^mhc-v1-[0-9a-f]{64}$'),
     content_sha256 text not null unique check (content_sha256 ~ '^[0-9a-f]{64}$'),
@@ -74,9 +75,9 @@ create table if not exists audit.stock_catalog_publication_attempt (
     content_sha256 text not null,
     authority_input_id text not null,
     authority_content_sha256 text not null,
-    fresh_through date not null,
-    source_refreshed_at_utc timestamp with time zone not null,
-    candidate_count integer not null check (candidate_count > 0),
+    fresh_through date,
+    source_refreshed_at_utc timestamp with time zone,
+    candidate_count integer not null check (candidate_count >= 0),
     provisional_count integer not null check (provisional_count >= 0),
     conflict_count integer not null check (conflict_count >= 0),
     name_gate_passed boolean not null,
@@ -133,9 +134,10 @@ def catalog_publication_readiness(
 ) -> CatalogPublicationReadiness:
     """Identify migration activation separately from an empty current pointer.
 
-    A pre-migration installation keeps the legacy reader until SPEC-3 deploys
-    the catalog schema. Once the registry exists, absence of a healthy pointer
-    is explicitly not ready and never falls back to a live source read.
+    An unconfigured local process keeps the legacy reader for development.
+    A process configured for the MarketHub database treats a missing registry
+    exactly like an empty registry: it is not ready and never falls back to a
+    live source read.
     """
     try:
         connection = connection_factory()
@@ -146,7 +148,7 @@ def catalog_publication_readiness(
             "select to_regclass('readmodel.stock_catalog_current')::text as relation_name"
         ).fetchone()
         if registry is None or not registry.get("relation_name"):
-            return CatalogPublicationReadiness(registry_active=False, current=None)
+            return CatalogPublicationReadiness(registry_active=True, current=None)
         row = connection.execute(
             "select current.catalog_version,current.activated_at_utc::text as activated_at_utc "
             "from readmodel.stock_catalog_current current "
@@ -178,17 +180,51 @@ def current_stock_catalog_version(
     return CatalogCurrentVersion(str(row["catalog_version"]), str(row["activated_at_utc"]))
 
 
+def _record_candidate_rejection(
+    reason: str,
+    *,
+    connection_factory: Callable[[], Any],
+) -> None:
+    """Persist a failed refresh attempt without mutating any serving state.
+
+    Validation can fail before source evidence is safe to normalize.  The
+    nullable evidence columns intentionally distinguish that case from a
+    successfully built candidate that was later rejected by publication.
+    """
+    with connection_factory() as connection:
+        connection.execute(_DDL)
+        current = connection.execute(
+            "select catalog_version from readmodel.stock_catalog_current where singleton=true"
+        ).fetchone()
+        previous_version = "" if current is None else str(current["catalog_version"])
+        connection.execute(
+            "insert into audit.stock_catalog_publication_attempt("
+            "catalog_version,content_sha256,authority_input_id,authority_content_sha256,fresh_through,"
+            "source_refreshed_at_utc,candidate_count,provisional_count,conflict_count,name_gate_passed,"
+            "prior_catalog_version,result,reason) "
+            "values('','','','',null,null,0,0,0,false,%s,'rejected',%s)",
+            (previous_version, reason),
+        )
+
+
 def refresh_stock_catalog_publication(
     *,
     candidate_connection_factory: Callable[[], Any] | None = None,
     publication_connection_factory: Callable[[], Any] | None = None,
 ) -> CatalogPublicationResult:
     """Build and publish the latest authority-backed snapshot as one release action."""
-    candidate = build_current_stock_catalog_candidate(
-        connection_factory=_connect
-        if candidate_connection_factory is None
-        else candidate_connection_factory
+    publication_factory = (
+        _connect if publication_connection_factory is None else publication_connection_factory
     )
+    try:
+        candidate = build_current_stock_catalog_candidate(
+            connection_factory=_connect
+            if candidate_connection_factory is None
+            else candidate_connection_factory
+        )
+    except CatalogCandidateRejected as error:
+        _record_candidate_rejection(str(error), connection_factory=publication_factory)
+        raise
     from services.market_data_version import market_data_version_for_stock_catalog
 
     data_version = market_data_version_for_stock_catalog(candidate.version)
@@ -197,9 +233,7 @@ def refresh_stock_catalog_publication(
     return publish_stock_catalog_candidate(
         candidate,
         data_version=data_version,
-        connection_factory=_connect
-        if publication_connection_factory is None
-        else publication_connection_factory,
+        connection_factory=publication_factory,
     )
 
 
@@ -220,18 +254,20 @@ def resolve_stock_catalog_data_version(
         )
     with connection_factory() as connection:
         row = connection.execute(
-            "select data_version,catalog_version,status,reason "
-            "from readmodel.stock_catalog_data_version where data_version=%s",
+            "select mapping.data_version,mapping.catalog_version,mapping.status,mapping.reason "
+            "from readmodel.stock_catalog_data_version mapping "
+            "join readmodel.stock_catalog_version version on version.catalog_version=mapping.catalog_version "
+            "where mapping.data_version=%s and mapping.status='healthy' "
+            "and mapping.serve_until_utc >= clock_timestamp() and version.status='healthy'",
             (requested,),
         ).fetchone()
-        if row is not None and str(row["status"]) == "healthy":
-            retained = connection.execute(
-                "select 1 as retained where (select serve_until_utc from readmodel.stock_catalog_data_version "
-                "where data_version=%s) >= clock_timestamp()",
-                (requested,),
-            ).fetchone()
-            if retained is not None:
-                return ResolvedCatalogVersion(requested, str(row["catalog_version"]))
+        if row is not None:
+            return ResolvedCatalogVersion(requested, str(row["catalog_version"]))
+        row = connection.execute(
+            "select data_version,status,reason from readmodel.stock_catalog_data_version "
+            "where data_version=%s",
+            (requested,),
+        ).fetchone()
     if row is not None and str(row["status"]) == "quarantined":
         raise HTTPException(
             status_code=409,
