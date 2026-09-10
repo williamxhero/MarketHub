@@ -134,14 +134,42 @@ def _compute_market_data_version() -> str:
     return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
 
 
-def current_market_data_version() -> str:
-    """返回当前市场事实的可复算版本；任一受管事实写入会改变该值。"""
+def _current_market_data_base_version() -> str:
     state_version = _version_from_state()
     if state_version != "":
         return state_version
     # Backward-compatible bootstrap fallback. Production deployment installs
     # the trigger-backed state before switching the release symlink.
     return _compute_market_data_version()
+
+
+def market_data_version_for_stock_catalog(catalog_version: str) -> str:
+    """Bind the public health token to both market facts and catalog content."""
+    base_version = _current_market_data_base_version()
+    if base_version == "" or catalog_version == "":
+        return ""
+    payload = {
+        "contract": "markethub-market-facts-v1-catalog-publication",
+        "market_data_version": base_version,
+        "stock_catalog_version": catalog_version,
+    }
+    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
+
+
+def current_market_data_version() -> str:
+    """Return a health token that cannot advertise an unverified catalog."""
+    base_version = _current_market_data_base_version()
+    if base_version == "":
+        return ""
+    from services.stock_catalog_publication import catalog_publication_readiness
+
+    readiness = catalog_publication_readiness()
+    if not readiness.registry_active:
+        return base_version
+    if readiness.current is None:
+        return ""
+    return market_data_version_for_stock_catalog(readiness.current.catalog_version)
 
 
 def current_market_data_lineage() -> list[dict[str, object]]:

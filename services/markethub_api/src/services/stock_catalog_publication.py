@@ -5,10 +5,15 @@ from dataclasses import dataclass
 import os
 from typing import Any
 
+from fastapi import HTTPException
 import psycopg
 from psycopg.rows import dict_row
 
-from services.stock_catalog_candidate import CatalogCandidateRejected, StockCatalogCandidate
+from services.stock_catalog_candidate import (
+    CatalogCandidateRejected,
+    StockCatalogCandidate,
+    build_current_stock_catalog_candidate,
+)
 
 
 RETAIN_HEALTHY_VERSION_FOR_HOURS = 24
@@ -111,6 +116,12 @@ class CatalogCurrentVersion:
 
 
 @dataclass(frozen=True)
+class ResolvedCatalogVersion:
+    data_version: str
+    catalog_version: str
+
+
+@dataclass(frozen=True)
 class CatalogPublicationReadiness:
     registry_active: bool
     current: CatalogCurrentVersion | None
@@ -165,6 +176,128 @@ def current_stock_catalog_version(
     if row is None:
         return None
     return CatalogCurrentVersion(str(row["catalog_version"]), str(row["activated_at_utc"]))
+
+
+def refresh_stock_catalog_publication(
+    *,
+    candidate_connection_factory: Callable[[], Any] | None = None,
+    publication_connection_factory: Callable[[], Any] | None = None,
+) -> CatalogPublicationResult:
+    """Build and publish the latest authority-backed snapshot as one release action."""
+    candidate = build_current_stock_catalog_candidate(
+        connection_factory=_connect if candidate_connection_factory is None else candidate_connection_factory
+    )
+    from services.market_data_version import market_data_version_for_stock_catalog
+
+    data_version = market_data_version_for_stock_catalog(candidate.version)
+    if data_version == "":
+        raise CatalogCandidateRejected("current market facts cannot mint a catalog data_version")
+    return publish_stock_catalog_candidate(
+        candidate,
+        data_version=data_version,
+        connection_factory=_connect if publication_connection_factory is None else publication_connection_factory,
+    )
+
+
+def resolve_stock_catalog_data_version(
+    requested_data_version: str,
+    *,
+    connection_factory: Callable[[], Any] = _connect,
+) -> ResolvedCatalogVersion:
+    """Resolve a retained healthy snapshot or return a stable re-pin error."""
+    requested = requested_data_version.strip()
+    if requested == "":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CATALOG_DATA_VERSION_REQUIRED", "message": "目录读取必须携带 /api/health 返回的 data_version"},
+        )
+    with connection_factory() as connection:
+        row = connection.execute(
+            "select data_version,catalog_version,status,reason "
+            "from readmodel.stock_catalog_data_version where data_version=%s",
+            (requested,),
+        ).fetchone()
+        if row is not None and str(row["status"]) == "healthy":
+            retained = connection.execute(
+                "select 1 as retained where (select serve_until_utc from readmodel.stock_catalog_data_version "
+                "where data_version=%s) >= clock_timestamp()",
+                (requested,),
+            ).fetchone()
+            if retained is not None:
+                return ResolvedCatalogVersion(requested, str(row["catalog_version"]))
+    if row is not None and str(row["status"]) == "quarantined":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CATALOG_DATA_VERSION_QUARANTINED",
+                "message": "请求的目录版本已隔离，请重新读取 /api/health 并从 offset=0 重新分页",
+                "details": {"requested_version": requested, "reason": str(row.get("reason", "") or "")},
+            },
+        )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "CATALOG_DATA_VERSION_STALE",
+            "message": "请求的目录版本不可服务，请重新读取 /api/health 并从 offset=0 重新分页",
+            "details": {"requested_version": requested},
+        },
+    )
+
+
+def read_stock_catalog_page(
+    version: ResolvedCatalogVersion,
+    *,
+    codes: list[str],
+    name: str,
+    exchange: str,
+    list_status: str,
+    include_delisted: bool,
+    limit: int,
+    offset: int,
+    connection_factory: Callable[[], Any] = _connect,
+) -> list[dict[str, str]]:
+    """Read one immutable page; its scope is part of the caller's cache key."""
+    clauses = ["catalog_version=%s"]
+    params: list[object] = [version.catalog_version]
+    if codes:
+        clauses.append("code=any(%s::text[])")
+        params.append(codes)
+    if name:
+        clauses.append("name ilike %s")
+        params.append(f"%{name}%")
+    if exchange:
+        clauses.append("exchange=%s")
+        params.append(exchange)
+    if list_status:
+        clauses.append("list_status=%s")
+        params.append(list_status.upper())
+    elif not include_delisted:
+        clauses.append("(delist_date is null or delist_date >= current_date)")
+    params.extend((limit, offset))
+    query = (
+        "select code,name,exchange,market,list_status,coalesce(list_date::text,'') as list_date,"
+        "coalesce(delist_date::text,'') as delist_date,industry,listing_board,area "
+        "from readmodel.stock_catalog_item where "
+        + " and ".join(clauses)
+        + " order by code,exchange limit %s offset %s"
+    )
+    with connection_factory() as connection:
+        rows = connection.execute(query, tuple(params)).fetchall()
+    return [
+        {
+            "code": str(row["code"]),
+            "name": str(row["name"]),
+            "exchange": str(row["exchange"]),
+            "market": str(row["market"]),
+            "list_status": str(row["list_status"]),
+            "list_date": str(row["list_date"] or ""),
+            "delist_date": str(row["delist_date"] or ""),
+            "industry": str(row["industry"] or ""),
+            "listing_board": str(row["listing_board"] or ""),
+            "area": str(row["area"] or ""),
+        }
+        for row in rows
+    ]
 
 
 def _catalog_item_values(candidate: StockCatalogCandidate) -> list[tuple[object, ...]]:
