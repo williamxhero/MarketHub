@@ -10,7 +10,14 @@ from quotemux.models import DividendItem, DividendPage, RightsIssueItem, RightsI
 
 from data_threads import QuoteClientDisconnectedError, run_data_task, run_live_ingest_task, run_quote_task
 from routers.stock_quote_models import CurrentStockQuotesQueryResult, StockDailyWindowQueryPayload, StockDailyWindowQueryResponse, StockQuotesQueryPayload, StockQuotesVersionedQueryResult
-from services import daily_window, live_bars, stock_1m_delivery, stock_quotes_arrow, stocks
+from services import (
+    daily_window,
+    live_bars,
+    stock_1m_delivery,
+    stock_name_history_read_model,
+    stock_quotes_arrow,
+    stocks,
+)
 from services.common import filter_response_fields
 from services.runtime_memory import run_with_memory_log
 
@@ -480,6 +487,29 @@ async def api_stock_catalog(
     if request.headers.get("if-none-match", "") == encoded.headers["ETag"]:
         return Response(status_code=304, headers=encoded.headers)  # type: ignore[return-value]
     return Response(content=encoded.content, media_type="application/json", headers=encoded.headers)  # type: ignore[return-value]
+
+
+@router.get(
+    "/api/stocks/name-history",
+    summary="分页返回固定股票目录版本的名称历史",
+    description=(
+        "只读返回已发布的股票名称历史快照。data_version 必须来自 /api/health "
+        "或仍在保留期内的健康股票目录版本；结果按 code、start_date、end_date、name 稳定排序。"
+    ),
+)
+async def api_stock_name_history_batch(
+    data_version: str = Query(..., min_length=1, description="/api/health 返回的市场数据版本。"),
+    limit: int = Query(5000, ge=1, le=5000, description="每页记录数。"),
+    offset: int = Query(0, ge=0, description="从零开始的结果偏移量。"),
+) -> dict[str, object]:
+    return await run_data_task(
+        lambda version, page_limit, page_offset: stock_name_history_read_model.read_stock_name_history_page(
+            version, limit=page_limit, offset=page_offset
+        ),
+        data_version,
+        limit,
+        offset,
+    )
 
 
 @router.get("/api/stocks/catalog/archive", summary='返回指定交易日的股票归档清单', description='`GET` 返回指定交易日的股票归档清单。\n\n## 查询参数\n\n- `trade_date`（类型：`str`）：归档交易日，格式 `YYYY-MM-DD`。\n- `code`（类型：`str`）：股票代码。\n- `name`（类型：`str`）：股票简称关键字。\n- `industry`（类型：`str`）：所属行业筛选。\n- `area`（类型：`str`）：所属地域筛选。\n- `limit`（类型：`int`；默认：`200`；范围：`1-5000`）：返回记录上限。\n- `offset`（类型：`int`；默认：`0`；最小值：`0`）：结果偏移量，从 `0` 开始。\n\n## 返回类型\n\n顶层返回 `list[StockArchiveItem]`。\n\n## 返回字段\n\n- `trade_date`（`str`）：交易日期。\n- `code`（`str`）：股票代码。\n- `name`（`str`）：名称。\n- `exchange`（`str`）：归档时点对应的交易所。\n- `market`（`str`）：归档时点对应的所属市场板块。\n- `list_status`（`str`）：归档时点对应的上市状态。\n- `industry`（`str`）：所属行业。\n- `area`（`str`）：所属地域。')

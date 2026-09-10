@@ -102,11 +102,23 @@ def _version_from_state() -> str:
     generation = int(frame.iloc[0].get("generation", 0) or 0)
     if baseline_id == "" or generation < 1:
         return ""
+    return market_data_base_version_from_state(
+        baseline_id,
+        generation,
+        os.getenv("QUOTEMUX_ADJUSTMENT_BASE_DATE", "").strip(),
+    )
+
+
+def market_data_base_version_from_state(
+    baseline_id: str, generation: int, adjustment_base_date: str
+) -> str:
+    if baseline_id == "" or generation < 1:
+        return ""
     fingerprint = {
         "contract": "markethub-market-facts-v1-triggered",
         "baseline_id": baseline_id,
         "generation": generation,
-        "adjustment_base_date": os.getenv("QUOTEMUX_ADJUSTMENT_BASE_DATE", "").strip(),
+        "adjustment_base_date": adjustment_base_date,
     }
     encoded = json.dumps(
         fingerprint, ensure_ascii=True, separators=(",", ":"), sort_keys=True
@@ -152,6 +164,14 @@ def market_data_version_for_stock_catalog(catalog_version: str) -> str:
     base_version = _current_market_data_base_version()
     if base_version == "" or catalog_version == "":
         return ""
+    return market_data_version_for_stock_catalog_base(base_version, catalog_version)
+
+
+def market_data_version_for_stock_catalog_base(
+    base_version: str, catalog_version: str
+) -> str:
+    if base_version == "" or catalog_version == "":
+        return ""
     payload = {
         "contract": "markethub-market-facts-v1-catalog-publication",
         "market_data_version": base_version,
@@ -161,6 +181,20 @@ def market_data_version_for_stock_catalog(catalog_version: str) -> str:
         "utf-8"
     )
     return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
+
+
+def market_data_version_for_stock_catalog_state(
+    baseline_id: str,
+    generation: int,
+    catalog_version: str,
+    adjustment_base_date: str,
+) -> str:
+    return market_data_version_for_stock_catalog_base(
+        market_data_base_version_from_state(
+            baseline_id, generation, adjustment_base_date
+        ),
+        catalog_version,
+    )
 
 
 def current_market_data_version() -> str:

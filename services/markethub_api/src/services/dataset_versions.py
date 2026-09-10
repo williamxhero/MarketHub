@@ -30,6 +30,7 @@ PUBLICATION_GATED_DATASET_IDS = READ_MODEL_DATASET_IDS | frozenset(("future_cont
 VERSION_CONTRACT = "markethub-dataset-vector-v1"
 ROUTE_DATASET_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "/api/stocks/catalog": ("stock_reference",),
+    "/api/stocks/name-history": ("stock_reference",),
     "/api/stocks/{code}/profile/basic": ("stock_reference",),
     "/api/stocks/{code}/profile": ("stock_reference",),
     "/api/stocks/quotes/query:1m": ("stock_reference", "stock_bar_1m"),
