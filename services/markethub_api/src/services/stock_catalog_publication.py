@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-import os
 from typing import Any
 
-from fastapi import HTTPException
 import psycopg
+from fastapi import HTTPException
 from psycopg.rows import dict_row
 
 from services.stock_catalog_candidate import (
@@ -14,7 +14,6 @@ from services.stock_catalog_candidate import (
     StockCatalogCandidate,
     build_current_stock_catalog_candidate,
 )
-
 
 RETAIN_HEALTHY_VERSION_FOR_HOURS = 24
 KNOWN_DIRTY_DATA_VERSION = "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
@@ -65,7 +64,10 @@ create table if not exists readmodel.stock_catalog_data_version (
     serve_until_utc timestamp with time zone not null,
     reason text not null default '',
     created_at_utc timestamp with time zone not null default clock_timestamp(),
-    check ((status = 'healthy' and catalog_version is not null) or (status = 'quarantined' and catalog_version is null))
+    check (
+        (status = 'healthy' and catalog_version is not null)
+        or (status = 'quarantined' and catalog_version is null)
+    )
 );
 create index if not exists stock_catalog_data_version_retention_idx
     on readmodel.stock_catalog_data_version(status,serve_until_utc);
@@ -152,7 +154,8 @@ def catalog_publication_readiness(
         row = connection.execute(
             "select current.catalog_version,current.activated_at_utc::text as activated_at_utc "
             "from readmodel.stock_catalog_current current "
-            "join readmodel.stock_catalog_version version on version.catalog_version=current.catalog_version "
+            "join readmodel.stock_catalog_version version "
+            "on version.catalog_version=current.catalog_version "
             "where current.singleton=true and version.status='healthy'"
         ).fetchone()
     if row is None:
@@ -172,7 +175,8 @@ def current_stock_catalog_version(
         row = connection.execute(
             "select current.catalog_version,current.activated_at_utc::text as activated_at_utc "
             "from readmodel.stock_catalog_current current "
-            "join readmodel.stock_catalog_version version on version.catalog_version=current.catalog_version "
+            "join readmodel.stock_catalog_version version "
+            "on version.catalog_version=current.catalog_version "
             "where current.singleton=true and version.status='healthy'"
         ).fetchone()
     if row is None:
@@ -256,7 +260,8 @@ def resolve_stock_catalog_data_version(
         row = connection.execute(
             "select mapping.data_version,mapping.catalog_version,mapping.status,mapping.reason "
             "from readmodel.stock_catalog_data_version mapping "
-            "join readmodel.stock_catalog_version version on version.catalog_version=mapping.catalog_version "
+            "join readmodel.stock_catalog_version version "
+            "on version.catalog_version=mapping.catalog_version "
             "where mapping.data_version=%s and mapping.status='healthy' "
             "and mapping.serve_until_utc >= clock_timestamp() and version.status='healthy'",
             (requested,),
@@ -273,7 +278,7 @@ def resolve_stock_catalog_data_version(
             status_code=409,
             detail={
                 "code": "CATALOG_DATA_VERSION_QUARANTINED",
-                "message": "请求的目录版本已隔离，请重新读取 /api/health 并从 offset=0 重新分页",
+                "message": "请求的目录版本已隔离，请重新读取 /api/health 并从 offset=0 重新分页",  # noqa: RUF001
                 "details": {
                     "requested_version": requested,
                     "reason": str(row.get("reason", "") or ""),
@@ -284,7 +289,7 @@ def resolve_stock_catalog_data_version(
         status_code=409,
         detail={
             "code": "CATALOG_DATA_VERSION_STALE",
-            "message": "请求的目录版本不可服务，请重新读取 /api/health 并从 offset=0 重新分页",
+            "message": "请求的目录版本不可服务，请重新读取 /api/health 并从 offset=0 重新分页",  # noqa: RUF001
             "details": {"requested_version": requested},
         },
     )
@@ -394,13 +399,16 @@ def publish_stock_catalog_candidate(
             "select pg_advisory_xact_lock(hashtext('markethub:stock-catalog-publication'))"
         )
         current = connection.execute(
-            "select catalog_version from readmodel.stock_catalog_current where singleton=true for update"
+            "select catalog_version from readmodel.stock_catalog_current "
+            "where singleton=true for update"
         ).fetchone()
         previous_version = "" if current is None else str(current["catalog_version"])
         connection.execute(
             "insert into readmodel.stock_catalog_version("
-            "catalog_version,content_sha256,authority_input_id,authority_content_sha256,authority_provider,"
-            "source_refreshed_at_utc,fresh_through,provisional_count,conflict_count,row_count,status) "
+            "catalog_version,content_sha256,authority_input_id,authority_content_sha256,"
+            "authority_provider,"
+            "source_refreshed_at_utc,fresh_through,provisional_count,conflict_count,"
+            "row_count,status) "
             "values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'healthy') "
             "on conflict(catalog_version) do nothing",
             (
@@ -419,13 +427,15 @@ def publish_stock_catalog_candidate(
         with connection.cursor() as cursor:
             cursor.executemany(
                 "insert into readmodel.stock_catalog_item("
-                "catalog_version,code,name,exchange,market,list_status,list_date,delist_date,industry,listing_board,area) "
+                "catalog_version,code,name,exchange,market,list_status,list_date,delist_date,"
+                "industry,listing_board,area) "
                 "values(%s,%s,%s,%s,%s,%s,%s::date,%s::date,%s,%s,%s) "
                 "on conflict(catalog_version,code) do nothing",
                 _catalog_item_values(candidate),
             )
         count_row = connection.execute(
-            "select count(*)::int as row_count from readmodel.stock_catalog_item where catalog_version=%s",
+            "select count(*)::int as row_count from readmodel.stock_catalog_item "
+            "where catalog_version=%s",
             (candidate.version,),
         ).fetchone()
         if count_row is None or int(count_row["row_count"]) != len(candidate.items):
@@ -452,23 +462,30 @@ def publish_stock_catalog_candidate(
             ),
         )
         connection.execute(
-            "insert into readmodel.stock_catalog_data_version(data_version,catalog_version,status,serve_until_utc) "
+            "insert into readmodel.stock_catalog_data_version("
+            "data_version,catalog_version,status,serve_until_utc) "
             "values(%s,%s,'healthy',clock_timestamp() + interval '24 hours') "
-            "on conflict(data_version) do update set catalog_version=excluded.catalog_version,status='healthy',"
+            "on conflict(data_version) do update set "
+            "catalog_version=excluded.catalog_version,status='healthy',"
             "serve_until_utc=excluded.serve_until_utc,reason=''",
             (normalized_data_version, candidate.version),
         )
         for dirty_version in dirty_versions:
             connection.execute(
-                "insert into readmodel.stock_catalog_data_version(data_version,catalog_version,status,serve_until_utc,reason) "
-                "values(%s,null,'quarantined','infinity'::timestamptz,'catalog integrity gate failed') "
-                "on conflict(data_version) do update set catalog_version=null,status='quarantined',"
+                "insert into readmodel.stock_catalog_data_version("
+                "data_version,catalog_version,status,serve_until_utc,reason) "
+                "values(%s,null,'quarantined','infinity'::timestamptz,"
+                "'catalog integrity gate failed') "
+                "on conflict(data_version) do update set "
+                "catalog_version=null,status='quarantined',"
                 "serve_until_utc='infinity'::timestamptz,reason=excluded.reason",
                 (dirty_version,),
             )
         connection.execute(
-            "insert into readmodel.stock_catalog_current(singleton,catalog_version) values(true,%s) "
-            "on conflict(singleton) do update set catalog_version=excluded.catalog_version,activated_at_utc=clock_timestamp()",
+            "insert into readmodel.stock_catalog_current(singleton,catalog_version) "
+            "values(true,%s) "
+            "on conflict(singleton) do update set "
+            "catalog_version=excluded.catalog_version,activated_at_utc=clock_timestamp()",
             (candidate.version,),
         )
     return CatalogPublicationResult(

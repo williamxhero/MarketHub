@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-from pathlib import Path
 import sys
+from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
-
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from services.stock_catalog_candidate import (
+from services.stock_catalog_candidate import (  # noqa: E402
     CatalogCandidateRejected,
     CatalogSourceEvidence,
     build_stock_catalog_candidate,
@@ -23,7 +22,7 @@ def _evidence(**changes: object) -> CatalogSourceEvidence:
         "input_id": "a" * 64,
         "content_sha256": "b" * 64,
         "provider": "tushare",
-        "source_refreshed_at": datetime(2026, 9, 10, 9, tzinfo=timezone.utc),
+        "source_refreshed_at": datetime(2026, 9, 10, 9, tzinfo=UTC),
         "fresh_through": date(2026, 9, 9),
         "provisional_count": 1,
         "conflict_count": 0,
@@ -74,7 +73,7 @@ def test_candidate_is_authoritative_only_normalized_stable_and_content_addressed
                 ]
             )
         ),
-        _evidence(source_refreshed_at=datetime(2026, 9, 10, 11, tzinfo=timezone.utc)),
+        _evidence(source_refreshed_at=datetime(2026, 9, 10, 11, tzinfo=UTC)),
         expected_fresh_through=date(2026, 9, 9),
     )
     changed = build_stock_catalog_candidate(
