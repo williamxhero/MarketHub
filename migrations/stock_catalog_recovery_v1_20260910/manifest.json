@@ -3,11 +3,14 @@
   "format_version": 1,
   "authority_provider": "tushare",
   "market_hub_base_commit": "fe26c9adea20a1054c64c349f8eb3d9f3c8def61",
-  "required_quote_mux_commit": "6636e3dc6fef6709394ade267470b535fda6fb45",
+  "required_quote_mux_commit": "b57653327ad4a7e48a323eb21534663a3686b7bf",
+  "required_quote_mux_packages_commit": "7af2bc7c0c78788f0358035725590fce9f4c7f77",
   "known_dirty_data_versions": [
     "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
   ],
   "required_authority_shards": ["listed", "pending", "delisted"],
+  "empty_status_shard_contract": "pending and delisted may be empty only with a matching direct-provider raw receipt; listed must be nonempty",
+  "stock_identity_admission": "six ASCII digit symbol with identical ts_code symbol and SH/SZ/BJ suffix; rejected provider rows are receipt-accounted and never rewritten",
   "phases": ["capture", "preflight", "rehearse", "apply", "verify"],
   "no_go_exit_code": 20,
   "apply_authority": "controller-only",
