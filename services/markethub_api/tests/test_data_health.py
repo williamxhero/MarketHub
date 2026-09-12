@@ -588,6 +588,55 @@ def test_core_dataset_freshness_reports_each_dataset_against_calendar_target(mon
     assert "目标交易日 2026-09-07，最新 2026-09-04" in checks[0].error_text
 
 
+def test_core_freshness_unhealthy_is_counted_in_own_capability_summary() -> None:
+    capabilities = [
+        {"capability_id": "stocks.quotes.daily", "status": "healthy", "checks": [], "issues": []},
+        {"capability_id": "indexes.quotes.daily", "status": "healthy", "checks": [], "issues": []},
+        {"capability_id": "concepts.quotes.daily", "status": "healthy", "checks": [], "issues": []},
+        {"capability_id": "boards.quotes.daily", "status": "healthy", "checks": [], "issues": []},
+    ]
+    checks = [
+        data_health.CheckSpec(
+            "core_dataset_freshness:fact.stock_daily_1d",
+            "fact.stock_daily_1d 相对最新已完成交易日的新鲜度",
+            "healthy",
+            "最新交易日 2026-09-11",
+        ).as_dict(),
+        data_health.CheckSpec(
+            "core_dataset_freshness:fact.index_bar_1d",
+            "fact.index_bar_1d 相对最新已完成交易日的新鲜度",
+            "healthy",
+            "最新交易日 2026-09-11",
+        ).as_dict(),
+        data_health.CheckSpec(
+            "core_dataset_freshness:fact.concept_daily_1d",
+            "fact.concept_daily_1d 相对最新已完成交易日的新鲜度",
+            "unhealthy",
+            "滞后",
+            "目标交易日 2026-09-11，最新 2026-09-10",
+        ).as_dict(),
+        data_health.CheckSpec(
+            "core_dataset_freshness:fact.board_daily_1d",
+            "fact.board_daily_1d 相对最新已完成交易日的新鲜度",
+            "unhealthy",
+            "滞后",
+            "目标交易日 2026-09-11，最新 2026-09-10",
+        ).as_dict(),
+    ]
+
+    merged = data_health._merge_core_freshness_into_capabilities(capabilities, checks)
+
+    assert data_health._build_summary(merged) == {
+        "status": "unhealthy",
+        "total": 4,
+        "healthy": 2,
+        "warning": 0,
+        "unhealthy": 2,
+    }
+    assert any(check["check_id"] == "core_dataset_freshness:fact.concept_daily_1d" for check in merged[2]["checks"])
+    assert merged[2]["issues"] == ["目标交易日 2026-09-11，最新 2026-09-10"]
+
+
 def _empty_frame():
     import pandas as pd
 

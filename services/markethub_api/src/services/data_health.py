@@ -81,6 +81,13 @@ CORE_DATASET_FRESHNESS_OBJECTS = (
     "fact.board_daily_1d",
 )
 
+CORE_FRESHNESS_CAPABILITIES = {
+    "fact.stock_daily_1d": "stocks.quotes.daily",
+    "fact.index_bar_1d": "indexes.quotes.daily",
+    "fact.concept_daily_1d": "concepts.quotes.daily",
+    "fact.board_daily_1d": "boards.quotes.daily",
+}
+
 @dataclass(frozen=True)
 class CheckSpec:
     check_id: str
@@ -120,6 +127,7 @@ def _compute_data_health() -> dict[str, object]:
     calendar = _check_trade_calendar(objects, db_available)
     core_dataset_freshness = _core_dataset_freshness_summary(objects, db_available, calendar, check_cache)
     capabilities = [_build_capability_health(definition, profiles, objects, db_available, calendar, check_cache) for definition in definitions]
+    _merge_core_freshness_into_capabilities(capabilities, core_dataset_freshness["checks"])
     groups = _build_group_health(capabilities)
     summary = _build_summary(capabilities)
     status = _worst_status([
@@ -379,6 +387,38 @@ def _build_capability_health(
         "result_shape": definition.result_shape,
         "store_enabled": definition.store_enabled,
     }
+
+
+def _merge_core_freshness_into_capabilities(
+    capabilities: list[dict[str, object]],
+    freshness_checks: object,
+) -> list[dict[str, object]]:
+    """Attach global freshness gates to the capability summary they govern."""
+    if not isinstance(freshness_checks, list):
+        return capabilities
+    by_capability = {str(item.get("capability_id", "")): item for item in capabilities if isinstance(item, dict)}
+    for raw_check in freshness_checks:
+        if not isinstance(raw_check, dict):
+            continue
+        check_id = str(raw_check.get("check_id", ""))
+        object_name = check_id.removeprefix("core_dataset_freshness:")
+        capability_id = CORE_FRESHNESS_CAPABILITIES.get(object_name, "")
+        capability = by_capability.get(capability_id)
+        if capability is None:
+            continue
+        checks = capability.get("checks")
+        if not isinstance(checks, list):
+            checks = []
+            capability["checks"] = checks
+        if not any(isinstance(check, dict) and str(check.get("check_id", "")) == check_id for check in checks):
+            checks.append({str(key): str(value) for key, value in raw_check.items()})
+        capability["status"] = _status_from_checks([check for check in checks if isinstance(check, dict)])
+        capability["issues"] = [
+            str(check.get("error_text", ""))
+            for check in checks
+            if isinstance(check, dict) and str(check.get("error_text", "")) != ""
+        ]
+    return capabilities
 
 
 def _build_checks(

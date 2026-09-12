@@ -23,7 +23,7 @@ def test_health_gated_update_waits_for_due_capture_and_serializes_runs() -> None
     source = (SCRIPT_DIR / "global-data-update-with-health.sh").read_text(encoding="utf-8")
 
     assert 'MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"' in source
-    assert 'MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily}"' in source
+    assert 'MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily,boards.quotes.daily,concepts.quotes.daily,stocks.quotes.intraday}"' in source
     assert 'MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES"' in source
     assert 'flock -w "$MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS"' in source
     assert "未启动重复采集或发布" in source
