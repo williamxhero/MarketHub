@@ -25,3 +25,9 @@ def test_ddl_version_trigger_ignores_session_temporary_schema_aliases() -> None:
     assert "'pg_toast_temp'" in content
     assert "not like 'pg_temp_%'" in content
     assert "not like 'pg_toast_temp_%'" in content
+
+
+def test_market_version_tracks_suspension_facts_used_by_daily_exports() -> None:
+    content = SQL.read_text(encoding="utf-8")
+
+    assert "fact.stock_suspension_history" in content
