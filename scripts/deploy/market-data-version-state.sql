@@ -2,6 +2,7 @@ begin;
 
 lock table
     fact.stock_daily_1d,
+    fact.stock_suspension_history,
     fact.stock_financial_pit_factor,
     fact.stock_listing_board_history,
     fact.stock_market_indicators_daily,
@@ -52,6 +53,7 @@ declare
 begin
     foreach target in array array[
         'fact.stock_daily_1d'::regclass,
+        'fact.stock_suspension_history'::regclass,
         'fact.stock_financial_pit_factor'::regclass,
         'fact.stock_listing_board_history'::regclass,
         'fact.stock_market_indicators_daily'::regclass,
