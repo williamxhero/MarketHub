@@ -21,6 +21,7 @@ def _app(tmp_path: Path, monkeypatch) -> tuple[TestClient, str, bytes]:
     file_path.write_bytes(content)
     manifest = {
         "dataset_id": "stock_daily_1d", "dataset_version": version,
+        "market_data_version": "mhf-v1-" + "b" * 64,
         "files": [{"path": "year=2021/month=01/bars.parquet", "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()}],
     }
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -96,3 +97,42 @@ def test_resolve_unpublished_stale_market_version_remains_not_found(monkeypatch,
     response = client.get(f"/api/exports/stock_daily_1d/resolve/{requested_version}")
 
     assert response.status_code == 404
+
+
+def test_resolve_current_market_version_rejects_manifest_market_version_drift(monkeypatch, tmp_path: Path) -> None:
+    client, dataset_version, _ = _app(tmp_path, monkeypatch)
+    requested_version = "mhf-v1-" + "b" * 64
+    manifest_path = tmp_path / "stock_daily_1d" / dataset_version / "manifest.json"
+    manifest_path.write_text(
+        json.dumps({"dataset_id": "stock_daily_1d", "dataset_version": dataset_version, "market_data_version": "mhf-v1-" + "c" * 64}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(exports, "query_dataframe", lambda *_args, **_kwargs: pd.DataFrame())
+    monkeypatch.setattr(exports, "current_market_data_version", lambda: requested_version)
+    monkeypatch.setattr(exports, "_current_dataset_version", lambda: dataset_version)
+
+    response = client.get(f"/api/exports/stock_daily_1d/resolve/{requested_version}")
+
+    assert response.status_code == 404
+
+
+def test_resolve_published_mapping_rejects_manifest_market_version_drift(monkeypatch, tmp_path: Path) -> None:
+    client, dataset_version, _ = _app(tmp_path, monkeypatch)
+    requested_version = "mhf-v1-" + "b" * 64
+    manifest_path = tmp_path / "stock_daily_1d" / dataset_version / "manifest.json"
+    manifest_path.write_text(
+        json.dumps({"dataset_id": "stock_daily_1d", "dataset_version": dataset_version, "market_data_version": "mhf-v1-" + "c" * 64}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        exports,
+        "query_dataframe",
+        lambda *_args, **_kwargs: pd.DataFrame(
+            [{"dataset_version": dataset_version, "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest()}]
+        ),
+    )
+
+    response = client.get(f"/api/exports/stock_daily_1d/resolve/{requested_version}")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "EXPORT_MANIFEST_INVALID"

@@ -24,6 +24,8 @@ def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
     assert "dataset changed during publish" in content
     assert "os.replace(staging, final_root)" in content
     assert "market version mapping conflict" in content
+    assert "published manifest market version mismatch" in content
+    assert "_read_published_manifest" in content
     assert '"url": f"/api/exports/{DATASET_ID}/{dataset_version}/files/{relative_path}"' in content
     assert "date '2021-11-15'" in content
     assert "ensure_current_stock_daily_coverage" in content
@@ -59,6 +61,22 @@ def test_dataset_version_matches_api_contract() -> None:
     second = MODULE._version("stock_daily_1d", "baseline", 5)
     assert first.startswith("mhd-v1-") and len(first) == 71
     assert first != second
+
+
+def test_existing_manifest_must_match_current_market_version(tmp_path: Path) -> None:
+    dataset_version = "mhd-v1-" + "a" * 64
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        '{"dataset_id":"stock_daily_1d","dataset_version":"' + dataset_version + '","market_data_version":"mhf-v1-' + "b" * 64 + '"}',
+        encoding="utf-8",
+    )
+
+    try:
+        MODULE._read_published_manifest(manifest_path, dataset_version, "mhf-v1-" + "c" * 64)
+    except RuntimeError as exc:
+        assert "market version mismatch" in str(exc)
+    else:
+        raise AssertionError("a manifest bound to another market version must be rejected")
 
 
 def test_months_preserve_partial_dataset_bounds() -> None:
