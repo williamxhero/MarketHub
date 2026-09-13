@@ -232,6 +232,20 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _read_published_manifest(path: Path, dataset_version: str, market_version: str) -> dict[str, object]:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"published manifest is unreadable: {path}") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"published manifest is not an object: {path}")
+    if manifest.get("dataset_id") != DATASET_ID or manifest.get("dataset_version") != dataset_version:
+        raise RuntimeError(f"published manifest identity mismatch: {path}")
+    if manifest.get("market_data_version") != market_version:
+        raise RuntimeError(f"published manifest market version mismatch: expected={market_version} path={path}")
+    return manifest
+
+
 def _file_record(root: Path, path: Path, rows: int, dataset_version: str) -> dict[str, object]:
     relative_path = path.relative_to(root).as_posix()
     return {
@@ -389,13 +403,14 @@ def _publish_locked(
         final_root = parent / dataset_version
         if final_root.is_dir():
             manifest_path = final_root / "manifest.json"
-            manifest_sha = _sha256(manifest_path)
             current_dataset, market_version = _current_versions()
             if current_dataset != dataset_version:
                 raise RuntimeError("dataset version changed before mapping existing publication")
+            manifest = _read_published_manifest(manifest_path, dataset_version, market_version)
+            manifest_sha = _sha256(manifest_path)
             _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
             mark_stock_daily_publication_online(dataset_version)
-            return json.loads(manifest_path.read_text(encoding="utf-8"))
+            return manifest
         staging, completed_months = _resume_staging(staging_parent, dataset_version, first, last)
         files: list[dict[str, object]] = []
         partitions: list[dict[str, object]] = []

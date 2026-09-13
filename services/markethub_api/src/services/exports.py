@@ -62,7 +62,7 @@ def _current_published_mapping(market_data_version: str) -> dict[str, str] | Non
         return None
     try:
         manifest_path = _dataset_root(dataset_version) / "manifest.json"
-        read_manifest(dataset_version)
+        read_manifest(dataset_version, expected_market_data_version=market_data_version)
         manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     except HTTPException:
         return None
@@ -90,16 +90,25 @@ def resolve_market_version(market_data_version: str) -> dict[str, str]:
             return current_mapping
         raise HTTPException(status_code=404, detail={"code": "EXPORT_NOT_FOUND", "message": "市场版本没有发布映射"})
     row = frame.iloc[0]
+    dataset_version = str(row["dataset_version"])
+    manifest_path = _dataset_root(dataset_version) / "manifest.json"
+    read_manifest(dataset_version, expected_market_data_version=market_data_version)
+    actual_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    if actual_manifest_sha256 != str(row["manifest_sha256"]):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "EXPORT_MANIFEST_INVALID", "message": "发布清单校验和不匹配"},
+        )
     return {
         "dataset_id": DATASET_ID,
         "market_data_version": market_data_version,
-        "dataset_version": str(row["dataset_version"]),
+        "dataset_version": dataset_version,
         "manifest_sha256": str(row["manifest_sha256"]),
-        "manifest_url": f"/api/exports/{DATASET_ID}/{row['dataset_version']}/manifest",
+        "manifest_url": f"/api/exports/{DATASET_ID}/{dataset_version}/manifest",
     }
 
 
-def read_manifest(dataset_version: str) -> dict[str, object]:
+def read_manifest(dataset_version: str, expected_market_data_version: str | None = None) -> dict[str, object]:
     path = _dataset_root(dataset_version) / "manifest.json"
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -107,6 +116,8 @@ def read_manifest(dataset_version: str) -> dict[str, object]:
         raise HTTPException(status_code=503, detail={"code": "EXPORT_MANIFEST_INVALID", "message": "发布清单不可读"}) from exc
     if payload.get("dataset_version") != dataset_version or payload.get("dataset_id") != DATASET_ID:
         raise HTTPException(status_code=503, detail={"code": "EXPORT_MANIFEST_INVALID", "message": "发布清单版本不匹配"})
+    if expected_market_data_version is not None and payload.get("market_data_version") != expected_market_data_version:
+        raise HTTPException(status_code=503, detail={"code": "EXPORT_MANIFEST_INVALID", "message": "发布清单市场版本不匹配"})
     return payload
 
 
