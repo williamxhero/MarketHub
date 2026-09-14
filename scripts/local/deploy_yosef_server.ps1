@@ -245,6 +245,11 @@ export MARKETHUB_ENV_PATH="$env_path"
 export MARKETHUB_VENV_ROOT="$runtime_root/.venv"
 export QUOTEMUX_PACKAGE_VENV_ROOT="$package_venv_root"
 export QUOTEMUX_ALLOW_LOCAL_PACKAGE_REPO=true
+if [ -n "$reuse_package_venv_root" ]; then
+  # Reused provider environments already carry their runtime dependencies;
+  # install the release source without forcing an online dependency refresh.
+  export QUOTEMUX_RUNTIME_INSTALL_NO_DEPS=true
+fi
 export PYTHONPATH="$release_root/QuoteMux/src:$release_root/MarketHub/services/markethub_api/src"
 mkdir -p "$runtime_root/type=cache"
 sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/type=cache" || true
