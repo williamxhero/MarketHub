@@ -37,8 +37,22 @@ def test_health_alert_is_observable_without_failing_unrelated_capture() -> None:
     assert 'MARKETHUB_DATA_HEALTH_FAILURE_POLICY="${MARKETHUB_DATA_HEALTH_FAILURE_POLICY:-warn}"' in source
     assert 'warn|fail)' in source
     assert 'global_update_health_outcome=alert policy=$MARKETHUB_DATA_HEALTH_FAILURE_POLICY' in source
-    assert 'global_update_publication_outcome=deferred reason=data_health_alert' in source
+    assert 'global_update_publication_outcome=deferred reason=declared_dependency_unhealthy' in source
     assert '[ "$MARKETHUB_DATA_HEALTH_FAILURE_POLICY" = "fail" ]' in source
+
+
+def test_publication_is_gated_on_declared_dependencies_not_platform_aggregate() -> None:
+    source = (SCRIPT_DIR / "global-data-update-with-health.sh").read_text(encoding="utf-8")
+
+    assert 'PUBLICATION_HEALTH_GATE_SCRIPT="${MARKETHUB_PUBLICATION_HEALTH_GATE_SCRIPT:-$SCRIPT_DIR/publication_health_gate.py}"' in source
+    assert 'MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES="${MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES:-' in source
+    assert 'core_dataset_freshness:fact.stock_daily_1d' in source
+    assert '--not-before "$health_started_at"' in source
+    assert 'if ! evaluate_publication_health; then' in source
+    assert 'global_update_publication_outcome=deferred reason=publication_health_gate_unusable' in source
+    # The platform-wide alert must stay observable but must no longer gate the
+    # publication, otherwise an unrelated durable alert defers it forever.
+    assert "health_alert" not in source
 
 
 def test_global_update_bounds_due_enqueue_and_waits_only_for_declared_dependencies() -> None:
@@ -73,15 +87,42 @@ def test_task_center_contract_schedules_final_snapshot_before_1520() -> None:
     assert "15:20" in payload["description"]
 
 
-@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("flock") is None, reason="requires bash and flock")
-def test_health_gated_update_does_not_run_duplicate_pipeline(tmp_path: Path) -> None:
+def _pipeline_harness(tmp_path: Path, *, stock_daily_status: str, health_exit_code: int) -> tuple[dict[str, str], Path, Path]:
+    """Build a pipeline whose data-health report mirrors the production shape.
+
+    ``stock_daily_status`` drives the publication's own declared dependency;
+    the report always carries an unrelated unhealthy dataset so the platform
+    aggregate stays unhealthy, which is the live 2026-09-17 failure mode.
+    """
     log_path = tmp_path / "pipeline.log"
     capture_started = tmp_path / "capture-started"
     capture = tmp_path / "capture.sh"
     health = tmp_path / "health.sh"
     publisher = tmp_path / "publisher.py"
+    payload_path = tmp_path / "latest.json"
+    report = {
+        "status": "unhealthy",
+        "checked_at": "__CHECKED_AT__",
+        "dependencies": {
+            "core_dataset_freshness": {
+                "status": "unhealthy",
+                "checks": [
+                    {"check_id": "core_dataset_freshness:fact.stock_daily_1d", "status": stock_daily_status},
+                    {"check_id": "core_dataset_freshness:fact.board_daily_1d", "status": "unhealthy"},
+                ],
+            }
+        },
+        "capabilities": [{"capability_id": "concepts.indicators.money_flow", "status": "unhealthy", "checks": []}],
+    }
+    serialized = json.dumps(report, ensure_ascii=False).replace("__CHECKED_AT__", "'\"$(date '+%F %T')\"'")
     capture.write_text(f'#!/usr/bin/env bash\necho capture >> "{log_path}"\ntouch "{capture_started}"\nsleep 1\n', encoding="utf-8")
-    health.write_text(f'#!/usr/bin/env bash\necho health >> "{log_path}"\n', encoding="utf-8")
+    health.write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo health >> "{log_path}"\n'
+        f"printf '%s\\n' '{serialized}' > \"{payload_path}\"\n"
+        f"exit {health_exit_code}\n",
+        encoding="utf-8",
+    )
     publisher.write_text(f'from pathlib import Path\nPath(r"{log_path}").open("a").write("publish\\n")\n', encoding="utf-8")
     for script in (capture, health):
         script.chmod(0o755)
@@ -93,9 +134,52 @@ def test_health_gated_update_does_not_run_duplicate_pipeline(tmp_path: Path) -> 
         "MARKETHUB_PYTHON": sys.executable,
         "MARKETHUB_CODE_ROOT": str(tmp_path),
         "MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH": "1",
+        "MARKETHUB_DATA_HEALTH_PAYLOAD": str(payload_path),
+        "MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES": "core_dataset_freshness:fact.stock_daily_1d",
         "MARKETHUB_GLOBAL_UPDATE_LOCK_PATH": str(tmp_path / "global-update.lock"),
         "MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS": "0",
     })
+    return environment, log_path, capture_started
+
+
+@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("flock") is None, reason="requires bash and flock")
+def test_unrelated_health_alert_no_longer_blocks_the_publication(tmp_path: Path) -> None:
+    environment, log_path, _ = _pipeline_harness(tmp_path, stock_daily_status="healthy", health_exit_code=1)
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_DIR / "global-data-update-with-health.sh")],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout
+    assert "global_update_health_outcome=alert" in completed.stdout
+    assert "publication_health_gate=passed" in completed.stdout
+    assert log_path.read_text(encoding="utf-8").splitlines() == ["capture", "health", "publish"]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("flock") is None, reason="requires bash and flock")
+def test_unhealthy_declared_dependency_still_blocks_the_publication(tmp_path: Path) -> None:
+    environment, log_path, _ = _pipeline_harness(tmp_path, stock_daily_status="unhealthy", health_exit_code=1)
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_DIR / "global-data-update-with-health.sh")],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout
+    assert "global_update_publication_outcome=deferred reason=declared_dependency_unhealthy" in completed.stdout
+    assert log_path.read_text(encoding="utf-8").splitlines() == ["capture", "health"]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("flock") is None, reason="requires bash and flock")
+def test_health_gated_update_does_not_run_duplicate_pipeline(tmp_path: Path) -> None:
+    environment, log_path, capture_started = _pipeline_harness(tmp_path, stock_daily_status="healthy", health_exit_code=0)
     first = subprocess.Popen(["bash", str(SCRIPT_DIR / "global-data-update-with-health.sh")], env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     for _ in range(100):
         if capture_started.exists():
