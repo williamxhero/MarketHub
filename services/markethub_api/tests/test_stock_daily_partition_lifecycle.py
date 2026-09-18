@@ -55,6 +55,41 @@ def _manifest(
     (version_root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
+def _legacy_manifest(root: Path, version: str, *, published: str) -> None:
+    version_root = root / "stock_daily_1d" / version
+    part = version_root / "year=2024" / "month=01"
+    part.mkdir(parents=True)
+    bars_content = b"legacy bars"
+    coverage_content = b"legacy coverage"
+    bars = part / "bars.parquet"
+    coverage = part / "coverage.parquet"
+    bars.write_bytes(bars_content)
+    coverage.write_bytes(coverage_content)
+    files = [
+        {
+            "path": "year=2024/month=01/bars.parquet",
+            "rows": 1,
+            "bytes": len(bars_content),
+            "sha256": hashlib.sha256(bars_content).hexdigest(),
+        },
+        {
+            "path": "year=2024/month=01/coverage.parquet",
+            "rows": 1,
+            "bytes": len(coverage_content),
+            "sha256": hashlib.sha256(coverage_content).hexdigest(),
+        },
+    ]
+    manifest = {
+        "schema_version": "markethub-stock-daily-parquet-v1",
+        "dataset_id": "stock_daily_1d",
+        "dataset_version": version,
+        "published_at_utc": published,
+        "partitions": [{"start": "2024-01-01", "end_exclusive": "2024-02-01", "rows": 1}],
+        "files": files,
+    }
+    (version_root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
 def _approve(plan: dict) -> dict:
     unsigned = dict(plan)
     unsigned.pop("plan_sha256", None)
@@ -151,6 +186,21 @@ def test_cleanup_plan_is_stable_and_describes_all_retention_inputs(tmp_path: Pat
     assert plan["before_inventory_sha256"] == repeat["before_inventory_sha256"]
     assert plan["inventory"][0]["classification"] == "active"
     assert {"policy_version", "before_inventory_sha256", "actions"} <= plan.keys()
+
+
+def test_cleanup_treats_legacy_published_manifests_as_verified_correct_data(tmp_path: Path) -> None:
+    old = "mhd-v1-" + "a" * 64
+    new = "mhd-v1-" + "b" * 64
+    _legacy_manifest(tmp_path, old, published="2026-09-01")
+    _legacy_manifest(tmp_path, new, published="2026-09-02")
+
+    plan = build_cleanup_plan(tmp_path, active_version=new)
+
+    assert not any(item["classification"] == "invalid" for item in plan["inventory"])
+    assert plan["actions"][0]["action"] == "delete_duplicate"
+    assert next(item for item in plan["inventory"] if item["version"] == old)[
+        "classification"
+    ] == "duplicate_old_correct"
 
 
 def test_partition_catalog_initialization_is_idempotent_and_does_not_rewrite_manifest(
