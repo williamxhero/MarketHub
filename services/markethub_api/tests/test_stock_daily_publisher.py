@@ -84,6 +84,12 @@ def test_publisher_accepts_unchanged_market_version() -> None:
     MODULE._require_version_unchanged("market data version", version, version)
 
 
+def test_publisher_uses_the_canonical_health_market_version(monkeypatch) -> None:
+    version = "mhf-v1-" + "c" * 64
+    monkeypatch.setattr(MODULE, "current_market_data_version", lambda: version)
+    assert MODULE._market_version() == version
+
+
 def test_existing_manifest_must_match_current_market_version(tmp_path: Path) -> None:
     dataset_version = "mhd-v1-" + "a" * 64
     manifest_path = tmp_path / "manifest.json"

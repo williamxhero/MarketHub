@@ -18,6 +18,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from services.daily_coverage_read_model import ensure_current_stock_daily_coverage, mark_stock_daily_publication_online
+from services.market_data_version import current_market_data_version
 
 
 DATASET_ID = "stock_daily_1d"
@@ -193,18 +194,12 @@ def _dataset_state(connection: psycopg.Connection[Any]) -> tuple[str, int, str]:
     return baseline, generation, _version(DATASET_ID, baseline, generation)
 
 
-def _market_version(connection: psycopg.Connection[Any]) -> str:
-    with connection.cursor() as cursor:
-        cursor.execute("select baseline_id,generation from audit.market_data_version_state where singleton=true")
-        row = cursor.fetchone()
-    if row is None:
-        raise RuntimeError("market data version state unavailable")
-    payload = {
-        "contract": "markethub-market-facts-v1-triggered", "baseline_id": str(row["baseline_id"]),
-        "generation": int(row["generation"]), "adjustment_base_date": os.getenv("QUOTEMUX_ADJUSTMENT_BASE_DATE", "").strip(),
-    }
-    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
-    return f"mhf-v1-{hashlib.sha256(encoded).hexdigest()}"
+def _market_version(_: psycopg.Connection[Any] | None = None) -> str:
+    """Read the same health token that public API consumers must provide."""
+    version = current_market_data_version()
+    if version == "":
+        raise RuntimeError("market data version unavailable")
+    return version
 
 
 def _current_versions() -> tuple[str, str]:
