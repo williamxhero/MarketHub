@@ -210,6 +210,69 @@ def test_duplicate_daily_key_fails_before_page_query(monkeypatch: pytest.MonkeyP
     assert error.value.detail["details"]["duplicate_rows"] == 1
 
 
+def test_codes_universe_coverage_reports_a_genuinely_excluded_row_as_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression for #435/#460: a code with a real gap (e.g. a row flagged
+    # is_suspended on fact.stock_daily_1d with no matching
+    # fact.stock_suspension_history entry) must be reported as incomplete,
+    # not silently rounded up to complete=True/actual_rows==expected_rows.
+    monkeypatch.setattr(
+        daily_window,
+        "load_stock_daily_coverage_summary",
+        lambda *_args, **_kwargs: ({"expected_total": 0}, []),
+    )
+
+    def query(query_text: str, _params: tuple[object, ...]) -> pd.DataFrame:
+        lowered = query_text.lower()
+        if "requested_codes" in lowered and "catalog.code is null" in lowered:
+            return pd.DataFrame(columns=["code"])
+        if "row_count=1" in lowered.replace(" ", ""):
+            # This is _COVERAGE_ROWS_QUERY -- the one that actually checks
+            # whether a real, non-suspended, non-null row exists per day.
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "600000",
+                        "expected_rows": 20,
+                        "actual_rows": 15,
+                        "missing_rows": 5,
+                        "missing_trade_dates": [date(2021, 1, 5)],
+                        "complete": False,
+                        "duplicate_rows": 0,
+                    },
+                    {
+                        "code": "000001",
+                        "expected_rows": 20,
+                        "actual_rows": 20,
+                        "missing_rows": 0,
+                        "missing_trade_dates": [],
+                        "complete": True,
+                        "duplicate_rows": 0,
+                    },
+                ]
+            )
+        raise AssertionError(f"unexpected query issued: {query_text[:120]!r}")
+
+    monkeypatch.setattr(daily_window, "query_dataframe", query)
+    summary, coverage = daily_window._load_coverage_uncached(_payload())
+
+    by_code = {row["code"]: row for row in coverage}
+    assert by_code["600000"]["complete"] is False
+    assert by_code["600000"]["actual_rows"] == 15
+    assert by_code["600000"]["missing_rows"] == 5
+    assert by_code["600000"]["missing_trade_dates"] == ["2021-01-05"]
+    assert summary["expected_total"] == 40
+    assert summary["actual_total"] == 35
+    assert summary["missing_total"] == 5
+
+    with pytest.raises(HTTPException) as error:
+        daily_window._raise_incomplete(summary, coverage, [])
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "MARKET_DATA_INCOMPLETE"
+    assert error.value.detail["details"]["incomplete_codes"] == ["600000"]
+
+
 def test_dataset_version_drift_after_page_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     version_checks = 0
 
