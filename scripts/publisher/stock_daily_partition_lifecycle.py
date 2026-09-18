@@ -150,30 +150,93 @@ def _partition_evidence(root: Path, item: Any) -> dict[str, Any]:
         raise RuntimeError(f"unsupported partition status: {status}")
     if status != "frozen":
         raise RuntimeError(f"partition is not accepted/frozen: {status}")
-    required = ("partition_key", "schema_version", "source_sha256", "coverage_sha256", "rows")
+    legacy = bool(item.get("_legacy_manifest"))
+    required = ("partition_key", "schema_version", "rows")
     if any(not item.get(field) for field in required):
         raise RuntimeError("frozen partition identity is incomplete")
     files = [_file_evidence(root, file_item) for file_item in item.get("files", [])]
     if not files:
         raise RuntimeError("frozen partition has no files")
+    if legacy:
+        bars = next((file for file in files if file["path"].endswith("/bars.parquet")), None)
+        coverage = next(
+            (file for file in files if file["path"].endswith("/coverage.parquet")), None
+        )
+        if bars is None or coverage is None:
+            raise RuntimeError("legacy frozen partition lacks bars/coverage evidence")
+        source_sha256 = bars["sha256"]
+        coverage_sha256 = coverage["sha256"]
+    else:
+        source_sha256 = str(item.get("source_sha256", ""))
+        coverage_sha256 = str(item.get("coverage_sha256", ""))
+        if not source_sha256 or not coverage_sha256:
+            raise RuntimeError("frozen partition identity is incomplete")
     return {
         "partition_key": str(item["partition_key"]),
         "schema_version": str(item["schema_version"]),
-        "source_sha256": str(item["source_sha256"]),
-        "coverage_sha256": str(item["coverage_sha256"]),
+        "source_sha256": source_sha256,
+        "coverage_sha256": coverage_sha256,
         "rows": int(item["rows"]),
         "files": files,
         "content_identity_sha256": _canonical_sha256(
             {
                 "partition_key": item["partition_key"],
                 "schema_version": item["schema_version"],
-                "source_sha256": item["source_sha256"],
-                "coverage_sha256": item["coverage_sha256"],
+                "source_sha256": source_sha256,
+                "coverage_sha256": coverage_sha256,
                 "rows": int(item["rows"]),
                 "files": files,
             }
         ),
     }
+
+
+def _cleanup_partition_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize pre-freeze manifests for read-only cleanup verification.
+
+    Releases created before the partition lifecycle contract stored the partition
+    boundaries in ``partitions`` and the file records in the manifest-level
+    ``files`` array.  They have no source/coverage identity fields, so they must
+    never be candidates for publisher reuse.  Cleanup can still verify them as
+    correct legacy artifacts using the immutable bars/coverage file hashes.
+    """
+    result: list[dict[str, Any]] = []
+    manifest_files = payload.get("files", [])
+    for raw in payload.get("partitions", []):
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("status") or raw.get("files"):
+            result.append(raw)
+            continue
+        start = str(raw.get("start", ""))[:10]
+        end = str(raw.get("end_exclusive", ""))[:10]
+        if len(start) != 10 or len(end) != 10:
+            result.append(raw)
+            continue
+        try:
+            year, month = start[:4], start[5:7]
+            prefix = f"year={year}/month={month}/"
+            files = [
+                file_item
+                for file_item in manifest_files
+                if isinstance(file_item, dict)
+                and str(file_item.get("path", "")).startswith(prefix)
+            ]
+        except (AttributeError, TypeError):
+            files = []
+        normalized = dict(raw)
+        normalized.update(
+            {
+                "partition_key": raw.get("partition_key") or partition_key(start, end),
+                "schema_version": raw.get("schema_version")
+                or payload.get("schema_version", "legacy-stock-daily-manifest"),
+                "status": "frozen",
+                "files": files,
+                "_legacy_manifest": True,
+            }
+        )
+        result.append(normalized)
+    return result
 
 
 def _manifest_candidates(dataset_root: Path, current_dataset_version: str) -> list[dict[str, Any]]:
@@ -433,7 +496,7 @@ def build_cleanup_plan(
                 }
             )
             continue
-        partition_items = payload.get("partitions", [])
+        partition_items = _cleanup_partition_items(payload)
         has_explicit_invalid = any(
             isinstance(item, dict) and item.get("status") == "invalid"
             for item in partition_items
