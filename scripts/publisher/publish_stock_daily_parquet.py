@@ -265,6 +265,39 @@ def _read_published_manifest(path: Path, dataset_version: str, market_version: s
     return manifest
 
 
+def _rebind_existing_manifest(final_root: Path, dataset_version: str, market_version: str) -> dict[str, object]:
+    """Change only the market-version binding while preserving immutable files."""
+    manifest_path = final_root / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"published manifest is unreadable: {manifest_path}") from exc
+    if manifest.get("dataset_id") != DATASET_ID or manifest.get("dataset_version") != dataset_version:
+        raise RuntimeError(f"published manifest identity mismatch: {manifest_path}")
+    if manifest.get("market_data_version") == market_version:
+        return manifest
+    for file_item in manifest.get("files", []):
+        if not isinstance(file_item, dict):
+            raise RuntimeError("published manifest contains an invalid file record")
+        path = final_root / str(file_item.get("path", ""))
+        if not path.is_file() or _sha256(path) != str(file_item.get("sha256", "")):
+            raise RuntimeError(f"cannot rebind manifest with invalid immutable file: {path}")
+    old_market_version = str(manifest.get("market_data_version", ""))
+    if old_market_version.startswith("mhf-v1-"):
+        history = final_root / "manifests"
+        history.mkdir(exist_ok=True)
+        old_path = history / f"{old_market_version}.json"
+        if not old_path.exists():
+            old_path.write_bytes(manifest_path.read_bytes())
+    rebound = dict(manifest)
+    rebound["market_data_version"] = market_version
+    rebound["published_at_utc"] = datetime.now(timezone.utc)
+    temporary = final_root / f".manifest-{uuid.uuid4().hex}.tmp"
+    temporary.write_text(json.dumps(rebound, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+    os.replace(temporary, manifest_path)
+    return rebound
+
+
 def _file_record(root: Path, path: Path, rows: int, dataset_version: str) -> dict[str, object]:
     relative_path = path.relative_to(root).as_posix()
     return {
@@ -463,7 +496,7 @@ def _publish_locked(
             current_dataset, market_version = _current_versions()
             if current_dataset != dataset_version:
                 raise RuntimeError("dataset version changed before mapping existing publication")
-            manifest = _read_published_manifest(manifest_path, dataset_version, market_version)
+            manifest = _rebind_existing_manifest(final_root, dataset_version, market_version)
             manifest_sha = _sha256(manifest_path)
             _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
             mark_stock_daily_publication_online(dataset_version)
