@@ -21,7 +21,7 @@ def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
     assert MODULE.SCHEMA_VERSION == "markethub-stock-daily-parquet-v1"
     assert "fetchmany(row_group_rows)" in content
     assert "coverage incomplete" in content
-    assert "dataset changed during publish" in content
+    assert "changed during publish" in content
     assert "os.replace(staging, final_root)" in content
     assert "market version mapping conflict" in content
     assert "published manifest market version mismatch" in content
@@ -61,6 +61,27 @@ def test_dataset_version_matches_api_contract() -> None:
     second = MODULE._version("stock_daily_1d", "baseline", 5)
     assert first.startswith("mhd-v1-") and len(first) == 71
     assert first != second
+
+
+def test_publisher_rejects_market_version_drift_during_stable_dataset_publish() -> None:
+    try:
+        MODULE._require_version_unchanged(
+            "market data version",
+            "mhf-v1-" + "a" * 64,
+            "mhf-v1-" + "b" * 64,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == (
+            "market data version changed during publish: "
+            "start=mhf-v1-" + "a" * 64 + " end=mhf-v1-" + "b" * 64
+        )
+    else:
+        raise AssertionError("market version drift must fail closed")
+
+
+def test_publisher_accepts_unchanged_market_version() -> None:
+    version = "mhf-v1-" + "a" * 64
+    MODULE._require_version_unchanged("market data version", version, version)
 
 
 def test_existing_manifest_must_match_current_market_version(tmp_path: Path) -> None:

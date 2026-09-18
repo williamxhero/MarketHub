@@ -216,6 +216,12 @@ def _current_versions() -> tuple[str, str]:
     return dataset_version, market_version
 
 
+def _require_version_unchanged(kind: str, started: str, ended: str) -> None:
+    """Reject a publication whose source snapshot advanced while it was built."""
+    if started != ended:
+        raise RuntimeError(f"{kind} changed during publish: start={started} end={ended}")
+
+
 def _months(start: date, end: date) -> Iterator[tuple[date, date]]:
     current = start.replace(day=1)
     while current <= end:
@@ -387,6 +393,7 @@ def _publish_locked(
     with _connect() as snapshot:
         snapshot.execute("set transaction isolation level repeatable read read only")
         baseline, generation, dataset_version = _dataset_state(snapshot)
+        market_version_start = _market_version(snapshot)
         if coverage_state.get("dataset_version") != dataset_version:
             raise RuntimeError(
                 f"dataset changed after coverage build: coverage={coverage_state.get('dataset_version')} snapshot={dataset_version}"
@@ -449,8 +456,8 @@ def _publish_locked(
                 end_baseline, end_generation, end_version = _dataset_state(current)
                 market_version = _market_version(current)
                 current.rollback()
-            if (end_baseline, end_generation, end_version) != (baseline, generation, dataset_version):
-                raise RuntimeError(f"dataset changed during publish: start={dataset_version} end={end_version}")
+            _require_version_unchanged("dataset", dataset_version, end_version)
+            _require_version_unchanged("market data version", market_version_start, market_version)
             manifest = {
                 "schema_version": SCHEMA_VERSION, "dataset_id": DATASET_ID, "dataset_version": dataset_version,
                 "market_data_version": market_version, "range": {"start": first, "end": last},
