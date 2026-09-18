@@ -16,7 +16,8 @@ async def resolve_stock_daily_export(market_data_version: str) -> dict[str, str]
 
 @router.get("/api/exports/stock_daily_1d/{dataset_version}/manifest")
 async def stock_daily_export_manifest(dataset_version: str, request: Request) -> Response:
-    return exports.manifest_response(dataset_version, request)
+    market_data_version = request.query_params.get("market_data_version")
+    return exports.manifest_response(dataset_version, request, market_data_version)
 
 
 @router.get("/api/exports/stock_daily_1d/{dataset_version}/files/{relative_path:path}")

@@ -33,6 +33,21 @@ def _dataset_root(dataset_version: str) -> Path:
     return resolved
 
 
+def _manifest_path(dataset_version: str, expected_market_data_version: str | None = None) -> Path:
+    root = _dataset_root(dataset_version)
+    primary = root / "manifest.json"
+    if expected_market_data_version is None or not MARKET_VERSION_RE.fullmatch(expected_market_data_version):
+        return primary
+    try:
+        payload = json.loads(primary.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return primary
+    if payload.get("market_data_version") == expected_market_data_version:
+        return primary
+    alternate = root / "manifests" / f"{expected_market_data_version}.json"
+    return alternate if alternate.is_file() else primary
+
+
 def _current_dataset_version() -> str:
     frame = query_dataframe(
         "select baseline_id,generation from audit.dataset_version_state where dataset_id=%s",
@@ -61,7 +76,7 @@ def _current_published_mapping(market_data_version: str) -> dict[str, str] | Non
     if dataset_version == "":
         return None
     try:
-        manifest_path = _dataset_root(dataset_version) / "manifest.json"
+        manifest_path = _manifest_path(dataset_version, market_data_version)
         read_manifest(dataset_version, expected_market_data_version=market_data_version)
         manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     except HTTPException:
@@ -73,7 +88,10 @@ def _current_published_mapping(market_data_version: str) -> dict[str, str] | Non
         "market_data_version": market_data_version,
         "dataset_version": dataset_version,
         "manifest_sha256": manifest_sha256,
-        "manifest_url": f"/api/exports/{DATASET_ID}/{dataset_version}/manifest",
+        "manifest_url": (
+            f"/api/exports/{DATASET_ID}/{dataset_version}/manifest"
+            f"?market_data_version={market_data_version}"
+        ),
     }
 
 
@@ -91,7 +109,7 @@ def resolve_market_version(market_data_version: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail={"code": "EXPORT_NOT_FOUND", "message": "市场版本没有发布映射"})
     row = frame.iloc[0]
     dataset_version = str(row["dataset_version"])
-    manifest_path = _dataset_root(dataset_version) / "manifest.json"
+    manifest_path = _manifest_path(dataset_version, market_data_version)
     read_manifest(dataset_version, expected_market_data_version=market_data_version)
     actual_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     if actual_manifest_sha256 != str(row["manifest_sha256"]):
@@ -104,12 +122,15 @@ def resolve_market_version(market_data_version: str) -> dict[str, str]:
         "market_data_version": market_data_version,
         "dataset_version": dataset_version,
         "manifest_sha256": str(row["manifest_sha256"]),
-        "manifest_url": f"/api/exports/{DATASET_ID}/{dataset_version}/manifest",
+        "manifest_url": (
+            f"/api/exports/{DATASET_ID}/{dataset_version}/manifest"
+            f"?market_data_version={market_data_version}"
+        ),
     }
 
 
 def read_manifest(dataset_version: str, expected_market_data_version: str | None = None) -> dict[str, object]:
-    path = _dataset_root(dataset_version) / "manifest.json"
+    path = _manifest_path(dataset_version, expected_market_data_version)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -121,9 +142,13 @@ def read_manifest(dataset_version: str, expected_market_data_version: str | None
     return payload
 
 
-def manifest_response(dataset_version: str, request: Request) -> Response:
-    path = _dataset_root(dataset_version) / "manifest.json"
-    read_manifest(dataset_version)
+def manifest_response(
+    dataset_version: str,
+    request: Request,
+    market_data_version: str | None = None,
+) -> Response:
+    path = _manifest_path(dataset_version, market_data_version)
+    read_manifest(dataset_version, expected_market_data_version=market_data_version)
     content = path.read_bytes()
     etag = f'"{hashlib.sha256(content).hexdigest()}"'
     headers = {
