@@ -434,6 +434,12 @@ def build_cleanup_plan(
             )
             continue
         partition_items = payload.get("partitions", [])
+        has_explicit_invalid = any(
+            isinstance(item, dict) and item.get("status") == "invalid"
+            for item in partition_items
+        )
+        if has_explicit_invalid:
+            base_class = "invalid"
         for item in partition_items:
             if not isinstance(item, dict):
                 continue

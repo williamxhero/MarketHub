@@ -200,6 +200,7 @@ def test_invalid_partition_cleanup_writes_impact_tombstone(tmp_path: Path) -> No
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     plan = build_cleanup_plan(tmp_path, active_version="mhd-v1-" + "f" * 64)
     assert plan["actions"][0]["action"] == "delete_invalid"
+    assert next(item for item in plan["inventory"] if item["version"] == version)["classification"] == "invalid"
     result = apply_cleanup_plan(tmp_path, _approve(plan), tmp_path / "audit")
     assert result["invalidated"] == 1
     assert not path.exists()
