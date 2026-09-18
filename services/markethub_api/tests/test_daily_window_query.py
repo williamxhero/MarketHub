@@ -188,6 +188,35 @@ def test_missing_coverage_fails_before_page_query(monkeypatch: pytest.MonkeyPatc
     assert len(calls) == 1
 
 
+def test_build_response_itself_rejects_a_genuinely_incomplete_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression for #435/#460: _raise_incomplete existed but was never
+    # called from build_response's actual code path -- a coverage result
+    # that correctly reported missing_rows > 0 / complete=False (e.g. after
+    # the earlier per-code accuracy fix) still built and returned a normal
+    # response instead of failing closed. Unlike
+    # test_missing_coverage_fails_before_page_query above (which simulates
+    # _load_coverage_uncached raising directly), this uses a non-raising,
+    # merely-incomplete coverage result to prove build_response's own logic
+    # -- not just a caller's --  refuses it.
+    monkeypatch.setattr(
+        daily_window,
+        "_load_coverage_uncached",
+        lambda _payload: (_coverage_row(missing_rows=1).iloc[0].to_dict(), json.loads(_coverage_row(missing_rows=1).iloc[0]["coverage_json"])),
+    )
+    monkeypatch.setattr(
+        daily_window,
+        "query_dataframe",
+        lambda *_: (_ for _ in ()).throw(AssertionError("page query must not run when coverage is incomplete")),
+    )
+    with pytest.raises(HTTPException) as error:
+        daily_window.build_response(_payload(), False)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "MARKET_DATA_INCOMPLETE"
+    assert error.value.detail["details"]["missing_rows"] == 1
+
+
 def test_unknown_code_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     def unknown(_payload: StockDailyWindowQueryPayload):
         raise HTTPException(status_code=409, detail={"code": "DATA_INCOMPLETE", "details": {"unknown_codes": ["999999"]}})
