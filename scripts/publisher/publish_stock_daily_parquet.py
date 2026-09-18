@@ -1,24 +1,27 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 import hashlib
 import json
 import logging
 import os
 import time
 import uuid
-from datetime import date, datetime, timezone
+from contextlib import contextmanager
+from datetime import UTC, date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+import psycopg
 import pyarrow as pa
 import pyarrow.parquet as pq
-import psycopg
 from psycopg.rows import dict_row
-
-from services.daily_coverage_read_model import ensure_current_stock_daily_coverage, mark_stock_daily_publication_online
+from services.daily_coverage_read_model import (
+    ensure_current_stock_daily_coverage,
+    mark_stock_daily_publication_online,
+)
 from services.market_data_version import current_market_data_version
+
 try:
     from scripts.publisher.stock_daily_partition_lifecycle import (
         PARTITION_SCHEMA_VERSION,
@@ -46,19 +49,34 @@ LOGGER = logging.getLogger(__name__)
 
 BARS_SCHEMA = pa.schema(
     [
-        ("market", pa.string()), ("code", pa.string()), ("trade_date", pa.date32()),
-        ("open", pa.float64()), ("high", pa.float64()), ("low", pa.float64()), ("close", pa.float64()),
-        ("volume", pa.float64()), ("amount", pa.float64()), ("is_suspended", pa.bool_()), ("is_st", pa.bool_()),
-        ("pre_close", pa.float64()), ("change", pa.float64()), ("pct_chg", pa.float64()), ("adj_factor", pa.float64()),
+        ("market", pa.string()),
+        ("code", pa.string()),
+        ("trade_date", pa.date32()),
+        ("open", pa.float64()),
+        ("high", pa.float64()),
+        ("low", pa.float64()),
+        ("close", pa.float64()),
+        ("volume", pa.float64()),
+        ("amount", pa.float64()),
+        ("is_suspended", pa.bool_()),
+        ("is_st", pa.bool_()),
+        ("pre_close", pa.float64()),
+        ("change", pa.float64()),
+        ("pct_chg", pa.float64()),
+        ("adj_factor", pa.float64()),
         ("loaded_at", pa.timestamp("us", tz="UTC")),
     ],
     metadata={b"schema_version": SCHEMA_VERSION.encode()},
 )
 COVERAGE_SCHEMA = pa.schema(
     [
-        ("market", pa.string()), ("code", pa.string()), ("expected_rows", pa.int32()),
-        ("actual_rows", pa.int32()), ("missing_rows", pa.int32()),
-        ("missing_trade_dates", pa.list_(pa.date32())), ("complete", pa.bool_()),
+        ("market", pa.string()),
+        ("code", pa.string()),
+        ("expected_rows", pa.int32()),
+        ("actual_rows", pa.int32()),
+        ("missing_rows", pa.int32()),
+        ("missing_trade_dates", pa.list_(pa.date32())),
+        ("complete", pa.bool_()),
     ],
     metadata={b"schema_version": SCHEMA_VERSION.encode()},
 )
@@ -155,17 +173,24 @@ order by b.trade_date,b.code,b.market
 
 def _connect(*, autocommit: bool = False) -> psycopg.Connection[Any]:
     return psycopg.connect(
-        host=os.environ["MARKETHUB_DB_HOST"], port=int(os.environ["MARKETHUB_DB_PORT"]),
-        dbname=os.environ["MARKETHUB_DB_NAME"], user=os.environ["MARKETHUB_DB_USER"],
-        password=os.environ["MARKETHUB_DB_PASSWORD"], connect_timeout=10,
-        row_factory=dict_row, autocommit=autocommit, application_name="markethub-stock-daily-publisher",
+        host=os.environ["MARKETHUB_DB_HOST"],
+        port=int(os.environ["MARKETHUB_DB_PORT"]),
+        dbname=os.environ["MARKETHUB_DB_NAME"],
+        user=os.environ["MARKETHUB_DB_USER"],
+        password=os.environ["MARKETHUB_DB_PASSWORD"],
+        connect_timeout=10,
+        row_factory=dict_row,
+        autocommit=autocommit,
+        application_name="markethub-stock-daily-publisher",
     )
 
 
 def _publish_lock_timeout_seconds() -> float:
     timeout = float(os.getenv("MARKETHUB_PARQUET_PUBLISH_LOCK_TIMEOUT_SECONDS", "60"))
     if timeout < 0 or timeout > 3600:
-        raise ValueError("MARKETHUB_PARQUET_PUBLISH_LOCK_TIMEOUT_SECONDS must be between 0 and 3600")
+        raise ValueError(
+            "MARKETHUB_PARQUET_PUBLISH_LOCK_TIMEOUT_SECONDS must be between 0 and 3600"
+        )
     return timeout
 
 
@@ -186,7 +211,9 @@ def _publication_lock() -> Iterator[None]:
                 raise RuntimeError(
                     f"stock daily Parquet publication lock timeout after {timeout:.3f}s; another publisher is active"
                 )
-            LOGGER.warning("waiting for stock daily Parquet publication lock remaining_seconds=%.3f", remaining)
+            LOGGER.warning(
+                "waiting for stock daily Parquet publication lock remaining_seconds=%.3f", remaining
+            )
             time.sleep(min(1.0, remaining))
         try:
             LOGGER.info("acquired stock daily Parquet publication lock")
@@ -197,14 +224,22 @@ def _publication_lock() -> Iterator[None]:
 
 
 def _version(dataset_id: str, baseline_id: str, generation: int) -> str:
-    payload = {"contract": "markethub-dataset-v1", "dataset_id": dataset_id, "baseline_id": baseline_id, "generation": generation}
+    payload = {
+        "contract": "markethub-dataset-v1",
+        "dataset_id": dataset_id,
+        "baseline_id": baseline_id,
+        "generation": generation,
+    }
     encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
     return f"mhd-v1-{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _dataset_state(connection: psycopg.Connection[Any]) -> tuple[str, int, str]:
     with connection.cursor() as cursor:
-        cursor.execute("select baseline_id,generation from audit.dataset_version_state where dataset_id=%s", (DATASET_ID,))
+        cursor.execute(
+            "select baseline_id,generation from audit.dataset_version_state where dataset_id=%s",
+            (DATASET_ID,),
+        )
         row = cursor.fetchone()
     if row is None:
         raise RuntimeError("stock_daily_1d dataset version state is not installed")
@@ -238,7 +273,9 @@ def _require_version_unchanged(kind: str, started: str, ended: str) -> None:
 def _months(start: date, end: date) -> Iterator[tuple[date, date]]:
     current = start.replace(day=1)
     while current <= end:
-        following = date(current.year + (current.month == 12), 1 if current.month == 12 else current.month + 1, 1)
+        following = date(
+            current.year + (current.month == 12), 1 if current.month == 12 else current.month + 1, 1
+        )
         yield max(current, start), min(following, end + date.resolution)
         current = following
 
@@ -251,28 +288,40 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _read_published_manifest(path: Path, dataset_version: str, market_version: str) -> dict[str, object]:
+def _read_published_manifest(
+    path: Path, dataset_version: str, market_version: str
+) -> dict[str, object]:
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"published manifest is unreadable: {path}") from exc
     if not isinstance(manifest, dict):
         raise RuntimeError(f"published manifest is not an object: {path}")
-    if manifest.get("dataset_id") != DATASET_ID or manifest.get("dataset_version") != dataset_version:
+    if (
+        manifest.get("dataset_id") != DATASET_ID
+        or manifest.get("dataset_version") != dataset_version
+    ):
         raise RuntimeError(f"published manifest identity mismatch: {path}")
     if manifest.get("market_data_version") != market_version:
-        raise RuntimeError(f"published manifest market version mismatch: expected={market_version} path={path}")
+        raise RuntimeError(
+            f"published manifest market version mismatch: expected={market_version} path={path}"
+        )
     return manifest
 
 
-def _rebind_existing_manifest(final_root: Path, dataset_version: str, market_version: str) -> dict[str, object]:
+def _rebind_existing_manifest(
+    final_root: Path, dataset_version: str, market_version: str
+) -> dict[str, object]:
     """Change only the market-version binding while preserving immutable files."""
     manifest_path = final_root / "manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"published manifest is unreadable: {manifest_path}") from exc
-    if manifest.get("dataset_id") != DATASET_ID or manifest.get("dataset_version") != dataset_version:
+    if (
+        manifest.get("dataset_id") != DATASET_ID
+        or manifest.get("dataset_version") != dataset_version
+    ):
         raise RuntimeError(f"published manifest identity mismatch: {manifest_path}")
     if manifest.get("market_data_version") == market_version:
         return manifest
@@ -291,11 +340,49 @@ def _rebind_existing_manifest(final_root: Path, dataset_version: str, market_ver
             old_path.write_bytes(manifest_path.read_bytes())
     rebound = dict(manifest)
     rebound["market_data_version"] = market_version
-    rebound["published_at_utc"] = datetime.now(timezone.utc)
+    rebound["published_at_utc"] = datetime.now(UTC)
     temporary = final_root / f".manifest-{uuid.uuid4().hex}.tmp"
-    temporary.write_text(json.dumps(rebound, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(rebound, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8"
+    )
     os.replace(temporary, manifest_path)
     return rebound
+
+
+def _verify_existing_publication(
+    connection: psycopg.Connection[Any], final_root: Path, manifest: dict[str, object]
+) -> None:
+    """Re-check every frozen month before a metadata-only rebind.
+
+    A dataset version is expected to be immutable.  Re-reading the source identities
+    here catches an incorrectly unchanged generation and fails closed instead of
+    silently advertising a stale or modified frozen publication.
+    """
+    for partition in manifest.get("partitions", []):
+        if not isinstance(partition, dict) or partition.get("status") != "frozen":
+            raise RuntimeError("existing publication contains a non-frozen partition")
+        start = date.fromisoformat(str(partition.get("start"))[:10])
+        end = date.fromisoformat(str(partition.get("end_exclusive"))[:10])
+        for file_item in partition.get("files", []):
+            if not isinstance(file_item, dict):
+                raise RuntimeError("existing publication contains an invalid file record")
+            path = (final_root / str(file_item.get("path", ""))).resolve()
+            if path.parent != final_root and final_root not in path.parents:
+                raise RuntimeError("existing publication file escapes its immutable root")
+            if not path.is_file() or _sha256(path) != str(file_item.get("sha256", "")):
+                raise RuntimeError(f"existing publication file changed: {path}")
+        rows, source_sha = _bars_identity(connection, start, end)
+        _, expected_rows, coverage_sha = _coverage_identity(connection, start, end)
+        if rows != int(partition.get("rows", -1)) or expected_rows != rows:
+            raise RuntimeError(
+                f"existing frozen partition row identity changed: {partition.get('partition_key')}"
+            )
+        if source_sha != str(partition.get("source_sha256", "")) or coverage_sha != str(
+            partition.get("coverage_sha256", "")
+        ):
+            raise RuntimeError(
+                f"existing frozen partition content identity changed: {partition.get('partition_key')}"
+            )
 
 
 def _file_record(root: Path, path: Path, rows: int, dataset_version: str) -> dict[str, object]:
@@ -309,20 +396,41 @@ def _file_record(root: Path, path: Path, rows: int, dataset_version: str) -> dic
     }
 
 
-def _write_bars(connection: psycopg.Connection[Any], path: Path, start: date, end: date, compression: str, target_bytes: int) -> tuple[int, str]:
+def _write_bars(
+    connection: psycopg.Connection[Any],
+    path: Path,
+    start: date,
+    end: date,
+    compression: str,
+    target_bytes: int,
+) -> tuple[int, str]:
     row_group_rows = max(10_000, target_bytes // 192)
     count = 0
     identity = hashlib.sha256()
     with connection.cursor(name=f"stock_daily_publish_{uuid.uuid4().hex}") as cursor:
         cursor.execute(_BARS_SQL, (start, end))
-        with pq.ParquetWriter(path, BARS_SCHEMA, compression=compression, use_dictionary=["market", "code"], write_statistics=True) as writer:
+        with pq.ParquetWriter(
+            path,
+            BARS_SCHEMA,
+            compression=compression,
+            use_dictionary=["market", "code"],
+            write_statistics=True,
+        ) as writer:
             while True:
                 rows = cursor.fetchmany(row_group_rows)
                 if not rows:
                     break
                 batch = [dict(row) for row in rows]
                 for row in batch:
-                    identity.update(json.dumps(row, ensure_ascii=True, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+                    identity.update(
+                        json.dumps(
+                            row,
+                            ensure_ascii=True,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            default=str,
+                        ).encode("utf-8")
+                    )
                     identity.update(b"\n")
                 table = pa.Table.from_pylist(batch, schema=BARS_SCHEMA)
                 writer.write_table(table, row_group_size=len(rows))
@@ -341,15 +449,46 @@ def _coverage_identity(
     missing = sum(int(row["missing_rows"]) for row in rows)
     duplicates = sum(int(row["duplicate_rows"]) for row in rows)
     if missing or duplicates or any(not bool(row["complete"]) for row in rows):
-        bad = [{"code": row["code"], "missing": row["missing_rows"], "dates": row["missing_trade_dates"][:10]} for row in rows if not row["complete"]][:20]
-        raise RuntimeError(f"coverage incomplete start={start} end={end} missing={missing} duplicates={duplicates} bad={bad}")
-    records = [{key: row[key] for key in ("market", "code", "expected_rows", "actual_rows", "missing_rows", "missing_trade_dates", "complete")} for row in rows]
+        bad = [
+            {
+                "code": row["code"],
+                "missing": row["missing_rows"],
+                "dates": row["missing_trade_dates"][:10],
+            }
+            for row in rows
+            if not row["complete"]
+        ][:20]
+        raise RuntimeError(
+            f"coverage incomplete start={start} end={end} missing={missing} duplicates={duplicates} bad={bad}"
+        )
+    records = [
+        {
+            key: row[key]
+            for key in (
+                "market",
+                "code",
+                "expected_rows",
+                "actual_rows",
+                "missing_rows",
+                "missing_trade_dates",
+                "complete",
+            )
+        }
+        for row in rows
+    ]
     return records, sum(int(row["actual_rows"]) for row in rows), canonical_records_sha256(records)
 
 
-def _coverage(connection: psycopg.Connection[Any], path: Path, start: date, end: date, compression: str) -> tuple[int, int, str]:
+def _coverage(
+    connection: psycopg.Connection[Any], path: Path, start: date, end: date, compression: str
+) -> tuple[int, int, str]:
     records, expected_bars, identity = _coverage_identity(connection, start, end)
-    pq.write_table(pa.Table.from_pylist(records, schema=COVERAGE_SCHEMA), path, compression=compression, use_dictionary=["market", "code"])
+    pq.write_table(
+        pa.Table.from_pylist(records, schema=COVERAGE_SCHEMA),
+        path,
+        compression=compression,
+        use_dictionary=["market", "code"],
+    )
     return len(records), expected_bars, identity
 
 
@@ -364,17 +503,34 @@ def _bars_identity(connection: psycopg.Connection[Any], start: date, end: date) 
             if not rows:
                 break
             for row in rows:
-                digest.update(json.dumps(dict(row), ensure_ascii=True, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+                digest.update(
+                    json.dumps(
+                        dict(row),
+                        ensure_ascii=True,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ).encode("utf-8")
+                )
                 digest.update(b"\n")
                 count += 1
     return count, digest.hexdigest()
 
 
-def _record_mapping(dataset_version: str, market_version: str, manifest_sha256: str, relative_root: str) -> None:
+def _record_mapping(
+    dataset_version: str, market_version: str, manifest_sha256: str, relative_root: str
+) -> None:
     with _connect(autocommit=True) as connection, connection.cursor() as cursor:
-        cursor.execute("select dataset_version,manifest_sha256,relative_root from audit.dataset_version_publication where dataset_id=%s and market_data_version=%s", (DATASET_ID, market_version))
+        cursor.execute(
+            "select dataset_version,manifest_sha256,relative_root from audit.dataset_version_publication where dataset_id=%s and market_data_version=%s",
+            (DATASET_ID, market_version),
+        )
         existing = cursor.fetchone()
-        expected = {"dataset_version": dataset_version, "manifest_sha256": manifest_sha256, "relative_root": relative_root}
+        expected = {
+            "dataset_version": dataset_version,
+            "manifest_sha256": manifest_sha256,
+            "relative_root": relative_root,
+        }
         if existing is not None and dict(existing) != expected:
             raise RuntimeError(f"market version mapping conflict: {existing}")
         cursor.execute(
@@ -398,7 +554,11 @@ def _staged_month(
         bars_rows = int(pq.ParquetFile(bars_path).metadata.num_rows)
         coverage_rows = int(pq.ParquetFile(coverage_path).metadata.num_rows)
     except (OSError, pa.ArrowException):
-        LOGGER.warning("discarding unreadable stock daily publication checkpoint month=%s staging=%s", month_start, staging)
+        LOGGER.warning(
+            "discarding unreadable stock daily publication checkpoint month=%s staging=%s",
+            month_start,
+            staging,
+        )
         return None
     files = [
         _file_record(staging, bars_path, bars_rows, dataset_version),
@@ -422,7 +582,9 @@ def _resume_staging(
     last: date,
 ) -> tuple[Path, dict[date, tuple[list[dict[str, object]], dict[str, object]]]]:
     """Reuse the most complete unfinalized staging directory for this version."""
-    candidates: list[tuple[Path, dict[date, tuple[list[dict[str, object]], dict[str, object]]]]] = []
+    candidates: list[
+        tuple[Path, dict[date, tuple[list[dict[str, object]], dict[str, object]]]]
+    ] = []
     for candidate in staging_parent.glob(f"{dataset_version}-*"):
         if not candidate.is_dir() or (candidate / "manifest.json").exists():
             continue
@@ -433,7 +595,9 @@ def _resume_staging(
                 completed[month_start] = checkpoint
         candidates.append((candidate, completed))
     if candidates:
-        staging, completed = max(candidates, key=lambda item: (len(item[1]), item[0].stat().st_mtime_ns))
+        staging, completed = max(
+            candidates, key=lambda item: (len(item[1]), item[0].stat().st_mtime_ns)
+        )
         LOGGER.info(
             "resuming stock daily Parquet publication dataset_version=%s staging=%s completed_months=%s",
             dataset_version,
@@ -455,7 +619,9 @@ def publish(
     end: date | None = None,
 ) -> dict[str, object]:
     with _publication_lock():
-        return _publish_locked(export_root, compression, row_group_target_bytes, start=start, end=end)
+        return _publish_locked(
+            export_root, compression, row_group_target_bytes, start=start, end=end
+        )
 
 
 def _publish_locked(
@@ -475,14 +641,16 @@ def _publish_locked(
     staging_parent.mkdir(parents=True, exist_ok=True)
     with _connect() as snapshot:
         snapshot.execute("set transaction isolation level repeatable read read only")
-        baseline, generation, dataset_version = _dataset_state(snapshot)
+        _baseline, generation, dataset_version = _dataset_state(snapshot)
         market_version_start = _market_version(snapshot)
         if coverage_state.get("dataset_version") != dataset_version:
             raise RuntimeError(
                 f"dataset changed after coverage build: coverage={coverage_state.get('dataset_version')} snapshot={dataset_version}"
             )
         with snapshot.cursor() as cursor:
-            cursor.execute("select min(trade_date) as first,max(trade_date) as last from fact.stock_daily_1d")
+            cursor.execute(
+                "select min(trade_date) as first,max(trade_date) as last from fact.stock_daily_1d"
+            )
             bounds = cursor.fetchone()
         if bounds is None or bounds["first"] is None or bounds["last"] is None:
             raise RuntimeError("stock_daily_1d is empty")
@@ -493,12 +661,28 @@ def _publish_locked(
         final_root = parent / dataset_version
         if final_root.is_dir():
             manifest_path = final_root / "manifest.json"
+            try:
+                existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(f"published manifest is unreadable: {manifest_path}") from exc
+            if (
+                not isinstance(existing_manifest, dict)
+                or existing_manifest.get("dataset_id") != DATASET_ID
+                or existing_manifest.get("dataset_version") != dataset_version
+            ):
+                raise RuntimeError(f"published manifest identity mismatch: {manifest_path}")
+            _verify_existing_publication(snapshot, final_root, existing_manifest)
             current_dataset, market_version = _current_versions()
             if current_dataset != dataset_version:
                 raise RuntimeError("dataset version changed before mapping existing publication")
             manifest = _rebind_existing_manifest(final_root, dataset_version, market_version)
             manifest_sha = _sha256(manifest_path)
-            _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
+            _record_mapping(
+                dataset_version,
+                market_version,
+                manifest_sha,
+                final_root.relative_to(export_root).as_posix(),
+            )
             mark_stock_daily_publication_online(dataset_version)
             return manifest
         staging, completed_months = _resume_staging(staging_parent, dataset_version, first, last)
@@ -520,12 +704,54 @@ def _publish_locked(
                 checkpoint = completed_months.get(month_start)
                 if checkpoint is not None:
                     checkpoint_files, checkpoint_partition = checkpoint
+                    source_rows, source_sha = _bars_identity(snapshot, month_start, month_end)
+                    _coverage_records, expected_bars, coverage_sha = _coverage_identity(
+                        snapshot, month_start, month_end
+                    )
+                    if (
+                        source_rows != int(checkpoint_partition.get("rows", -1))
+                        or expected_bars != source_rows
+                    ):
+                        raise RuntimeError(f"resumable staging identity changed: {month_start}")
+                    for item in checkpoint_files:
+                        if (
+                            not isinstance(item, dict)
+                            or not (staging / str(item.get("path", ""))).is_file()
+                        ):
+                            raise RuntimeError(f"resumable staging file is missing: {month_start}")
                     files.extend(checkpoint_files)
-                    partitions.append(checkpoint_partition)
+                    partitions.append(
+                        {
+                            "start": month_start,
+                            "end_exclusive": month_end,
+                            "partition_key": partition_key(month_start, month_end),
+                            "schema_version": PARTITION_SCHEMA_VERSION,
+                            "status": "frozen",
+                            "rows": source_rows,
+                            "source_sha256": source_sha,
+                            "coverage_sha256": coverage_sha,
+                            "source_generation": generation,
+                            "source_lineage": {
+                                "provider": "MarketHub",
+                                "dataset": "fact.stock_daily_1d",
+                                "generation": generation,
+                                "market_data_version": market_version_start,
+                            },
+                            "frozen_at_utc": datetime.now(UTC),
+                            "files": checkpoint_files,
+                            "action": "resume_staging",
+                        }
+                    )
+                    publication_stats["partitions_reused"] += 1
+                    publication_stats["bytes_reused"] += sum(
+                        int(item.get("bytes", 0)) for item in checkpoint_files
+                    )
                     continue
                 part = staging / f"year={month_start.year:04d}" / f"month={month_start.month:02d}"
                 source_rows, source_sha = _bars_identity(snapshot, month_start, month_end)
-                coverage_records, expected_bars, coverage_sha = _coverage_identity(snapshot, month_start, month_end)
+                coverage_records, expected_bars, coverage_sha = _coverage_identity(
+                    snapshot, month_start, month_end
+                )
                 coverage_rows = len(coverage_records)
                 decision = plan_partition(
                     partition_key_value=partition_key(month_start, month_end),
@@ -535,7 +761,9 @@ def _publish_locked(
                     candidates=reusable,
                 )
                 if decision.action == "fail_closed":
-                    raise RuntimeError(f"frozen stock daily partition changed: {decision.partition_key}; {decision.reason}")
+                    raise RuntimeError(
+                        f"frozen stock daily partition changed: {decision.partition_key}; {decision.reason}"
+                    )
                 part.mkdir(parents=True, exist_ok=True)
                 if decision.action == "reuse":
                     candidate = decision.source or {}
@@ -545,52 +773,100 @@ def _publish_locked(
                         target_root=staging,
                         source_files=candidate.get("files", []),
                     )
-                    partition_files = [
-                        _file_record(staging, staging / str(item["path"]), int(item.get("rows", 0)), dataset_version)
-                        for item in reused_files
-                    ]
+                    partition_files = []
+                    for item in reused_files:
+                        record = _file_record(
+                            staging,
+                            staging / str(item["path"]),
+                            int(item.get("rows", 0)),
+                            dataset_version,
+                        )
+                        record.update(
+                            {
+                                key: item[key]
+                                for key in ("storage_mode", "source_path")
+                                if key in item
+                            }
+                        )
+                        partition_files.append(record)
                     bars_rows = source_rows
-                    partition_source_generation = int(candidate.get("source_generation", generation))
-                    partition_frozen_at = candidate.get("frozen_at_utc", datetime.now(timezone.utc))
+                    partition_source_generation = int(
+                        candidate.get("source_generation", generation)
+                    )
+                    partition_frozen_at = candidate.get("frozen_at_utc", datetime.now(UTC))
                     publication_stats["partitions_reused"] += 1
-                    publication_stats["bytes_reused"] += sum(int(item["bytes"]) for item in partition_files)
-                    LOGGER.info("reusing frozen stock daily partition dataset_version=%s month=%s source=%s", dataset_version, month_start, source_root)
+                    publication_stats["bytes_reused"] += sum(
+                        int(item["bytes"]) for item in partition_files
+                    )
+                    LOGGER.info(
+                        "reusing frozen stock daily partition dataset_version=%s month=%s source=%s",
+                        dataset_version,
+                        month_start,
+                        source_root,
+                    )
                 else:
                     coverage_path = part / "coverage.parquet"
                     coverage_rows_written, expected_from_write, written_coverage_sha = _coverage(
                         snapshot, coverage_path, month_start, month_end, compression
                     )
-                    if coverage_rows_written != coverage_rows or expected_from_write != expected_bars or written_coverage_sha != coverage_sha:
-                        raise RuntimeError(f"coverage identity changed during publish: {month_start}")
+                    if (
+                        coverage_rows_written != coverage_rows
+                        or expected_from_write != expected_bars
+                        or written_coverage_sha != coverage_sha
+                    ):
+                        raise RuntimeError(
+                            f"coverage identity changed during publish: {month_start}"
+                        )
                     bars_path = part / "bars.parquet"
                     bars_rows, written_source_sha = _write_bars(
-                        snapshot, bars_path, month_start, month_end, compression, row_group_target_bytes
+                        snapshot,
+                        bars_path,
+                        month_start,
+                        month_end,
+                        compression,
+                        row_group_target_bytes,
                     )
-                    if bars_rows != expected_bars or bars_rows != source_rows or written_source_sha != source_sha:
-                        raise RuntimeError(f"bars/coverage mismatch {month_start}: bars={bars_rows} expected={expected_bars}")
+                    if (
+                        bars_rows != expected_bars
+                        or bars_rows != source_rows
+                        or written_source_sha != source_sha
+                    ):
+                        raise RuntimeError(
+                            f"bars/coverage mismatch {month_start}: bars={bars_rows} expected={expected_bars}"
+                        )
                     partition_files = [
                         _file_record(staging, bars_path, bars_rows, dataset_version),
                         _file_record(staging, coverage_path, coverage_rows, dataset_version),
                     ]
                     partition_source_generation = generation
-                    partition_frozen_at = datetime.now(timezone.utc)
+                    partition_frozen_at = datetime.now(UTC)
                     publication_stats["partitions_built"] += 1
-                    publication_stats["bytes_written"] += sum(int(item["bytes"]) for item in partition_files)
+                    publication_stats["bytes_written"] += sum(
+                        int(item["bytes"]) for item in partition_files
+                    )
                 files.extend(partition_files)
-                partitions.append({
-                    "start": month_start,
-                    "end_exclusive": month_end,
-                    "partition_key": partition_key(month_start, month_end),
-                    "schema_version": PARTITION_SCHEMA_VERSION,
-                    "status": "frozen",
-                    "rows": bars_rows,
-                    "source_sha256": source_sha,
-                    "coverage_sha256": coverage_sha,
-                    "source_generation": partition_source_generation,
-                    "frozen_at_utc": partition_frozen_at,
-                    "files": partition_files,
-                    "action": decision.action,
-                })
+                partitions.append(
+                    {
+                        "start": month_start,
+                        "end_exclusive": month_end,
+                        "partition_key": partition_key(month_start, month_end),
+                        "schema_version": PARTITION_SCHEMA_VERSION,
+                        "status": "frozen",
+                        "rows": bars_rows,
+                        "source_sha256": source_sha,
+                        "coverage_sha256": coverage_sha,
+                        "source_generation": partition_source_generation,
+                        "source_lineage": {
+                            "provider": "MarketHub",
+                            "dataset": "fact.stock_daily_1d",
+                            "generation": partition_source_generation,
+                            "market_data_version": market_version_start,
+                        },
+                        "frozen_at_utc": partition_frozen_at,
+                        "files": partition_files,
+                        "action": decision.action,
+                    }
+                )
                 LOGGER.info(
                     "stock daily Parquet publication checkpoint dataset_version=%s month=%s rows=%s",
                     dataset_version,
@@ -600,24 +876,38 @@ def _publish_locked(
             snapshot.rollback()
             with _connect() as current:
                 current.execute("set transaction isolation level repeatable read read only")
-                end_baseline, end_generation, end_version = _dataset_state(current)
+                _end_baseline, _end_generation, end_version = _dataset_state(current)
                 market_version = _market_version(current)
                 current.rollback()
             _require_version_unchanged("dataset", dataset_version, end_version)
             _require_version_unchanged("market data version", market_version_start, market_version)
+            publication_stats["staging_bytes"] = sum(int(item["bytes"]) for item in files)
             manifest = {
-                "schema_version": SCHEMA_VERSION, "dataset_id": DATASET_ID, "dataset_version": dataset_version,
-                "market_data_version": market_version, "range": {"start": first, "end": last},
-                "compression": compression, "row_group_target_bytes": row_group_target_bytes,
-                "partitions": partitions, "files": files, "published_at_utc": datetime.now(timezone.utc),
+                "schema_version": SCHEMA_VERSION,
+                "dataset_id": DATASET_ID,
+                "dataset_version": dataset_version,
+                "market_data_version": market_version,
+                "range": {"start": first, "end": last},
+                "compression": compression,
+                "row_group_target_bytes": row_group_target_bytes,
+                "partitions": partitions,
+                "files": files,
+                "published_at_utc": datetime.now(UTC),
                 "publication_stats": publication_stats,
             }
-            publication_stats["staging_bytes"] = sum(int(item["bytes"]) for item in files)
             manifest_path = staging / "manifest.json"
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n",
+                encoding="utf-8",
+            )
             manifest_sha = _sha256(manifest_path)
             os.replace(staging, final_root)
-            _record_mapping(dataset_version, market_version, manifest_sha, final_root.relative_to(export_root).as_posix())
+            _record_mapping(
+                dataset_version,
+                market_version,
+                manifest_sha,
+                final_root.relative_to(export_root).as_posix(),
+            )
             mark_stock_daily_publication_online(dataset_version)
             return manifest
         except BaseException:
@@ -630,11 +920,21 @@ def _publish_locked(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Publish immutable versioned stock_daily_1d Parquet")
-    parser.add_argument("--export-root", type=Path, default=Path(os.getenv("MARKETHUB_EXPORT_ROOT", "/data/MarketHub2/exports")))
+    parser = argparse.ArgumentParser(
+        description="Publish immutable versioned stock_daily_1d Parquet"
+    )
+    parser.add_argument(
+        "--export-root",
+        type=Path,
+        default=Path(os.getenv("MARKETHUB_EXPORT_ROOT", "/data/MarketHub2/exports")),
+    )
     parser.add_argument("--compression", choices=("zstd", "snappy"), default="zstd")
     parser.add_argument("--row-group-mib", type=int, choices=(64, 128), default=128)
-    parser.add_argument("--start", type=date.fromisoformat, default=os.getenv("MARKETHUB_STOCK_DAILY_EXPORT_START") or None)
+    parser.add_argument(
+        "--start",
+        type=date.fromisoformat,
+        default=os.getenv("MARKETHUB_STOCK_DAILY_EXPORT_START") or None,
+    )
     parser.add_argument("--end", type=date.fromisoformat, default=None)
     args = parser.parse_args()
     manifest = publish(

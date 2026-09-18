@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 from pathlib import Path
 import sys
 
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "publisher" / "publish_stock_daily_parquet.py"
-DAILY_COVERAGE_READ_MODEL = Path(__file__).resolve().parents[1] / "src" / "services" / "daily_coverage_read_model.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[3] / "scripts" / "publisher" / "publish_stock_daily_parquet.py"
+)
+DAILY_COVERAGE_READ_MODEL = (
+    Path(__file__).resolve().parents[1] / "src" / "services" / "daily_coverage_read_model.py"
+)
 SPEC = importlib.util.spec_from_file_location("publish_stock_daily_parquet", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -42,8 +47,22 @@ def test_publisher_contract_is_immutable_streaming_and_fail_closed() -> None:
     assert "MARKETHUB_STOCK_DAILY_EXPORT_START" in content
     assert "d.trade_date<u.delisted_date" in content
     assert tuple(field.name for field in MODULE.BARS_SCHEMA) == (
-        "market", "code", "trade_date", "open", "high", "low", "close", "volume", "amount",
-        "is_suspended", "is_st", "pre_close", "change", "pct_chg", "adj_factor", "loaded_at",
+        "market",
+        "code",
+        "trade_date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "is_suspended",
+        "is_st",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "adj_factor",
+        "loaded_at",
     )
 
 
@@ -94,7 +113,11 @@ def test_existing_manifest_must_match_current_market_version(tmp_path: Path) -> 
     dataset_version = "mhd-v1-" + "a" * 64
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(
-        '{"dataset_id":"stock_daily_1d","dataset_version":"' + dataset_version + '","market_data_version":"mhf-v1-' + "b" * 64 + '"}',
+        '{"dataset_id":"stock_daily_1d","dataset_version":"'
+        + dataset_version
+        + '","market_data_version":"mhf-v1-'
+        + "b" * 64
+        + '"}',
         encoding="utf-8",
     )
 
@@ -104,6 +127,46 @@ def test_existing_manifest_must_match_current_market_version(tmp_path: Path) -> 
         assert "market version mismatch" in str(exc)
     else:
         raise AssertionError("a manifest bound to another market version must be rejected")
+
+
+def test_existing_frozen_publication_rechecks_source_identity(monkeypatch, tmp_path: Path) -> None:
+    content = b"immutable bars"
+    bars = tmp_path / "year=2024" / "month=01" / "bars.parquet"
+    bars.parent.mkdir(parents=True)
+    bars.write_bytes(content)
+    manifest = {
+        "dataset_id": "stock_daily_1d",
+        "dataset_version": "mhd-v1-" + "a" * 64,
+        "partitions": [
+            {
+                "partition_key": "2024-01-01:2024-02-01",
+                "status": "frozen",
+                "start": "2024-01-01",
+                "end_exclusive": "2024-02-01",
+                "rows": 1,
+                "source_sha256": "source",
+                "coverage_sha256": "coverage",
+                "files": [
+                    {
+                        "path": "year=2024/month=01/bars.parquet",
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                        "bytes": len(content),
+                    }
+                ],
+            }
+        ],
+    }
+    monkeypatch.setattr(MODULE, "_bars_identity", lambda *_: (1, "source"))
+    monkeypatch.setattr(MODULE, "_coverage_identity", lambda *_: ([], 1, "coverage"))
+    MODULE._verify_existing_publication(None, tmp_path, manifest)
+
+    monkeypatch.setattr(MODULE, "_bars_identity", lambda *_: (1, "changed"))
+    try:
+        MODULE._verify_existing_publication(None, tmp_path, manifest)
+    except RuntimeError as exc:
+        assert "content identity changed" in str(exc)
+    else:
+        raise AssertionError("changed frozen source identity must fail closed")
 
 
 def test_months_preserve_partial_dataset_bounds() -> None:
