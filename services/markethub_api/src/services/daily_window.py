@@ -531,27 +531,37 @@ def _load_coverage_uncached(payload: StockDailyWindowQueryPayload) -> tuple[dict
     )
     coverage: list[dict[str, object]] = []
     if payload.meta_detail == "full" or payload.universe == "codes":
-        reference_frame = query_dataframe(_REFERENCE_COVERAGE_ROWS_QUERY, params)
+        # _COVERAGE_ROWS_QUERY (not the cheaper _REFERENCE_COVERAGE_ROWS_QUERY,
+        # which only counts calendar-expected days and says nothing about
+        # whether a real, non-suspended, non-null row exists) is the source of
+        # truth here. Using the reference query previously made every
+        # per-code entry claim actual_rows == expected_rows and complete=True
+        # unconditionally, so a genuinely suspended or otherwise excluded row
+        # was silently reported as present -- see #435 / #460.
+        reference_frame = query_dataframe(_COVERAGE_ROWS_QUERY, params)
         reference_rows = reference_frame.to_dict(orient="records")
         coverage = [
             {
                 "code": str(row["code"]),
                 "expected_rows": int(row["expected_rows"]),
-                "actual_rows": int(row["expected_rows"]),
-                "missing_rows": 0,
-                "missing_trade_dates": [],
-                "complete": True,
+                "actual_rows": int(row["actual_rows"]),
+                "missing_rows": int(row["missing_rows"]),
+                "missing_trade_dates": [str(value) for value in (row["missing_trade_dates"] or [])],
+                "complete": bool(row["complete"]),
             }
             for row in reference_rows
         ]
         reference_total = sum(int(row["expected_rows"]) for row in reference_rows)
+        actual_total = sum(int(row["actual_rows"]) for row in reference_rows)
+        missing_total = sum(int(row["missing_rows"]) for row in reference_rows)
+        duplicate_total = sum(int(row["duplicate_rows"]) for row in reference_rows)
         if payload.universe == "codes":
             summary.update(
                 {
                     "expected_total": reference_total,
-                    "actual_total": reference_total,
-                    "missing_total": 0,
-                    "duplicate_total": 0,
+                    "actual_total": actual_total,
+                    "missing_total": missing_total,
+                    "duplicate_total": duplicate_total,
                     "universe_size": len(reference_rows),
                 }
             )
