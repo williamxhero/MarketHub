@@ -332,6 +332,14 @@ def initialize_partition_catalog(
             "bytes": manifest_path.stat().st_size,
         }
     ]
+    after_inventory = [
+        {
+            "partition_key": partition["partition_key"],
+            "files": partition["files"],
+            "content_identity_sha256": partition["content_identity_sha256"],
+        }
+        for partition in partitions
+    ]
     catalog = {
         "schema_version": "markethub-stock-daily-partition-catalog-v1",
         "policy_version": "stock-daily-partition-freeze-v1",
@@ -339,8 +347,9 @@ def initialize_partition_catalog(
         "dataset_version": dataset_version,
         "manifest_sha256": before[0]["sha256"],
         "before_inventory": before,
+        "after_inventory": after_inventory,
         "partitions": partitions,
-        "after_inventory_sha256": _canonical_sha256(partitions),
+        "after_inventory_sha256": _canonical_sha256(after_inventory),
     }
     target = output or dataset_root / f"{dataset_version}.partition-catalog.json"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -593,6 +602,18 @@ def apply_cleanup_plan(export_root: Path, plan: dict[str, Any], audit_dir: Path)
     if hashlib.sha256(encoded).hexdigest() != expected_sha:
         raise RuntimeError("cleanup manifest hash mismatch")
     dataset_root = (export_root / DATASET_ID).resolve()
+    protected_versions = {
+        str(version)
+        for version in (
+            plan.get("active_version"),
+            *plan.get("rollback_versions", []),
+            *plan.get("pinned_versions", []),
+            *plan.get("research_pinned_versions", []),
+            *plan.get("audit_pinned_versions", []),
+            *plan.get("referenced_versions", []),
+        )
+        if version
+    }
     audit_dir.mkdir(parents=True, exist_ok=True)
     before: list[dict[str, Any]] = []
     migrations: list[dict[str, Any]] = []
@@ -627,6 +648,10 @@ def apply_cleanup_plan(export_root: Path, plan: dict[str, Any], audit_dir: Path)
         if kind not in {"delete_duplicate", "delete_invalid"}:
             continue
         old_version = str(action.get("old_version", ""))
+        if kind == "delete_duplicate" and old_version in protected_versions:
+            raise RuntimeError(
+                f"cleanup plan attempts to delete a protected version: {old_version}"
+            )
         old_root = _safe_child(dataset_root, old_version)
         manifest_path = old_root / "manifest.json"
         if not manifest_path.is_file():

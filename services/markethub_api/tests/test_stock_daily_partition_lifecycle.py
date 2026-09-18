@@ -163,6 +163,8 @@ def test_partition_catalog_initialization_is_idempotent_and_does_not_rewrite_man
     catalog = initialize_partition_catalog(tmp_path, version)
     assert catalog["schema_version"] == "markethub-stock-daily-partition-catalog-v1"
     assert catalog["partitions"][0]["content_identity_sha256"]
+    assert catalog["after_inventory"]
+    assert catalog["after_inventory_sha256"]
     assert manifest.read_bytes() == before
     second = initialize_partition_catalog(tmp_path, version)
     assert second["catalog_sha256"] == catalog["catalog_sha256"]
