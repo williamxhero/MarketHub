@@ -12,6 +12,7 @@ if [ -f "$ENV_PATH" ]; then
 fi
 GLOBAL_DATA_UPDATE_SCRIPT="${MARKETHUB_GLOBAL_DATA_UPDATE_SCRIPT:-$SCRIPT_DIR/global-data-update.sh}"
 DATA_HEALTH_SCRIPT="${MARKETHUB_DATA_HEALTH_SCRIPT:-$SCRIPT_DIR/data-health-check.sh}"
+PUBLICATION_HEALTH_GATE_SCRIPT="${MARKETHUB_PUBLICATION_HEALTH_GATE_SCRIPT:-$SCRIPT_DIR/publication_health_gate.py}"
 PARQUET_PUBLISHER_SCRIPT="${MARKETHUB_PARQUET_PUBLISHER_SCRIPT:-$SCRIPT_DIR/../publisher/publish_stock_daily_parquet.py}"
 MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
 MARKETHUB_CODE_ROOT="${MARKETHUB_CODE_ROOT:-}"
@@ -25,6 +26,21 @@ MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS="${MARKETHUB_GLOBAL_UPDATE_LOCK_TIM
 # turns a routine publication into an unbounded global backlog drain.
 MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"
 MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily_snapshot}"
+# The publication is gated on its own declared health dependencies, not on the
+# platform-wide aggregate.  The aggregate covers every registered capability,
+# so a durable alert on an unrelated dataset (index/board/concept freshness,
+# concept money flow, a catalog label attribute that the published Parquet
+# schema does not even carry) would otherwise defer this publication on every
+# run, forever, while stock_daily_1d keeps advancing its immutable dataset
+# version.  Publishing nothing for the current version is what makes the public
+# resolve/manifest routes fail closed.  Every identifier below is a data-health
+# capability id, check id or dependency block name; an unresolved or non-healthy
+# identifier defers the publication.
+MARKETHUB_DATA_HEALTH_ROOT="${MARKETHUB_DATA_HEALTH_ROOT:-$RUNTIME_ROOT/data-health}"
+MARKETHUB_DATA_HEALTH_PAYLOAD="${MARKETHUB_DATA_HEALTH_PAYLOAD:-$MARKETHUB_DATA_HEALTH_ROOT/latest.json}"
+MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES="${MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES:-database,trade_calendar,core_dataset_freshness:fact.stock_daily_1d,table_exists:fact.stock_daily_1d,indexes_complete:fact.stock_daily_1d,table_non_empty:fact.stock_daily_1d,primary_key_duplicate_absent:fact.stock_daily_1d,ohlc_valid:fact.stock_daily_1d,daily_coverage_90d,trade_day_missing_data_unhealthy,stock_reference_valid,stock_lifecycle_valid,market_data_contract:global_duplicate_stock_key_count,market_data_contract:global_stock_daily_core_null_count,market_data_contract:global_stock_daily_without_ref_count,market_data_contract:global_active_stock_without_daily_count}"
+export MARKETHUB_RUNTIME_ROOT="$RUNTIME_ROOT"
+export MARKETHUB_DATA_HEALTH_ROOT
 
 log() {
     printf '[%s] %s\n' "$(date '+%F %T')" "$1"
@@ -52,8 +68,14 @@ release_global_update_lock() {
     log "释放全局更新锁 status=$status"
 }
 
+evaluate_publication_health() {
+    "$MARKETHUB_PYTHON" "$PUBLICATION_HEALTH_GATE_SCRIPT" \
+        --payload "$MARKETHUB_DATA_HEALTH_PAYLOAD" \
+        --dependencies "$MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES" \
+        --not-before "$health_started_at"
+}
+
 run_once() {
-    health_alert=0
     log "开始 MarketHub 全局数据更新和数据健康检查 capture_endpoint=$MARKETHUB_HEALTH_CAPTURE_ENDPOINT"
     MARKETHUB_CAPTURE_ENDPOINT="$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" \
         MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES" \
@@ -67,6 +89,7 @@ run_once() {
             return 64
             ;;
     esac
+    health_started_at="$(date '+%F %T')"
     if "$DATA_HEALTH_SCRIPT"; then
         log "global_update_health_outcome=passed policy=$MARKETHUB_DATA_HEALTH_FAILURE_POLICY"
     else
@@ -76,18 +99,22 @@ run_once() {
         # observable, but do not make a successful serialized capture look
         # failed merely because unrelated historical remediation remains.
         log "global_update_health_outcome=alert policy=$MARKETHUB_DATA_HEALTH_FAILURE_POLICY status=$health_status retry_semantics=health_remediation"
-        health_alert=1
         if [ "$MARKETHUB_DATA_HEALTH_FAILURE_POLICY" = "fail" ]; then
             return "$health_status"
         fi
     fi
     if [ "$MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH" = "1" ]; then
-        if [ "$health_alert" = "1" ]; then
-            log "global_update_publication_outcome=deferred reason=data_health_alert retry_semantics=health_remediation"
-            log "完成 MarketHub 04:00 全局数据更新；Parquet 发布已因健康告警延后"
+        if ! evaluate_publication_health; then
+            gate_status=$?
+            if [ "$gate_status" -eq 64 ]; then
+                log "global_update_publication_outcome=deferred reason=publication_health_gate_unusable retry_semantics=operator"
+                return 64
+            fi
+            log "global_update_publication_outcome=deferred reason=declared_dependency_unhealthy retry_semantics=health_remediation"
+            log "完成 MarketHub 04:00 全局数据更新；Parquet 发布已因发布依赖健康告警延后"
             return 0
         fi
-        log "数据健康检查通过，开始发布版本化 stock_daily_1d Parquet"
+        log "发布依赖健康检查通过，开始发布版本化 stock_daily_1d Parquet"
         if [ -z "$MARKETHUB_CODE_ROOT" ]; then
             log "缺少 MARKETHUB_CODE_ROOT，无法从当前 release 加载 publisher 依赖"
             return 1

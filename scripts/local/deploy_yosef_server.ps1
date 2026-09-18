@@ -550,6 +550,7 @@ for attempt in $(seq 1 20); do
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update.sh" "$runtime_root/scripts/global-data-update.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update-with-health.sh" "$runtime_root/scripts/global-data-update-with-health.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/data-health-check.sh" "$runtime_root/scripts/data-health-check.sh"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/publication_health_gate.py" "$runtime_root/scripts/publication_health_gate.py"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/reconcile_task_center.py" "$runtime_root/scripts/reconcile_task_center.py"
     "$runtime_root/.venv/bin/python" "$runtime_root/scripts/reconcile_task_center.py"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/update-futures-1m.sh" "$runtime_root/scripts/update-futures-1m.sh"
