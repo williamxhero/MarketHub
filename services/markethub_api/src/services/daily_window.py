@@ -643,6 +643,13 @@ def _build_response_uncached(payload: StockDailyWindowQueryPayload, accept_gzip:
     coverage_started = time.perf_counter()
     coverage_row, coverage = _cached_coverage(payload)
     coverage_db_ms = _elapsed_ms(coverage_started)
+    # _load_coverage_uncached already raises DATA_INCOMPLETE for genuinely
+    # unknown codes, so unknown_codes is implicitly empty here; this call is
+    # what actually enforces "reject incomplete windows" -- _raise_incomplete
+    # was previously defined but never invoked anywhere, so a real coverage
+    # shortfall (a suspended row, a duplicate, a universe/read-model mismatch)
+    # never stopped a response from being built. See #435/#460.
+    _raise_incomplete(coverage_row, coverage, [])
 
     page_started = time.perf_counter()
     page_params = _universe_params(payload) + (
@@ -677,6 +684,9 @@ def _build_response_uncached(payload: StockDailyWindowQueryPayload, accept_gzip:
         "dataset_version": payload.dataset_version,
         "total_rows": total_rows,
         "returned_rows": returned_rows,
+        # Guaranteed true here: _raise_incomplete above already rejects any
+        # request where coverage_row/coverage report a real shortfall, so
+        # this is not a standing claim independent of that check.
         "complete": True,
         "truncated": False,
         "page_complete": True,
