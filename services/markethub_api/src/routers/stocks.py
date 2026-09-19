@@ -13,6 +13,7 @@ from routers.stock_quote_models import CurrentStockQuotesQueryResult, StockDaily
 from services import (
     daily_window,
     live_bars,
+    market_breadth,
     stock_1m_delivery,
     stock_name_history_read_model,
     stock_quotes_arrow,
@@ -23,6 +24,23 @@ from services.runtime_memory import run_with_memory_log
 
 
 router = APIRouter()
+
+
+@router.get(
+    "/api/stocks/market-breadth",
+    summary="返回正式 A 股全市场收盘广度及完整性证据",
+    description=(
+        "沪深北 A 股按历史上市资格构造 universe。只有收盘后且每个 eligible 标的均有完整日线或明确停牌事实时，"
+        "up/down/flat 才返回整数；否则为 null，并通过 coverage 精确暴露缺口。loaded_at 仅表示入库时间。"
+    ),
+)
+async def api_stock_market_breadth(
+    trade_date: str = Query(..., description="交易日期，格式 YYYY-MM-DD。"),
+) -> dict[str, object]:
+    try:
+        return await run_quote_task(market_breadth.get_market_breadth, trade_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_TRADE_DATE", "message": str(exc)}) from exc
 
 
 def _sanitize_json_value(value: object) -> object:
