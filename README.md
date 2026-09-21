@@ -15,3 +15,9 @@
 ## 安装
 
 请使用 AI 安装并跑通本项目，提示词示例：“阅读 https://github.com/williamxhero/MarketHub/blob/main/AIREADME.md 并在 本机 D:\MarketHub\ 目录中安装这个项目”
+
+
+
+## 策略研究
+
+专业研究框架 [Quant Research](https://github.com/williamxhero/Quant-Research)

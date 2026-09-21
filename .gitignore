@@ -21,3 +21,5 @@ tests/
 /runtime
 /scripts
 /.runtime
+/.scratch
+/uv.lock
