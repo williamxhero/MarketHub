@@ -20,6 +20,8 @@ MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
 # while unrelated historical backlog is replayed.
 MARKETHUB_CAPTURE_ENDPOINT="${MARKETHUB_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"
 MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="${MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES:-}"
+MARKETHUB_REQUIRED_CAPTURE_RETRIES="${MARKETHUB_REQUIRED_CAPTURE_RETRIES:-12}"
+MARKETHUB_REQUIRED_CAPTURE_RETRY_DELAY_SECONDS="${MARKETHUB_REQUIRED_CAPTURE_RETRY_DELAY_SECONDS:-300}"
 MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE="${MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE:-0}"
 RUN_ROOT="${MARKETHUB_DATA_UPDATE_ROOT:-$RUNTIME_ROOT/data-update}"
 LOG_ROOT="${MARKETHUB_LOG_ROOT:-$RUNTIME_ROOT/logs}"
@@ -41,25 +43,38 @@ preprocess() {
 core_execute() {
     local capability_id
     local capture_path
+    local attempt_path
     local safe_capability_id
+    local attempt
+    local max_attempts
+    local retry_delay
+    local status
+    local reason
 
     IFS=',' read -r -a required_capabilities <<< "$MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES"
+    max_attempts="$MARKETHUB_REQUIRED_CAPTURE_RETRIES"
+    retry_delay="$MARKETHUB_REQUIRED_CAPTURE_RETRY_DELAY_SECONDS"
+    if ! [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]]; then
+        log "无效的 MARKETHUB_REQUIRED_CAPTURE_RETRIES=$max_attempts"
+        return 64
+    fi
+    if ! [[ "$retry_delay" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        log "无效的 MARKETHUB_REQUIRED_CAPTURE_RETRY_DELAY_SECONDS=$retry_delay"
+        return 64
+    fi
     for capability_id in "${required_capabilities[@]}"; do
         capability_id="$(printf '%s' "$capability_id" | xargs)"
         [ -n "$capability_id" ] || continue
         safe_capability_id="${capability_id//[^A-Za-z0-9_.-]/_}"
         capture_path="$RESULT_DIR/$RUN_ID.required-$safe_capability_id.json"
-        log "capture_event=required_started capability_id=$capability_id timeout_seconds=${MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-3600}"
-        curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-3600}" \
-            -X POST "$MARKETHUB_BASE_URL/api/admin/capture-runs/$capability_id" \
-            -o "$capture_path" || {
-                local status=$?
-                local reason="curl_exit_$status"
-                [ "$status" -eq 28 ] && reason="timeout"
-                log "capture_event=required_failed capability_id=$capability_id reason=$reason"
-                return "$status"
-            }
-        "$MARKETHUB_PYTHON" - "$capture_path" "$capability_id" <<'PY'
+        log "capture_event=required_started capability_id=$capability_id max_attempts=$max_attempts timeout_seconds=${MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-3600}"
+        for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+            attempt_path="$capture_path.attempt-$attempt"
+            log "capture_event=required_attempt capability_id=$capability_id attempt=$attempt/$max_attempts"
+            if curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_REQUIRED_CAPTURE_TIMEOUT_SECONDS:-3600}" \
+                -X POST "$MARKETHUB_BASE_URL/api/admin/capture-runs/$capability_id" \
+                -o "$attempt_path"; then
+                if "$MARKETHUB_PYTHON" - "$attempt_path" "$capability_id" <<'PY'
 from __future__ import annotations
 
 import json
@@ -72,6 +87,26 @@ if not isinstance(payload, dict) or payload.get("status") != "success":
     raise SystemExit(f"required capture failed capability_id={capability_id} payload={payload}")
 print(f"capture_event=required_completed capability_id={capability_id} capture_run_id={payload.get('id', '')}")
 PY
+                then
+                    cp -- "$attempt_path" "$capture_path"
+                    log "capture_event=required_completed capability_id=$capability_id attempt=$attempt/$max_attempts"
+                    break
+                else
+                    status=$?
+                    reason="capture_status_failed"
+                fi
+            else
+                status=$?
+                reason="curl_exit_$status"
+                [ "$status" -eq 28 ] && reason="timeout"
+            fi
+            log "capture_event=required_failed capability_id=$capability_id reason=$reason attempt=$attempt/$max_attempts"
+            if [ "$attempt" -eq "$max_attempts" ]; then
+                return "$status"
+            fi
+            log "capture_event=required_retry_scheduled capability_id=$capability_id delay_seconds=$retry_delay"
+            sleep "$retry_delay"
+        done
     done
 
     case "$MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE" in

@@ -29,6 +29,26 @@ def test_health_gated_update_waits_for_due_capture_and_serializes_runs() -> None
     assert 'flock -w "$MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS"' in source
     assert "未启动重复采集或发布" in source
     assert "global_update_outcome=skipped reason=lock_busy retry_semantics=next_timer" in source
+    assert 'MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS="${MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS:-21600}"' in source
+    assert 'capture_quiescence=waiting capability_id=stocks.quotes.intraday' in source
+    assert source.index("wait_for_intraday_capture_quiescence\n    log \"开始 MarketHub") < source.index('"$GLOBAL_DATA_UPDATE_SCRIPT"')
+    assert source.index('"$GLOBAL_DATA_UPDATE_SCRIPT"') < source.index("wait_for_intraday_capture_quiescence\n    log \"全局数据更新完成")
+
+
+def test_stock_intraday_task_contract_targets_capture_script_after_close() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "reconcile_task_center.py"), "--task", "intraday", "--print"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    assert payload["task_id"] == "markethub_stock_intraday_capture"
+    assert payload["schedule_type"] == "cron"
+    assert payload["schedule_value"] == "15 20 * * 1-5"
+    assert payload["timezone"] == "Asia/Shanghai"
+    assert payload["script_path"] == "/data/markethub/scripts/stock-intraday-capture-with-health.sh"
 
 
 def test_health_alert_is_observable_without_failing_unrelated_capture() -> None:
@@ -68,9 +88,69 @@ def test_global_update_bounds_due_enqueue_and_waits_only_for_declared_dependenci
     assert 'capture_event=due_enqueue_failed endpoint=$MARKETHUB_CAPTURE_ENDPOINT reason=$reason' in source
     assert 'capture_event=due_enqueue_skipped reason=declared_dependencies_completed' in source
     assert '[ "$status" -eq 28 ] && reason="timeout"' in source
+    assert 'MARKETHUB_REQUIRED_CAPTURE_RETRIES="${MARKETHUB_REQUIRED_CAPTURE_RETRIES:-12}"' in source
+    assert 'MARKETHUB_REQUIRED_CAPTURE_RETRY_DELAY_SECONDS="${MARKETHUB_REQUIRED_CAPTURE_RETRY_DELAY_SECONDS:-300}"' in source
+    assert "capture_event=required_retry_scheduled" in source
 
 
-def test_task_center_contract_schedules_final_snapshot_before_1520() -> None:
+@pytest.mark.skipif(shutil.which("bash") is None or shutil.which("flock") is None, reason="requires bash and flock")
+def test_required_capture_retries_after_a_failed_snapshot(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    curl = fake_bin / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "output=''\n"
+        "url=''\n"
+        "while [ $# -gt 0 ]; do\n"
+        "  case \"$1\" in\n"
+        "    -o) output=\"$2\"; shift 2;;\n"
+        "    -*) shift;;\n"
+        "    *) url=\"$1\"; shift;;\n"
+        "  esac\n"
+        "done\n"
+        "if [[ \"$url\" == */api/health ]]; then printf '{}\\n'; exit 0; fi\n"
+        "if [[ \"$url\" == */api/admin/capture-runs* ]]; then printf '%s\\n' '[]'; exit 0; fi\n"
+        "count_file=\"$FAKE_CURL_COUNT\"\n"
+        "count=0; [ -f \"$count_file\" ] && count=$(cat \"$count_file\")\n"
+        "count=$((count + 1)); printf '%s' \"$count\" > \"$count_file\"\n"
+        "if [ \"$count\" -lt 3 ]; then printf '%s\\n' '{\"status\":\"failed\",\"error_message\":\"provider temporarily unavailable\"}' > \"$output\"; else printf '%s\\n' '{\"status\":\"success\",\"id\":123}' > \"$output\"; fi\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    health = tmp_path / "health.sh"
+    health.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    health.chmod(0o755)
+    environment = dict(os.environ)
+    environment.update({
+        "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+        "FAKE_CURL_COUNT": str(tmp_path / "curl-count"),
+        "MARKETHUB_BASE_URL": "http://fake",
+        "MARKETHUB_RUNTIME_ROOT": str(tmp_path),
+        "MARKETHUB_PYTHON": sys.executable,
+        "MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES": "stocks.quotes.daily_snapshot",
+        "MARKETHUB_REQUIRED_CAPTURE_RETRIES": "3",
+        "MARKETHUB_REQUIRED_CAPTURE_RETRY_DELAY_SECONDS": "0",
+        "MARKETHUB_DATA_HEALTH_SCRIPT": str(health),
+        "MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH": "0",
+        "MARKETHUB_GLOBAL_UPDATE_LOCK_PATH": str(tmp_path / "global-update.lock"),
+    })
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_DIR / "global-data-update-with-health.sh")],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "capture_event=required_retry_scheduled" in completed.stdout
+    assert "capture_event=required_completed capability_id=stocks.quotes.daily_snapshot attempt=3/3" in completed.stdout
+
+
+def test_task_center_contract_schedules_final_snapshot_after_source_ready() -> None:
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_DIR / "reconcile_task_center.py"), "--print"],
         capture_output=True,
@@ -81,10 +161,10 @@ def test_task_center_contract_schedules_final_snapshot_before_1520() -> None:
     payload = json.loads(completed.stdout)
     assert payload["task_id"] == "markethub_global_data_update"
     assert payload["schedule_type"] == "cron"
-    assert payload["schedule_value"] == "5 15 * * *"
+    assert payload["schedule_value"] == "5 16 * * *"
     assert payload["timezone"] == "Asia/Shanghai"
     assert payload["script_path"] == "/data/markethub/scripts/global-data-update-with-health.sh"
-    assert "15:20" in payload["description"]
+    assert "16:05" in payload["description"]
 
 
 def _pipeline_harness(tmp_path: Path, *, stock_daily_status: str, health_exit_code: int) -> tuple[dict[str, str], Path, Path]:
@@ -124,6 +204,25 @@ def _pipeline_harness(tmp_path: Path, *, stock_daily_status: str, health_exit_co
         encoding="utf-8",
     )
     publisher.write_text(f'from pathlib import Path\nPath(r"{log_path}").open("a").write("publish\\n")\n', encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    curl = fake_bin / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "url=\"\"\n"
+        "while [ $# -gt 0 ]; do\n"
+        "  case \"$1\" in\n"
+        "    -*) shift;;\n"
+        "    *) url=\"$1\"; shift;;\n"
+        "  esac\n"
+        "done\n"
+        "if [[ \"$url\" == */api/admin/capture-runs* ]]; then printf '%s\\n' '[]'; exit 0; fi\n"
+        "if [[ \"$url\" == */api/health ]]; then printf '{}\\n'; exit 0; fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
     for script in (capture, health):
         script.chmod(0o755)
     environment = dict(os.environ)
@@ -138,6 +237,8 @@ def _pipeline_harness(tmp_path: Path, *, stock_daily_status: str, health_exit_co
         "MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES": "core_dataset_freshness:fact.stock_daily_1d",
         "MARKETHUB_GLOBAL_UPDATE_LOCK_PATH": str(tmp_path / "global-update.lock"),
         "MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS": "0",
+        "MARKETHUB_BASE_URL": "http://fake",
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
     })
     return environment, log_path, capture_started
 

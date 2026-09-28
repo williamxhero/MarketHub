@@ -61,7 +61,11 @@ curl --fail http://<MARKETHUB_HOST>:<MARKETHUB_PORT>/admin
 
 POST http://<MARKETHUB_HOST>:<MARKETHUB_PORT>/api/admin/capture/run-due-async
 
-调度器必须使用能保留真实退出码的 shell 执行器；Task Center 通常使用 shell_file。安装器复制到用户指定的 MARKETHUB_RUNTIME_ROOT/scripts/ 的入口包括 global-data-update.sh、global-data-update-with-health.sh、data-health-check.sh；这些脚本依赖 Linux shell 工具，不能直接交给 Windows 原生任务计划。注册后必须手动运行一次，验证状态、退出码、日志和数据库变化。
+调度器必须使用能保留真实退出码的 shell 执行器；Task Center 通常使用 shell_file。安装器复制到用户指定的 MARKETHUB_RUNTIME_ROOT/scripts/ 的入口包括 global-data-update.sh、global-data-update-with-health.sh、data-health-check.sh、stock-intraday-capture-with-health.sh 和 reconcile_task_center.py；这些脚本依赖 Linux shell 工具，不能直接交给 Windows 原生任务计划。注册后必须手动运行一次，验证状态、退出码、日志和数据库变化。
+
+分钟线必须由 Task Center 单独触发 `stock-intraday-capture-with-health.sh`。推荐每个交易日北京时间 20:15 执行 `reconcile_task_center.py --task intraday` 写入或校验该任务；脚本要求 `stocks.quotes.intraday` 返回完整成功，partial 结果会保留缺口并返回失败。全局日线发布会等待正在运行的分钟线 capture 结束，再读取健康快照和发布，避免发布期间 market data version 被写入任务改变。
+
+回填链监控脚本由安装器复制到 `$MARKETHUB_RUNTIME_ROOT/scripts/monitor_stock_backfill_chain.sh`。systemd monitor 应指向这个稳定运行路径，不能指向会随 release 切换消失的 `MarketHub/scripts/local` 路径。
 
 如果用户选择 Task Center，先读取其 health、README、API schema 和现有任务，再按 schema 注册，禁止猜 payload 或覆盖现有任务。
 

@@ -1452,6 +1452,8 @@ def _datetime_from_value(value: object) -> datetime:
 def _serialize_datetime(value: object) -> str:
     if value is None:
         return ''
+    if pd.isna(value):
+        return ''
     if isinstance(value, datetime):
         return value.strftime('%Y-%m-%d %H:%M:%S')
     return pd.Timestamp(value).strftime('%Y-%m-%d %H:%M:%S')

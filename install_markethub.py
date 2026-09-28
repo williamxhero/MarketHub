@@ -108,7 +108,17 @@ def _write_default_environment() -> None:
 
 def _install_runtime_scripts() -> None:
     for source_directory, script_names in (
-        ("scripts/dailyupdate", ("global-data-update.sh", "global-data-update-with-health.sh", "data-health-check.sh")),
+        (
+            "scripts/dailyupdate",
+            (
+                "global-data-update.sh",
+                "global-data-update-with-health.sh",
+                "data-health-check.sh",
+                "stock-intraday-capture-with-health.sh",
+                "reconcile_task_center.py",
+            ),
+        ),
+        ("scripts/local", ("monitor_stock_backfill_chain.sh",)),
     ):
         for script_name in script_names:
             source_path = MARKETHUB_ROOT / source_directory / script_name

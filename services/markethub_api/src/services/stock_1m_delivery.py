@@ -169,7 +169,7 @@ def _validate_coverage(
                     "repair_template": {
                         "dataset_id": STOCK_1M_DATASET_ID,
                         "dataset_version": dataset_version,
-                        "scope": {"codes": payload.codes, "start_time": start.isoformat(sep=" "), "end_time": end.isoformat(sep=" ")},
+                        "scope": {"codes": payload.codes, "freq": "1m", "adjust": "none", "start_time": start.isoformat(sep=" "), "end_time": end.isoformat(sep=" ")},
                     },
                 },
             },

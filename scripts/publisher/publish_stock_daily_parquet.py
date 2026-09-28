@@ -25,6 +25,7 @@ from services.market_data_version import current_market_data_version
 try:
     from scripts.publisher.stock_daily_partition_lifecycle import (
         PARTITION_SCHEMA_VERSION,
+        PARTITION_SOURCE_IDENTITY_VERSION,
         canonical_records_sha256,
         discover_reusable_partitions,
         materialize_reused_partition,
@@ -34,6 +35,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - used by the standalone deployed copy
     from stock_daily_partition_lifecycle import (
         PARTITION_SCHEMA_VERSION,
+        PARTITION_SOURCE_IDENTITY_VERSION,
         canonical_records_sha256,
         discover_reusable_partitions,
         materialize_reused_partition,
@@ -46,6 +48,20 @@ DATASET_ID = "stock_daily_1d"
 SCHEMA_VERSION = "markethub-stock-daily-parquet-v1"
 PUBLISH_LOCK_NAME = "markethub-stock-daily-parquet-publish"
 LOGGER = logging.getLogger(__name__)
+_SOURCE_FLOAT_FIELDS = frozenset(
+    {
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "adj_factor",
+    }
+)
 
 BARS_SCHEMA = pa.schema(
     [
@@ -169,6 +185,25 @@ where b.trade_date >= %s::date and b.trade_date < %s::date
   )
 order by b.trade_date,b.code,b.market
 """
+
+
+def _stable_source_row(row: dict[str, object]) -> dict[str, object]:
+    """Return source facts used for partition identity.
+
+    ``loaded_at`` is ingestion metadata and changes when an existing fact is
+    refreshed. It remains in the published Parquet row, but must not make an
+    otherwise unchanged frozen partition look mutable.
+    """
+    return {
+        key: (float(value) if key in _SOURCE_FLOAT_FIELDS and value is not None else value)
+        for key, value in row.items()
+        if key != "loaded_at"
+    }
+
+
+def _legacy_source_row(row: dict[str, object]) -> dict[str, object]:
+    """Reproduce the pre-v2 identity serialization for audited migration only."""
+    return dict(row)
 
 
 def _connect(*, autocommit: bool = False) -> psycopg.Connection[Any]:
@@ -377,9 +412,12 @@ def _verify_existing_publication(
             raise RuntimeError(
                 f"existing frozen partition row identity changed: {partition.get('partition_key')}"
             )
-        if source_sha != str(partition.get("source_sha256", "")) or coverage_sha != str(
-            partition.get("coverage_sha256", "")
-        ):
+        expected_source_sha = str(partition.get("source_sha256", ""))
+        source_matches = source_sha == expected_source_sha
+        if not source_matches and not partition.get("source_identity_version"):
+            legacy_rows, legacy_sha = _legacy_bars_identity(connection, start, end)
+            source_matches = legacy_rows == rows and legacy_sha == expected_source_sha
+        if not source_matches or coverage_sha != str(partition.get("coverage_sha256", "")):
             raise RuntimeError(
                 f"existing frozen partition content identity changed: {partition.get('partition_key')}"
             )
@@ -424,7 +462,7 @@ def _write_bars(
                 for row in batch:
                     identity.update(
                         json.dumps(
-                            row,
+                            _stable_source_row(row),
                             ensure_ascii=True,
                             sort_keys=True,
                             separators=(",", ":"),
@@ -493,7 +531,23 @@ def _coverage(
 
 
 def _bars_identity(connection: psycopg.Connection[Any], start: date, end: date) -> tuple[int, str]:
-    """Hash the canonical source rows before deciding whether a frozen month is reusable."""
+    """Hash source rows after coercion to the published Parquet value types."""
+    return _bars_identity_with_normalizer(connection, start, end, _stable_source_row)
+
+
+def _legacy_bars_identity(
+    connection: psycopg.Connection[Any], start: date, end: date
+) -> tuple[int, str]:
+    """Hash rows with the pre-v2 serializer for one-time manifest migration."""
+    return _bars_identity_with_normalizer(connection, start, end, _legacy_source_row)
+
+
+def _bars_identity_with_normalizer(
+    connection: psycopg.Connection[Any],
+    start: date,
+    end: date,
+    normalizer: Any,
+) -> tuple[int, str]:
     count = 0
     digest = hashlib.sha256()
     with connection.cursor(name=f"stock_daily_identity_{uuid.uuid4().hex}") as cursor:
@@ -505,7 +559,7 @@ def _bars_identity(connection: psycopg.Connection[Any], start: date, end: date) 
             for row in rows:
                 digest.update(
                     json.dumps(
-                        dict(row),
+                        normalizer(dict(row)),
                         ensure_ascii=True,
                         sort_keys=True,
                         separators=(",", ":"),
@@ -726,6 +780,7 @@ def _publish_locked(
                             "end_exclusive": month_end,
                             "partition_key": partition_key(month_start, month_end),
                             "schema_version": PARTITION_SCHEMA_VERSION,
+                            "source_identity_version": PARTITION_SOURCE_IDENTITY_VERSION,
                             "status": "frozen",
                             "rows": source_rows,
                             "source_sha256": source_sha,
@@ -759,7 +814,21 @@ def _publish_locked(
                     coverage_sha256=coverage_sha,
                     rows=source_rows,
                     candidates=reusable,
+                    source_generation=generation,
                 )
+                if decision.action == "fail_closed":
+                    _legacy_rows, legacy_source_sha = _legacy_bars_identity(
+                        snapshot, month_start, month_end
+                    )
+                    decision = plan_partition(
+                        partition_key_value=partition_key(month_start, month_end),
+                        source_sha256=source_sha,
+                        coverage_sha256=coverage_sha,
+                        rows=source_rows,
+                        candidates=reusable,
+                        legacy_source_sha256=legacy_source_sha,
+                        source_generation=generation,
+                    )
                 if decision.action == "fail_closed":
                     raise RuntimeError(
                         f"frozen stock daily partition changed: {decision.partition_key}; {decision.reason}"
@@ -851,6 +920,7 @@ def _publish_locked(
                         "end_exclusive": month_end,
                         "partition_key": partition_key(month_start, month_end),
                         "schema_version": PARTITION_SCHEMA_VERSION,
+                        "source_identity_version": PARTITION_SOURCE_IDENTITY_VERSION,
                         "status": "frozen",
                         "rows": bars_rows,
                         "source_sha256": source_sha,

@@ -15,12 +15,20 @@ DATA_HEALTH_SCRIPT="${MARKETHUB_DATA_HEALTH_SCRIPT:-$SCRIPT_DIR/data-health-chec
 PUBLICATION_HEALTH_GATE_SCRIPT="${MARKETHUB_PUBLICATION_HEALTH_GATE_SCRIPT:-$SCRIPT_DIR/publication_health_gate.py}"
 PARQUET_PUBLISHER_SCRIPT="${MARKETHUB_PARQUET_PUBLISHER_SCRIPT:-$SCRIPT_DIR/../publisher/publish_stock_daily_parquet.py}"
 MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
+MARKETHUB_HOST="${MARKETHUB_HOST:-127.0.0.1}"
+MARKETHUB_PORT="${MARKETHUB_PORT:-8803}"
+MARKETHUB_BASE_URL="${MARKETHUB_BASE_URL:-http://${MARKETHUB_HOST/0.0.0.0/127.0.0.1}:$MARKETHUB_PORT}"
 MARKETHUB_CODE_ROOT="${MARKETHUB_CODE_ROOT:-}"
 MARKETHUB_EXPORT_ROOT="${MARKETHUB_EXPORT_ROOT:-/data/MarketHub2/exports}"
 MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH="${MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH:-0}"
 MARKETHUB_DATA_HEALTH_FAILURE_POLICY="${MARKETHUB_DATA_HEALTH_FAILURE_POLICY:-warn}"
 MARKETHUB_GLOBAL_UPDATE_LOCK_PATH="${MARKETHUB_GLOBAL_UPDATE_LOCK_PATH:-$RUNTIME_ROOT/locks/global-data-update.lock}"
 MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS="${MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS:-60}"
+# A direct historical capture can write the same market-data version while the
+# publisher is reading it.  Wait for that writer to finish before health and
+# publication work starts; timeout remains fail-closed.
+MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS="${MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS:-21600}"
+MARKETHUB_CAPTURE_RUNS_ENDPOINT="${MARKETHUB_CAPTURE_RUNS_ENDPOINT:-/api/admin/capture-runs}"
 # The publisher waits only for its declared dependency.  `run-due` can include
 # historical repairs and unrelated long-running capabilities, so waiting for it
 # turns a routine publication into an unbounded global backlog drain.
@@ -75,11 +83,43 @@ evaluate_publication_health() {
         --not-before "$health_started_at"
 }
 
+wait_for_intraday_capture_quiescence() {
+    local deadline now running payload
+    if ! [[ "$MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
+        log "无效的 MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS=$MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS"
+        return 64
+    fi
+    deadline=$((SECONDS + MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS))
+    while (( SECONDS <= deadline )); do
+        payload="$(curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+            "$MARKETHUB_BASE_URL$MARKETHUB_CAPTURE_RUNS_ENDPOINT?capability_id=stocks.quotes.intraday&status=running&limit=20")" || {
+            log "capture_quiescence_check=failed reason=api_error"
+            return 1
+        }
+        running="$($MARKETHUB_PYTHON -c 'import json,sys; value=json.load(sys.stdin); print(len(value) if isinstance(value,list) else -1)' <<<"$payload")"
+        if [ "$running" = "0" ]; then
+            log "capture_quiescence=ready capability_id=stocks.quotes.intraday"
+            return 0
+        fi
+        if [ "$running" = "-1" ]; then
+            log "capture_quiescence_check=failed reason=invalid_response"
+            return 1
+        fi
+        now="$(date '+%F %T')"
+        log "capture_quiescence=waiting capability_id=stocks.quotes.intraday running=$running checked_at=$now"
+        sleep 10
+    done
+    log "capture_quiescence=timeout capability_id=stocks.quotes.intraday timeout_seconds=$MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS"
+    return 1
+}
+
 run_once() {
+    wait_for_intraday_capture_quiescence
     log "开始 MarketHub 全局数据更新和数据健康检查 capture_endpoint=$MARKETHUB_HEALTH_CAPTURE_ENDPOINT"
     MARKETHUB_CAPTURE_ENDPOINT="$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" \
         MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES" \
         "$GLOBAL_DATA_UPDATE_SCRIPT"
+    wait_for_intraday_capture_quiescence
     log "全局数据更新完成，开始数据健康检查和覆盖构建"
     case "$MARKETHUB_DATA_HEALTH_FAILURE_POLICY" in
         warn|fail)

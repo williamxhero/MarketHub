@@ -21,6 +21,7 @@ from typing import Any
 
 DATASET_ID = "stock_daily_1d"
 PARTITION_SCHEMA_VERSION = "markethub-stock-daily-partition-v1"
+PARTITION_SOURCE_IDENTITY_VERSION = "markethub-stock-daily-source-v2"
 CLEANUP_SCHEMA_VERSION = "markethub-stock-daily-cleanup-v2"
 CLEANUP_POLICY_VERSION = "stock-daily-retention-v1"
 PARTITION_STATUSES = frozenset(
@@ -81,8 +82,17 @@ def plan_partition(
     coverage_sha256: str,
     rows: int,
     candidates: Iterable[dict[str, Any]],
+    legacy_source_sha256: str | None = None,
+    source_generation: int | None = None,
 ) -> PartitionPlan:
-    """Plan one month without ever silently replacing a frozen partition."""
+    """Plan one month without silently replacing a frozen partition.
+
+    A source generation advance creates a new dataset snapshot and may contain
+    an authoritative historical correction or newly eligible listing.  Such a
+    partition is rebuilt into the new snapshot.  A mismatch within the same
+    generation remains fail-closed because there is no evidence that the
+    source change was intentional.
+    """
     matching_key = [item for item in candidates if item.get("partition_key") == partition_key_value]
     for item in matching_key:
         identity_matches = (
@@ -99,7 +109,46 @@ def plan_partition(
                 "accepted frozen content identity matches",
                 item,
             )
+        legacy_identity_matches = (
+            legacy_source_sha256 is not None
+            and item.get("status") == "frozen"
+            and item.get("schema_version") == PARTITION_SCHEMA_VERSION
+            and not item.get("source_identity_version")
+            and item.get("source_sha256") == legacy_source_sha256
+            and item.get("coverage_sha256") == coverage_sha256
+            and int(item.get("rows", -1)) == rows
+        )
+        if legacy_identity_matches:
+            return PartitionPlan(
+                "reuse",
+                partition_key_value,
+                "accepted frozen legacy source identity matches; migrate metadata identity",
+                item,
+            )
     if matching_key:
+        if source_generation is not None:
+            for item in matching_key:
+                # Older accepted manifests predate source_generation. They
+                # cannot prove that a changed source row belongs to the same
+                # immutable snapshot, so rebuild them under the current
+                # generation instead of treating the metadata gap as a
+                # same-generation mutation.
+                if "source_generation" not in item:
+                    return PartitionPlan(
+                        "build",
+                        partition_key_value,
+                        "legacy frozen partition lacks source generation; rebuild under current generation",
+                    )
+                try:
+                    candidate_generation = int(item.get("source_generation", -1))
+                except (TypeError, ValueError):
+                    continue
+                if candidate_generation >= 0 and candidate_generation < source_generation:
+                    return PartitionPlan(
+                        "build",
+                        partition_key_value,
+                        "source generation advanced; rebuild changed frozen partition",
+                    )
         return PartitionPlan(
             "fail_closed",
             partition_key_value,

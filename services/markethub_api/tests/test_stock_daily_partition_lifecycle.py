@@ -133,6 +133,98 @@ def test_frozen_partition_reuses_only_when_every_identity_matches() -> None:
     )
 
 
+def test_frozen_partition_allows_only_explicit_legacy_identity_migration() -> None:
+    candidates = [
+        {
+            "partition_key": "2024-01-01:2024-02-01",
+            "schema_version": PARTITION_SCHEMA_VERSION,
+            "status": "frozen",
+            "source_sha256": "legacy",
+            "coverage_sha256": "c",
+            "rows": 1,
+        }
+    ]
+    decision = plan_partition(
+        partition_key_value="2024-01-01:2024-02-01",
+        source_sha256="stable",
+        coverage_sha256="c",
+        rows=1,
+        candidates=candidates,
+        legacy_source_sha256="legacy",
+    )
+    assert decision.action == "reuse"
+    assert "legacy source identity" in decision.reason
+
+    candidates[0]["source_identity_version"] = "markethub-stock-daily-source-v2"
+    assert (
+        plan_partition(
+            partition_key_value="2024-01-01:2024-02-01",
+            source_sha256="stable",
+            coverage_sha256="c",
+            rows=1,
+            candidates=candidates,
+            legacy_source_sha256="legacy",
+        ).action
+        == "fail_closed"
+    )
+
+
+def test_changed_frozen_partition_rebuilds_only_after_source_generation_advance() -> None:
+    candidates = [
+        {
+            "partition_key": "2024-01-01:2024-02-01",
+            "schema_version": PARTITION_SCHEMA_VERSION,
+            "status": "frozen",
+            "source_sha256": "old",
+            "coverage_sha256": "old-coverage",
+            "rows": 1,
+            "source_generation": 10,
+        }
+    ]
+    advanced = plan_partition(
+        partition_key_value="2024-01-01:2024-02-01",
+        source_sha256="new",
+        coverage_sha256="new-coverage",
+        rows=2,
+        candidates=candidates,
+        source_generation=11,
+    )
+    assert advanced.action == "build"
+    assert "source generation advanced" in advanced.reason
+
+    same_generation = plan_partition(
+        partition_key_value="2024-01-01:2024-02-01",
+        source_sha256="new",
+        coverage_sha256="new-coverage",
+        rows=2,
+        candidates=candidates,
+        source_generation=10,
+    )
+    assert same_generation.action == "fail_closed"
+
+
+def test_legacy_frozen_partition_rebuilds_under_current_generation() -> None:
+    decision = plan_partition(
+        partition_key_value="2024-01-01:2024-02-01",
+        source_sha256="new",
+        coverage_sha256="new-coverage",
+        rows=2,
+        candidates=[
+            {
+                "partition_key": "2024-01-01:2024-02-01",
+                "schema_version": PARTITION_SCHEMA_VERSION,
+                "status": "frozen",
+                "source_sha256": "old",
+                "coverage_sha256": "old-coverage",
+                "rows": 1,
+            }
+        ],
+        source_generation=11,
+    )
+    assert decision.action == "build"
+    assert "legacy frozen partition" in decision.reason
+
+
 def test_discovery_rejects_tampered_reusable_bytes(tmp_path: Path) -> None:
     version = "mhd-v1-" + "a" * 64
     _manifest(tmp_path, version, published="2026-09-01")

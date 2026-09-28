@@ -551,8 +551,38 @@ for attempt in $(seq 1 20); do
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/global-data-update-with-health.sh" "$runtime_root/scripts/global-data-update-with-health.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/data-health-check.sh" "$runtime_root/scripts/data-health-check.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/publication_health_gate.py" "$runtime_root/scripts/publication_health_gate.py"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/stock-intraday-capture-with-health.sh" "$runtime_root/scripts/stock-intraday-capture-with-health.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/reconcile_task_center.py" "$runtime_root/scripts/reconcile_task_center.py"
     "$runtime_root/.venv/bin/python" "$runtime_root/scripts/reconcile_task_center.py"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/local/monitor_stock_backfill_chain.sh" "$runtime_root/scripts/monitor_stock_backfill_chain.sh"
+    cat >/tmp/markethub-stock-backfill-monitor.service <<MONITOR_SERVICE
+[Unit]
+Description=MarketHub stock backfill chain monitor
+After=markethub-api.service
+
+[Service]
+Type=oneshot
+Environment=MARKETHUB_BACKFILL_MEMORY_RESTART_BYTES=6442450944
+ExecStart=$runtime_root/scripts/monitor_stock_backfill_chain.sh
+MONITOR_SERVICE
+    cat >/tmp/markethub-stock-backfill-monitor.timer <<MONITOR_TIMER
+[Unit]
+Description=Run MarketHub stock backfill chain monitor every 30 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=3s
+Unit=markethub-stock-backfill-monitor.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+MONITOR_TIMER
+    sudo -n install -m 0644 /tmp/markethub-stock-backfill-monitor.service /etc/systemd/system/markethub-stock-backfill-monitor.service
+    sudo -n install -m 0644 /tmp/markethub-stock-backfill-monitor.timer /etc/systemd/system/markethub-stock-backfill-monitor.timer
+    sudo -n systemctl daemon-reload
+    sudo -n systemctl enable --now markethub-stock-backfill-monitor.timer
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/update-futures-1m.sh" "$runtime_root/scripts/update-futures-1m.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/manage_formal_export_freeze.sh" "$runtime_root/scripts/manage-formal-export-freeze.sh"
     install -m 0755 "$remote_root/current/MarketHub/migrations/storage_v2_20260823/cleanup_after_migration.sh" "$runtime_root/scripts/storage-v2-cleanup-after-migration.sh"

@@ -143,6 +143,7 @@ def test_existing_frozen_publication_rechecks_source_identity(monkeypatch, tmp_p
                 "status": "frozen",
                 "start": "2024-01-01",
                 "end_exclusive": "2024-02-01",
+                    "source_identity_version": "markethub-stock-daily-source-v2",
                 "rows": 1,
                 "source_sha256": "source",
                 "coverage_sha256": "coverage",
@@ -183,6 +184,61 @@ def test_parquet_contract_reuses_precomputed_coverage_and_still_filters_fact_row
     assert "0::int as missing_rows" in MODULE._COVERAGE_SQL
     assert "coalesce(b.is_suspended,false)=true" in MODULE._BARS_SQL
     assert "stock_suspension_history x" in MODULE._BARS_SQL
+
+
+def test_partition_source_identity_excludes_ingestion_timestamp() -> None:
+    row = {"code": "000001", "close": 10.0, "volume": 100, "loaded_at": "2026-09-28T00:00:00Z"}
+    refreshed = {**row, "loaded_at": "2026-09-28T01:00:00Z"}
+
+    assert MODULE._stable_source_row(row) == MODULE._stable_source_row(refreshed)
+    assert "loaded_at" not in MODULE._stable_source_row(row)
+    assert MODULE._stable_source_row(row)["volume"] == 100.0
+
+
+def test_legacy_partition_identity_is_available_only_for_migration() -> None:
+    row = {"code": "000001", "volume": 100, "loaded_at": "2026-09-28T00:00:00Z"}
+
+    assert MODULE._legacy_source_row(row) == row
+    assert MODULE._stable_source_row(row) != MODULE._legacy_source_row(row)
+
+
+def test_existing_legacy_publication_accepts_only_matching_legacy_identity(monkeypatch, tmp_path: Path) -> None:
+    content = b"immutable bars"
+    bars = tmp_path / "year=2024" / "month=01" / "bars.parquet"
+    bars.parent.mkdir(parents=True)
+    bars.write_bytes(content)
+    manifest = {
+        "dataset_id": "stock_daily_1d",
+        "dataset_version": "mhd-v1-" + "a" * 64,
+        "partitions": [
+            {
+                "partition_key": "2024-01-01:2024-02-01",
+                "status": "frozen",
+                "start": "2024-01-01",
+                "end_exclusive": "2024-02-01",
+                "rows": 1,
+                "source_sha256": "legacy",
+                "coverage_sha256": "coverage",
+                "files": [{
+                    "path": "year=2024/month=01/bars.parquet",
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                    "bytes": len(content),
+                }],
+            }
+        ],
+    }
+    monkeypatch.setattr(MODULE, "_bars_identity", lambda *_: (1, "stable"))
+    monkeypatch.setattr(MODULE, "_legacy_bars_identity", lambda *_: (1, "legacy"))
+    monkeypatch.setattr(MODULE, "_coverage_identity", lambda *_: ([], 1, "coverage"))
+    MODULE._verify_existing_publication(None, tmp_path, manifest)
+
+    monkeypatch.setattr(MODULE, "_legacy_bars_identity", lambda *_: (1, "changed"))
+    try:
+        MODULE._verify_existing_publication(None, tmp_path, manifest)
+    except RuntimeError as exc:
+        assert "content identity changed" in str(exc)
+    else:
+        raise AssertionError("legacy identity migration must fail closed when the legacy hash changes")
 
 
 def test_parquet_coverage_uses_catalog_identity_for_bjse_migrations() -> None:
