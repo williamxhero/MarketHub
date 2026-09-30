@@ -159,7 +159,12 @@ select
 """
 
 
-_PAGE_QUERY = _BASE_CTE + """
+def _page_query(include_adj_factor: bool) -> str:
+    """Generate page query with optional adj_factor field."""
+    adj_factor_select = ", daily_rows.adj_factor" if include_adj_factor else ""
+    adj_factor_json = ", 'adj_factor', delivered.adj_factor" if include_adj_factor else ""
+
+    return _BASE_CTE + f"""
 , page_candidates as materialized (
     select
         daily_rows.code,
@@ -173,7 +178,7 @@ _PAGE_QUERY = _BASE_CTE + """
         daily_rows.pct_chg,
         daily_rows.volume,
         daily_rows.amount,
-        coalesce(daily_rows.is_st, false) as is_st
+        coalesce(daily_rows.is_st, false) as is_st{adj_factor_select}
     from fact.stock_daily_1d daily_rows
     join universe
       on universe.market = daily_rows.market
@@ -227,7 +232,7 @@ select
                 'amount', delivered.amount,
                 'adjust', 'none',
                 'is_suspended', false,
-                'is_st', delivered.is_st
+                'is_st', delivered.is_st{adj_factor_json}
             ) order by delivered.trade_date, delivered.code
         ),
         '[]'::json
@@ -248,6 +253,9 @@ select
     ) as last_code
 from delivered
 """
+
+
+_PAGE_QUERY = _page_query(False)
 
 
 _COVERAGE_ROWS_QUERY = _UNIVERSE_CTE + """
@@ -622,6 +630,7 @@ def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> 
         "cursor": payload.cursor or "",
         "meta_detail": payload.meta_detail,
         "encoding": "gzip" if accept_gzip else "identity",
+        "include_adj_factor": payload.include_adj_factor,
     }
     key = hashlib.sha256(json.dumps(key_payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -660,7 +669,8 @@ def _build_response_uncached(payload: StockDailyWindowQueryPayload, accept_gzip:
         payload.page_size,
         payload.page_size,
     )
-    page_row = _single_row(query_dataframe(_PAGE_QUERY, page_params), "page")
+    page_query = _page_query(payload.include_adj_factor)
+    page_row = _single_row(query_dataframe(page_query, page_params), "page")
     page_db_ms = _elapsed_ms(page_started)
     record_stage_ms("sql", page_db_ms)
 
@@ -703,6 +713,27 @@ def _build_response_uncached(payload: StockDailyWindowQueryPayload, accept_gzip:
     items_json = str(page_row.get("items_json", "[]"))
     if not items_json.startswith("[") or not items_json.endswith("]"):
         raise HTTPException(status_code=503, detail={"code": "DAILY_WINDOW_PAGE_INVALID", "message": "items JSON 无效"})
+
+    # Validate adjustment factors when requested
+    if payload.include_adj_factor and returned_rows > 0:
+        items = json.loads(items_json)
+        missing_factor_codes = []
+        for item in items:
+            if item.get("adj_factor") is None:
+                code = item.get("code", "")
+                if code and code not in missing_factor_codes:
+                    missing_factor_codes.append(code)
+
+        if missing_factor_codes:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "ADJ_FACTOR_INCOMPLETE",
+                    "message": f"复权因子覆盖不完整，缺失代码: {', '.join(missing_factor_codes)}",
+                    "missing_codes": missing_factor_codes,
+                },
+            )
+
     meta_json = json.dumps(meta, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     raw_content = b'{"items":' + items_json.encode("utf-8") + b',"meta":' + meta_json + b"}"
     serialization_ms = _elapsed_ms(serialization_started)

@@ -122,6 +122,7 @@ class StockDailyWindowQueryPayload(BaseModel):
     page_size: int = Field(default=50000, ge=1, le=100000, description="交付分页大小；不是结果裁剪上限。")
     cursor: str | None = Field(default=None, description="上一页返回的 opaque continuation cursor。")
     meta_detail: Literal["summary", "full"] = Field(default="full", description="full 保留逐代码 coverage；summary 仅返回汇总。")
+    include_adj_factor: bool = Field(default=False, description="显式选入每行复权因子；默认 false 保持向后兼容。")
 
     @field_validator("codes")
     @classmethod

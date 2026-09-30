@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+if str(SERVICE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVICE_ROOT))
+
+QUOTEMUX_ROOT = Path(__file__).resolve().parents[4] / 'QuoteMux' / 'src'
+if str(QUOTEMUX_ROOT) not in sys.path:
+    sys.path.insert(0, str(QUOTEMUX_ROOT))
+
+from runtime_paths import configure_python_path
+
+configure_python_path()
+
 import gzip
 import json
 from datetime import date
