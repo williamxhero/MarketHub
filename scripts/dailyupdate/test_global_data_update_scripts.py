@@ -29,10 +29,46 @@ def test_health_gated_update_waits_for_due_capture_and_serializes_runs() -> None
     assert 'flock -w "$MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS"' in source
     assert "未启动重复采集或发布" in source
     assert "global_update_outcome=skipped reason=lock_busy retry_semantics=next_timer" in source
-    assert 'MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS="${MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS:-21600}"' in source
-    assert 'capture_quiescence=waiting capability_id=stocks.quotes.intraday' in source
-    assert source.index("wait_for_intraday_capture_quiescence\n    log \"开始 MarketHub") < source.index('"$GLOBAL_DATA_UPDATE_SCRIPT"')
-    assert source.index('"$GLOBAL_DATA_UPDATE_SCRIPT"') < source.index("wait_for_intraday_capture_quiescence\n    log \"全局数据更新完成")
+    assert "wait_for_intraday_capture_quiescence" not in source
+    assert "MARKETHUB_INTRADAY_CAPTURE_QUIESCE_TIMEOUT_SECONDS" not in source
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("bash") is None or shutil.which("flock") is None, reason="requires a native bash and flock")
+def test_health_gated_update_does_not_wait_on_an_intraday_run(tmp_path: Path) -> None:
+    environment, log_path, _ = _pipeline_harness(tmp_path, stock_daily_status="healthy", health_exit_code=0)
+    fake_bin = Path(environment["PATH"].split(os.pathsep)[0])
+    (fake_bin / "curl").write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "url=\"\"; output=\"\"\n"
+        "while [ $# -gt 0 ]; do case \"$1\" in -o) output=\"$2\"; shift 2;; -*) shift;; *) url=\"$1\"; shift;; esac; done\n"
+        "if [[ \"$url\" == */api/health ]]; then printf '{}\\n'; exit 0; fi\n"
+        "if [[ \"$url\" == *capability_id=stocks.quotes.intraday* ]]; then printf '%s\\n' '[{\"status\":\"running\"}]'; exit 0; fi\n"
+        "if [[ \"$url\" == */api/admin/capture-runs* ]]; then printf '%s\\n' '[]'; exit 0; fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "curl").chmod(0o755)
+
+    completed = subprocess.run(
+        ["bash", str(SCRIPT_DIR / "global-data-update-with-health.sh")],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (completed.stdout or "") + (completed.stderr or "")
+    assert log_path.read_text(encoding="utf-8").splitlines() == ["capture", "health", "publish"]
+
+
+def test_intraday_script_repairs_calendar_before_acquiring_global_lock() -> None:
+    source = (SCRIPT_DIR / "stock-intraday-capture-with-health.sh").read_text(encoding="utf-8")
+
+    assert "calendar_preflight=started" in source
+    assert "/api/admin/capture-runs/$MARKETHUB_CALENDAR_CAPTURE_CAPABILITY" in source
+    assert source.index("calendar_preflight=started") < source.index('exec 9>"$MARKETHUB_LOCK_PATH"')
 
 
 def test_stock_intraday_task_contract_targets_capture_script_after_close() -> None:

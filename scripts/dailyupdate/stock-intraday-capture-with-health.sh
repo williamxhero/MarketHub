@@ -17,6 +17,8 @@ MARKETHUB_PYTHON="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
 MARKETHUB_LOCK_PATH="${MARKETHUB_GLOBAL_UPDATE_LOCK_PATH:-$RUNTIME_ROOT/locks/global-data-update.lock}"
 MARKETHUB_LOCK_TIMEOUT_SECONDS="${MARKETHUB_INTRADAY_CAPTURE_LOCK_TIMEOUT_SECONDS:-21600}"
 MARKETHUB_CAPTURE_TIMEOUT_SECONDS="${MARKETHUB_INTRADAY_CAPTURE_TIMEOUT_SECONDS:-21600}"
+MARKETHUB_CALENDAR_PREFLIGHT_TIMEOUT_SECONDS="${MARKETHUB_CALENDAR_PREFLIGHT_TIMEOUT_SECONDS:-900}"
+MARKETHUB_CALENDAR_CAPTURE_CAPABILITY="${MARKETHUB_CALENDAR_CAPTURE_CAPABILITY:-markets.calendar.trading}"
 LOG_ROOT="${MARKETHUB_LOG_ROOT:-$RUNTIME_ROOT/logs}"
 RESULT_ROOT="${MARKETHUB_DATA_UPDATE_ROOT:-$RUNTIME_ROOT/data-update}/intraday"
 RUN_ID="$(date '+%Y%m%d_%H%M%S')"
@@ -31,9 +33,47 @@ if ! [[ "$MARKETHUB_LOCK_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || ! [[ "$MARKETHUB_CAP
     log "分钟线参数无效 lock_timeout=$MARKETHUB_LOCK_TIMEOUT_SECONDS capture_timeout=$MARKETHUB_CAPTURE_TIMEOUT_SECONDS"
     exit 64
 fi
+if ! [[ "$MARKETHUB_CALENDAR_PREFLIGHT_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
+    log "交易日历预检参数无效 timeout_seconds=$MARKETHUB_CALENDAR_PREFLIGHT_TIMEOUT_SECONDS"
+    exit 64
+fi
 
 mkdir -p "$RESULT_ROOT" "$LOG_ROOT" "$(dirname "$MARKETHUB_LOCK_PATH")"
 test -x "$MARKETHUB_PYTHON"
+
+# A frozen data-version read refuses to use an incomplete calendar. Repair the
+# calendar before starting the long intraday run, while no global update lock is
+# held. This keeps a calendar outage fail-fast and prevents thousands of
+# identical provider failures from being recorded as minute gaps.
+calendar_result_path="$RESULT_ROOT/${RUN_ID}.calendar.json"
+log "calendar_preflight=started capability_id=$MARKETHUB_CALENDAR_CAPTURE_CAPABILITY"
+if curl --fail --silent --show-error --connect-timeout 10 --max-time "$MARKETHUB_CALENDAR_PREFLIGHT_TIMEOUT_SECONDS" \
+    -X POST "$MARKETHUB_BASE_URL/api/admin/capture-runs/$MARKETHUB_CALENDAR_CAPTURE_CAPABILITY" \
+    -o "$calendar_result_path"; then
+    :
+else
+    status=$?
+    log "calendar_preflight=failed reason=curl_exit_$status result=$calendar_result_path"
+    exit "$status"
+fi
+if ! "$MARKETHUB_PYTHON" - "$calendar_result_path" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(payload, dict) or payload.get("status") != "success":
+    raise SystemExit(f"calendar preflight incomplete: {payload}")
+print(f"calendar_capture_run_id={payload.get('id', '')} row_count={payload.get('row_count', 0)}")
+PY
+then
+    log "calendar_preflight=failed reason=incomplete_contract result=$calendar_result_path"
+    exit 1
+fi
+log "calendar_preflight=completed result=$calendar_result_path"
+
 exec 9>"$MARKETHUB_LOCK_PATH"
 if ! flock -w "$MARKETHUB_LOCK_TIMEOUT_SECONDS" 9; then
     log "intraday_capture=failed reason=global_update_lock_timeout timeout_seconds=$MARKETHUB_LOCK_TIMEOUT_SECONDS"
