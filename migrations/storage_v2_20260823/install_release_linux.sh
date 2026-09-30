@@ -164,7 +164,10 @@ ExecStart=$runtime_root/.venv/bin/python $app_root/current/MarketHub/services/ma
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM
-TimeoutStopSec=30s
+# Capture and isolated provider workers can still be unwinding after the API
+# receives SIGTERM.  Keep enough time for a graceful join; systemd still
+# force-kills the complete service cgroup after this bounded deadline.
+TimeoutStopSec=180s
 MemoryHigh=12G
 MemoryMax=18G
 MemorySwapMax=2G
