@@ -8,8 +8,12 @@ import psycopg
 import pytest
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+WORKSPACE_ROOT = SCRIPT_DIR.parents[2]
+QUOTEMUX_SRC = WORKSPACE_ROOT / "QuoteMux" / "src"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+if str(QUOTEMUX_SRC) not in sys.path:
+    sys.path.insert(0, str(QUOTEMUX_SRC))
 
 import backfill_tushare_adj_factor_snapshots as mod  # noqa: E402
 from platform_models import AdjFactorItem  # noqa: E402
@@ -189,3 +193,107 @@ def test_daily_update_script_scopes_since_date_and_propagates_exit_code() -> Non
     assert '--since-date "$MARKETHUB_ADJ_FACTOR_DAILY_SINCE_DATE"' in source
     assert 'raise SystemExit(f"复权因子每日更新存在失败交易日' in source
     assert 'main 2>&1 | tee -a "$LOG_PATH"' in source
+
+
+@requires_db
+def test_run_daily_marks_a_day_failed_when_the_snapshot_still_leaves_rows_factorless(tmp_path: Path) -> None:
+    """A day the provider cannot fully cover must stay visible, not report success.
+
+    The provider returned rows for 2026-08-10, but one of the day's stored bars
+    is absent from the snapshot (a delisted or otherwise uncovered instrument).
+    `_upsert_stock_adj_factors` only fills nulls, so that row stays null; if the
+    run still recorded `success`, the per-day table would claim a day is done
+    while a factor request over it must fail closed.
+    """
+    covered_code, uncovered_code = "600010", "600011"
+    with _connect() as connection:
+        _reset_fixture(connection, covered_code)
+        _ensure_stock(connection, uncovered_code)
+        with connection.cursor() as cursor:
+            cursor.execute("delete from fact.stock_daily_1d where code = %s", (uncovered_code,))
+            cursor.execute(
+                "insert into fact.stock_daily_1d (market, code, trade_date, open, high, low, close, volume, amount, adj_factor) values "
+                "('SHSE', %s, '2026-08-10', 1,1,1,1,1,1, null), "
+                "('SHSE', %s, '2026-08-10', 1,1,1,1,1,1, null)",
+                (covered_code, uncovered_code),
+            )
+        connection.commit()
+
+    def handler(trade_date: str) -> list[AdjFactorItem]:
+        return [AdjFactorItem(code=covered_code, trade_date=trade_date, adj_factor=1.5)]
+
+    empty_env_file = tmp_path / "empty.env"
+    empty_env_file.write_text("", encoding="utf-8")
+    result = mod.run_daily(empty_env_file, tmp_path, "2026-08-01", "2026-08-31", handler=handler)
+
+    by_date = {item["trade_date"]: item for item in result["results"]}
+    assert by_date["2026-08-10"]["status"] == "failed"
+    assert uncovered_code in by_date["2026-08-10"]["error"]
+    assert result["failed"] == 1
+
+    with _connect() as connection:
+        status = {row["trade_date"]: row for row in mod.list_day_statuses(connection, "2026-08-01", "2026-08-31")}
+        # The stored factor that did arrive stays; only the day's verdict is failed.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select adj_factor from fact.stock_daily_1d where code = %s and trade_date = '2026-08-10'",
+                (covered_code,),
+            )
+            assert cursor.fetchone()[0] == 1.5
+        # ...and the day is retried by the next run rather than silently skipped.
+        remaining = mod.find_incomplete_trade_dates(connection, "2026-08-01", "2026-08-31")
+    assert "2026-08-10" in remaining
+    assert status["2026-08-10"]["status"] == "failed"
+
+
+@requires_db
+def test_recheck_surfaces_a_provider_revision_without_rewriting_it(tmp_path: Path) -> None:
+    """A past value the provider revises must be surfaced, never applied.
+
+    `find_incomplete_trade_dates` only sees days with a null factor, so a
+    revision to an already-complete day is invisible to the fill path. The
+    recheck re-fetches the most recent settled days and compares them; a
+    disagreement fails the day closed instead of overwriting the stored value.
+    """
+    code = "600012"
+    day = "2026-08-10"
+    with _connect() as connection:
+        _reset_fixture(connection, code)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "insert into fact.stock_daily_1d (market, code, trade_date, open, high, low, close, volume, amount, adj_factor) values "
+                "('SHSE', %s, '2026-08-10', 1,1,1,1,1,1, 1.5)",
+                (code,),
+            )
+        connection.commit()
+        mod.record_day_status(connection, day, status="success", row_count=1)
+
+    # The provider now reports a different value for that same stored cell.
+    class _ConnectionFactory:
+        def __call__(self):
+            return mod._connect()
+
+    original_connect = mod._connect
+    mod._connect = lambda: _connect()  # type: ignore[assignment]
+    try:
+        outcome = mod.recheck_recent_days(
+            handler=lambda trade_date: [AdjFactorItem(code=code, trade_date=trade_date, adj_factor=9.9)],
+            since_date="2026-08-01",
+            until_date="2026-08-31",
+            limit=5,
+        )
+    finally:
+        mod._connect = original_connect  # type: ignore[assignment]
+
+    assert outcome["checked"] == 1
+    assert outcome["conflicts"] == 1
+
+    with _connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select adj_factor from fact.stock_daily_1d where code = %s and trade_date = %s::date", (code, day)
+            )
+            assert cursor.fetchone()[0] == 1.5  # never rewritten
+        status = {row["trade_date"]: row for row in mod.list_day_statuses(connection, "2026-08-01", "2026-08-31")}
+    assert status[day]["status"] == "failed"
+    assert status[day]["conflict_count"] == 1
