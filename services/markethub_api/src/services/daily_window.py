@@ -159,14 +159,63 @@ select
 """
 
 
+def _missing_adj_factor_codes(payload: StockDailyWindowQueryPayload) -> list[str]:
+    """Eligible codes in the request window that have no stored factor at all."""
+    frame = query_dataframe(_ADJ_FACTOR_COVERAGE_SQL, _universe_params(payload))
+    if len(frame.index) != 1:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "DAILY_WINDOW_INTEGRITY_UNAVAILABLE", "message": "复权因子覆盖校验不可用"},
+        )
+    raw = frame.iloc[0].get("missing_adj_factor_codes_json", "[]")
+    try:
+        return [str(value) for value in json.loads(str(raw))]
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "DAILY_WINDOW_INTEGRITY_UNAVAILABLE", "message": "复权因子覆盖校验结果无效"},
+        ) from exc
+
+
+def _raise_adj_factor_incomplete(
+    payload: StockDailyWindowQueryPayload,
+    missing_codes: list[str],
+    coverage_row: dict[str, object],
+) -> None:
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "MARKET_DATA_INCOMPLETE",
+            "message": "复权因子覆盖不完整，拒绝返回部分数据",
+            "details": {
+                "universe_size": int(coverage_row.get("universe_size", 0) or 0),
+                "expected_rows": int(coverage_row.get("expected_total", 0) or 0),
+                "actual_rows": int(coverage_row.get("actual_total", 0) or 0),
+                "missing_rows": int(coverage_row.get("missing_total", 0) or 0),
+                "duplicate_rows": int(coverage_row.get("duplicate_total", 0) or 0),
+                "unknown_codes": [],
+                "incomplete_codes": missing_codes[:20],
+                "missing_adj_factor_codes": missing_codes[:20],
+                "dataset_id": STOCK_DAILY_DATASET_ID,
+                "dataset_version": payload.dataset_version,
+                "repair_endpoint": "/api/admin/data-repairs",
+            },
+        },
+    )
+
+
 def _page_query(include_adj_factor: bool) -> str:
-    """Generate page query with optional adj_factor field."""
-    adj_factor_select = ", daily_rows.adj_factor" if include_adj_factor else ""
+    """Page query with the per-row adjustment factor opted in or left out.
+
+    Without the opt-in the emitted JSON object is unchanged, so the response
+    stays byte-for-byte what it was before the factor contract existed.
+    """
     adj_factor_json = ", 'adj_factor', delivered.adj_factor" if include_adj_factor else ""
 
     return _BASE_CTE + f"""
 , page_candidates as materialized (
     select
+        daily_rows.market,
         daily_rows.code,
         daily_rows.trade_date,
         daily_rows.open,
@@ -178,7 +227,7 @@ def _page_query(include_adj_factor: bool) -> str:
         daily_rows.pct_chg,
         daily_rows.volume,
         daily_rows.amount,
-        coalesce(daily_rows.is_st, false) as is_st{adj_factor_select}
+        coalesce(daily_rows.is_st, false) as is_st
     from fact.stock_daily_1d daily_rows
     join universe
       on universe.market = daily_rows.market
@@ -209,9 +258,15 @@ def _page_query(include_adj_factor: bool) -> str:
     order by daily_rows.trade_date, daily_rows.code
     limit %s
 ), delivered as materialized (
-    select *
+    select
+        page_candidates.*,
+        page_rows.adj_factor
     from page_candidates
-    order by trade_date, code
+    join fact.stock_daily_1d page_rows
+      on page_rows.market = page_candidates.market
+     and page_rows.code = page_candidates.code
+     and page_rows.trade_date = page_candidates.trade_date
+    order by page_candidates.trade_date, page_candidates.code
     limit %s
 )
 select
@@ -290,6 +345,49 @@ where catalog.code is null order by requested_codes.code
 """
 
 
+# Opt-in factor requests fail closed when any eligible row in the window still
+# has no factor, so a factor request never mixes raw-only rows into an adjusted
+# series. The scope is the whole request rather than one page because
+# pagination commits pages -- a shortfall found only on page 7 would surface
+# after six pages had already been delivered.
+_ADJ_FACTOR_COVERAGE_SQL = _BASE_CTE + """
+, eligible as materialized (
+    select daily_rows.market, daily_rows.code, daily_rows.trade_date, daily_rows.adj_factor
+    from fact.stock_daily_1d daily_rows
+    join universe
+      on universe.market = daily_rows.market
+     and universe.code = daily_rows.code
+    join open_dates
+      on open_dates.trade_date = daily_rows.trade_date
+    where coalesce(daily_rows.is_suspended, false) = false
+      and (universe.listed_date is null or universe.listed_date <= daily_rows.trade_date)
+      and (universe.delisted_date is null or daily_rows.trade_date < universe.delisted_date)
+      and not exists (
+          select 1
+          from fact.stock_suspension_history suspensions
+          where suspensions.market = universe.market
+            and suspensions.code = universe.code
+            and suspensions.status = 'suspended'
+            and suspensions.suspend_start_date <= daily_rows.trade_date
+            and suspensions.suspend_end_date >= daily_rows.trade_date
+      )
+      and daily_rows.open is not null
+      and daily_rows.high is not null
+      and daily_rows.low is not null
+      and daily_rows.close is not null
+      and daily_rows.volume is not null
+), missing_codes as materialized (
+    select distinct eligible.code
+    from eligible
+    where eligible.adj_factor is null
+)
+select coalesce(
+    (select json_agg(missing_codes.code order by missing_codes.code) from missing_codes),
+    '[]'::json
+)::text as missing_adj_factor_codes_json
+"""
+
+
 _REFERENCE_COVERAGE_ROWS_QUERY = _UNIVERSE_CTE + """
 select universe.code,count(expected.trade_date)::int as expected_rows
 from universe left join expected on expected.code=universe.code and expected.market=universe.market
@@ -306,7 +404,8 @@ _PAGE_ROWS_CTE = _BASE_CTE + """
 , page_candidates as materialized (
     select daily_rows.code,daily_rows.trade_date,daily_rows.open,daily_rows.high,daily_rows.low,
            daily_rows.close,daily_rows.pre_close,daily_rows.change,daily_rows.pct_chg,
-           daily_rows.volume,daily_rows.amount,coalesce(daily_rows.is_st,false) as is_st
+           daily_rows.volume,daily_rows.amount,coalesce(daily_rows.is_st,false) as is_st,
+           daily_rows.adj_factor
     from fact.stock_daily_1d daily_rows
     join universe on universe.market=daily_rows.market and universe.code=daily_rows.code
     join open_dates on open_dates.trade_date=daily_rows.trade_date
@@ -341,13 +440,16 @@ from delivered
 
 
 _PAGE_ROWS_QUERY = _PAGE_ROWS_CTE + """
-select code,trade_date,open,high,low,close,pre_close,change,pct_chg,volume,amount,is_st
+select code,trade_date,open,high,low,close,pre_close,change,pct_chg,volume,amount,is_st,adj_factor
 from delivered order by trade_date,code
 """
 
 
 ARROW_MEDIA_TYPE = "application/vnd.apache.arrow.stream"
 ARROW_SCHEMA_VERSION = "markethub-daily-window-arrow-v1"
+# The opt-in factor column changes the Arrow schema, so the version it
+# advertises has to change with it rather than silently widening v1.
+ARROW_ADJ_FACTOR_SCHEMA_VERSION = "markethub-daily-window-arrow-v2-adj-factor"
 ARROW_RECORD_BATCH_ROWS = 8_192
 COVERAGE_CACHE_MAX_ENTRIES = 32
 _COVERAGE_CACHE: OrderedDict[str, tuple[dict[str, object], list[dict[str, object]]]] = OrderedDict()
@@ -362,6 +464,7 @@ ARROW_SCHEMA = pa.schema(
         ("is_suspended", pa.bool_()), ("is_st", pa.bool_()),
     ]
 )
+ARROW_ADJ_FACTOR_SCHEMA = ARROW_SCHEMA.append(pa.field("adj_factor", pa.float64()))
 
 
 @dataclass(frozen=True)
@@ -395,6 +498,11 @@ def _request_fingerprint(payload: StockDailyWindowQueryPayload) -> str:
         "start_date": payload.start_date,
         "end_date": payload.end_date,
     }
+    # Opt-in only: a cursor minted by a factor request must not be replayed
+    # against a plain request (the item shape differs), while a plain request
+    # keeps minting exactly the cursors it did before this contract existed.
+    if payload.include_adj_factor:
+        value["include_adj_factor"] = True
     encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -659,6 +767,10 @@ def _build_response_uncached(payload: StockDailyWindowQueryPayload, accept_gzip:
     # shortfall (a suspended row, a duplicate, a universe/read-model mismatch)
     # never stopped a response from being built. See #435/#460.
     _raise_incomplete(coverage_row, coverage, [])
+    if payload.include_adj_factor:
+        missing_factor_codes = _missing_adj_factor_codes(payload)
+        if missing_factor_codes:
+            _raise_adj_factor_incomplete(payload, missing_factor_codes, coverage_row)
 
     page_started = time.perf_counter()
     page_params = _universe_params(payload) + (
@@ -713,27 +825,6 @@ def _build_response_uncached(payload: StockDailyWindowQueryPayload, accept_gzip:
     items_json = str(page_row.get("items_json", "[]"))
     if not items_json.startswith("[") or not items_json.endswith("]"):
         raise HTTPException(status_code=503, detail={"code": "DAILY_WINDOW_PAGE_INVALID", "message": "items JSON 无效"})
-
-    # Validate adjustment factors when requested
-    if payload.include_adj_factor and returned_rows > 0:
-        items = json.loads(items_json)
-        missing_factor_codes = []
-        for item in items:
-            if item.get("adj_factor") is None:
-                code = item.get("code", "")
-                if code and code not in missing_factor_codes:
-                    missing_factor_codes.append(code)
-
-        if missing_factor_codes:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "ADJ_FACTOR_INCOMPLETE",
-                    "message": f"复权因子覆盖不完整，缺失代码: {', '.join(missing_factor_codes)}",
-                    "missing_codes": missing_factor_codes,
-                },
-            )
-
     meta_json = json.dumps(meta, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     raw_content = b'{"items":' + items_json.encode("utf-8") + b',"meta":' + meta_json + b"}"
     serialization_ms = _elapsed_ms(serialization_started)
@@ -814,9 +905,9 @@ def _page_params(payload: StockDailyWindowQueryPayload, cursor_trade_time: str |
     )
 
 
-def _arrow_item(row: dict[str, object]) -> dict[str, object]:
+def _arrow_item(row: dict[str, object], include_adj_factor: bool) -> dict[str, object]:
     trade_date = row.get("trade_date")
-    return {
+    item = {
         "code": str(row["code"]),
         "trade_time": trade_date.isoformat() if hasattr(trade_date, "isoformat") else str(trade_date),
         "freq": "1d",
@@ -825,6 +916,10 @@ def _arrow_item(row: dict[str, object]) -> dict[str, object]:
         "volume": row.get("volume"), "amount": row.get("amount"), "adjust": "none",
         "is_suspended": False, "is_st": bool(row.get("is_st", False)),
     }
+    if include_adj_factor:
+        factor = row.get("adj_factor")
+        item["adj_factor"] = None if factor is None else float(factor)
+    return item
 
 
 class _ArrowChunkSink(io.RawIOBase):
@@ -852,6 +947,7 @@ def _arrow_body(
     expected_rows: int,
     request_started: float,
     start_rss_mb: float,
+    include_adj_factor: bool = False,
 ) -> Iterator[bytes]:
     sink = _ArrowChunkSink()
     output = pa.PythonFile(sink, mode="w")
@@ -865,7 +961,9 @@ def _arrow_body(
         for rows in chain((first_batch,), database_batches):
             if not rows:
                 continue
-            table = pa.Table.from_pylist([_arrow_item(dict(row)) for row in rows], schema=schema)
+            table = pa.Table.from_pylist(
+                [_arrow_item(dict(row), include_adj_factor) for row in rows], schema=schema
+            )
             for batch in table.to_batches(max_chunksize=ARROW_RECORD_BATCH_ROWS):
                 writer.write_batch(batch)
                 emitted_rows += batch.num_rows
@@ -908,6 +1006,10 @@ def prepare_arrow_response(payload: StockDailyWindowQueryPayload) -> PreparedDai
     coverage_started = time.perf_counter()
     coverage_row, coverage = _cached_coverage(payload)
     coverage_db_ms = _elapsed_ms(coverage_started)
+    if payload.include_adj_factor:
+        missing_factor_codes = _missing_adj_factor_codes(payload)
+        if missing_factor_codes:
+            _raise_adj_factor_incomplete(payload, missing_factor_codes, coverage_row)
     require_dataset_version(STOCK_DAILY_DATASET_ID, payload.dataset_version)
 
     page_params = _page_params(payload, cursor_trade_time, cursor_code)
@@ -940,13 +1042,15 @@ def prepare_arrow_response(payload: StockDailyWindowQueryPayload) -> PreparedDai
         "page_size": payload.page_size,
         "coverage": coverage,
     }
+    schema = ARROW_ADJ_FACTOR_SCHEMA if payload.include_adj_factor else ARROW_SCHEMA
+    schema_version = ARROW_ADJ_FACTOR_SCHEMA_VERSION if payload.include_adj_factor else ARROW_SCHEMA_VERSION
     metadata = {
         b"markethub.meta": json.dumps(meta, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(),
-        b"markethub.schema_version": ARROW_SCHEMA_VERSION.encode(),
+        b"markethub.schema_version": schema_version.encode(),
         b"markethub.data_version": payload.data_version.encode(),
         b"markethub.dataset_version": payload.dataset_version.encode(),
     }
-    schema = ARROW_SCHEMA.with_metadata(metadata)
+    schema = schema.with_metadata(metadata)
     database_batches = stream_query_batches(_PAGE_ROWS_QUERY, page_params[:-1], batch_size=ARROW_RECORD_BATCH_ROWS)
     try:
         first_batch = next(database_batches, [])
@@ -965,7 +1069,9 @@ def prepare_arrow_response(payload: StockDailyWindowQueryPayload) -> PreparedDai
         "X-MarketHub-Returned-Rows": str(returned_rows),
         "X-MarketHub-Delivery-Complete": str(not has_more).lower(),
         "X-MarketHub-Next-Cursor": next_cursor or "",
-        "X-MarketHub-Arrow-Schema-Version": ARROW_SCHEMA_VERSION,
+        "X-MarketHub-Arrow-Schema-Version": schema_version,
     }
-    body = _arrow_body(schema, first_batch, database_batches, returned_rows, request_started, start_rss_mb)
+    body = _arrow_body(
+        schema, first_batch, database_batches, returned_rows, request_started, start_rss_mb, payload.include_adj_factor
+    )
     return PreparedDailyWindowArrowResponse(body=body, headers=headers)
