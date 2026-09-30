@@ -39,6 +39,28 @@ def _connect() -> psycopg.Connection:
     )
 
 
+def _clear_isolated_database() -> None:
+    with _connect() as connection:
+        with connection.cursor() as cursor:
+            for schema, table in (
+                ("fact", "stock_daily_1d"),
+                ("audit", "stock_adj_factor_daily_status"),
+                ("audit", "stock_adj_factor_import_batch"),
+            ):
+                if _table_exists(connection, schema, table):
+                    cursor.execute(f"delete from {schema}.{table}")
+        connection.commit()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_database_between_tests():
+    if _database_configured():
+        _clear_isolated_database()
+    yield
+    if _database_configured():
+        _clear_isolated_database()
+
+
 def _ensure_stock(connection: psycopg.Connection, code: str) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
@@ -169,7 +191,7 @@ def test_run_daily_persists_status_per_date_and_is_retryable(tmp_path: Path) -> 
 
     empty_env_file = tmp_path / "empty.env"
     empty_env_file.write_text("", encoding="utf-8")
-    result = mod.run_daily(empty_env_file, tmp_path, "2026-08-01", "2026-08-31", handler=handler)
+    result = mod.run_daily(empty_env_file, tmp_path, "2026-08-10", "2026-08-31", handler=handler)
 
     by_date = {item["trade_date"]: item for item in result["results"]}
     assert by_date["2026-08-10"]["status"] == "success"
@@ -224,7 +246,7 @@ def test_run_daily_marks_a_day_failed_when_the_snapshot_still_leaves_rows_factor
 
     empty_env_file = tmp_path / "empty.env"
     empty_env_file.write_text("", encoding="utf-8")
-    result = mod.run_daily(empty_env_file, tmp_path, "2026-08-01", "2026-08-31", handler=handler)
+    result = mod.run_daily(empty_env_file, tmp_path, "2026-08-10", "2026-08-31", handler=handler)
 
     by_date = {item["trade_date"]: item for item in result["results"]}
     assert by_date["2026-08-10"]["status"] == "failed"

@@ -25,6 +25,17 @@ A_SHARE_SQL = """
 """
 
 
+def _normalise_trade_date(value: object) -> str:
+    """Return a YYYY-MM-DD key for provider and PostgreSQL date values."""
+    text = str(value).strip()
+    digits = "".join(character for character in text if character.isdigit())
+    if len(digits) >= 8:
+        return f"{digits[:4]}-{digits[4:6]}-{digits[6:8]}"
+    if len(text) >= 10:
+        return text[:10]
+    raise ValueError(f"invalid_trade_date:{value}")
+
+
 def _load_env(path: Path) -> None:
     for raw in path.read_text(encoding="utf-8").splitlines():
         if "=" in raw and not raw.lstrip().startswith("#"):
@@ -279,6 +290,74 @@ def _coverage(connection: psycopg.Connection, start_date: str, end_date: str) ->
     return {"required_rows": row[0], "factor_rows": row[1], "required_codes": row[2], "factor_codes": row[3]}
 
 
+def recheck_recent_days(*, handler, since_date: str, until_date: str, limit: int = 5) -> dict[str, object]:
+    """Re-read recently successful days and surface provider revisions.
+
+    A revision is recorded as a failed day and never passed to the write path;
+    the stored factor remains the authoritative value until an operator repairs
+    the conflict explicitly.
+    """
+    with _connect() as connection:
+        _ensure_daily_status_schema(connection)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select trade_date::text
+                from audit.stock_adj_factor_daily_status
+                where trade_date between %s::date and %s::date
+                  and status = 'success'
+                order by trade_date desc
+                limit %s
+                """,
+                (since_date, until_date, limit),
+            )
+            trade_dates = [str(row[0]) for row in cursor.fetchall()]
+
+    results: list[dict[str, object]] = []
+    total_conflicts = 0
+    for trade_date in trade_dates:
+        items = handler(trade_date)
+        provider_values = {
+            str(item.code): float(item.adj_factor)
+            for item in items
+            if getattr(item, "adj_factor", None) is not None
+        }
+        with _connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    select code, adj_factor
+                    from fact.stock_daily_1d
+                    where trade_date = %s::date
+                      and {A_SHARE_SQL}
+                      and not coalesce(is_suspended, false)
+                      and adj_factor is not null
+                    """,
+                    (trade_date,),
+                )
+                stored = {str(row[0]): float(row[1]) for row in cursor.fetchall()}
+        conflict_codes = sorted(
+            code for code, provider_value in provider_values.items()
+            if code in stored and abs(stored[code] - provider_value) > 1e-8
+        )
+        if conflict_codes:
+            total_conflicts += len(conflict_codes)
+            message = f"adj_factor_existing_conflicts:{len(conflict_codes)}"
+            with _connect() as connection:
+                record_day_status(
+                    connection,
+                    trade_date,
+                    status="failed",
+                    conflict_count=len(conflict_codes),
+                    error_message=message,
+                )
+            results.append({"trade_date": trade_date, "status": "failed", "error": message, "codes": conflict_codes})
+        else:
+            results.append({"trade_date": trade_date, "status": "success", "conflicts": 0})
+
+    return {"checked": len(trade_dates), "conflicts": total_conflicts, "results": results}
+
+
 def apply_artifact(manifest_path: Path) -> dict[str, object]:
     from quotemux.fact_ref_writes import _upsert_stock_adj_factors
 
@@ -304,12 +383,13 @@ def apply_artifact(manifest_path: Path) -> dict[str, object]:
                 """,
                 (manifest["start_date"], manifest["end_date"]),
             )
-            existing = {(str(row[0]), str(row[1])): float(row[2]) for row in cursor.fetchall()}
-        conflicts = [
-            item for item in items
-            if (item.code, f"{item.trade_date[:4]}-{item.trade_date[4:6]}-{item.trade_date[6:8]}") in existing
-            and abs(existing[(item.code, f"{item.trade_date[:4]}-{item.trade_date[4:6]}-{item.trade_date[6:8]}")] - float(item.adj_factor)) > 1e-8
-        ]
+            existing_rows = cursor.fetchall()
+        existing = {(str(row[0]), _normalise_trade_date(row[1])): float(row[2]) for row in existing_rows}
+        conflicts = []
+        for item in items:
+            key = (str(item.code), _normalise_trade_date(item.trade_date))
+            if key in existing and abs(existing[key] - float(item.adj_factor)) > 1e-8:
+                conflicts.append(item)
         if conflicts:
             raise RuntimeError(f"adj_factor_existing_conflicts:{len(conflicts)}")
         for offset in range(0, len(items), 5000):
@@ -346,6 +426,25 @@ def apply_artifact(manifest_path: Path) -> dict[str, object]:
             )
         connection.commit()
         after = _coverage(connection, manifest["start_date"], manifest["end_date"])
+        if after["factor_rows"] != after["required_rows"]:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    select distinct code
+                    from fact.stock_daily_1d
+                    where trade_date between %s::date and %s::date
+                      and {A_SHARE_SQL}
+                      and not coalesce(is_suspended, false)
+                      and adj_factor is null
+                    order by code
+                    """,
+                    (manifest["start_date"], manifest["end_date"]),
+                )
+                missing_codes = [str(row[0]) for row in cursor.fetchall()]
+            raise RuntimeError(
+                "adj_factor_coverage_incomplete:"
+                + ",".join(missing_codes[:20])
+            )
     return {"status": "applied", "raw_sha256": digest, "rows": len(items), "before": before, "after": after}
 
 
