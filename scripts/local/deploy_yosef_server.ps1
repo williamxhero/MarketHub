@@ -555,8 +555,13 @@ for attempt in $(seq 1 20); do
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/data-health-check.sh" "$runtime_root/scripts/data-health-check.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/publication_health_gate.py" "$runtime_root/scripts/publication_health_gate.py"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/stock-intraday-capture-with-health.sh" "$runtime_root/scripts/stock-intraday-capture-with-health.sh"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/stock-suspension-eligibility-reconcile.sh" "$runtime_root/scripts/stock-suspension-eligibility-reconcile.sh"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/reconcile_stock_intraday_suspensions.py" "$runtime_root/scripts/reconcile-stock-intraday-suspensions.py"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/run_stock_intraday_gap_backfill.py" "$runtime_root/scripts/run-stock-intraday-gap-backfill.py"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/upsert_stock_30m_from_complete_1m.py" "$runtime_root/scripts/upsert-stock-30m-from-complete-1m.py"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/reconcile_task_center.py" "$runtime_root/scripts/reconcile_task_center.py"
     "$runtime_root/.venv/bin/python" "$runtime_root/scripts/reconcile_task_center.py"
+    "$runtime_root/.venv/bin/python" "$runtime_root/scripts/reconcile_task_center.py" --task suspension
     install -m 0755 "$remote_root/current/MarketHub/scripts/local/monitor_stock_backfill_chain.sh" "$runtime_root/scripts/monitor_stock_backfill_chain.sh"
     cat >/tmp/markethub-stock-backfill-monitor.service <<MONITOR_SERVICE
 [Unit]
@@ -586,6 +591,78 @@ MONITOR_TIMER
     sudo -n install -m 0644 /tmp/markethub-stock-backfill-monitor.timer /etc/systemd/system/markethub-stock-backfill-monitor.timer
     sudo -n systemctl daemon-reload
     sudo -n systemctl enable --now markethub-stock-backfill-monitor.timer
+    cat >/tmp/markethub-stock-intraday-gap-backfill.service <<GAP_SERVICE
+[Unit]
+Description=Bounded MarketHub stock 1m historical gap backfill
+After=network-online.target markethub-api.service
+Wants=network-online.target
+Requires=markethub-api.service
+
+[Service]
+Type=oneshot
+User=$service_user
+Group=$service_group
+WorkingDirectory=$runtime_root
+EnvironmentFile=$env_path
+ExecStart=$runtime_root/.venv/bin/python $runtime_root/scripts/run-stock-intraday-gap-backfill.py --batch-size 50 --max-batches 500 --stop-at-utc 15:40
+Nice=10
+TimeoutStartSec=2h20min
+MemoryMax=1G
+GAP_SERVICE
+    cat >/tmp/markethub-stock-intraday-gap-backfill.timer <<GAP_TIMER
+[Unit]
+Description=Run stock 1m historical gap backfill after daily capture
+
+[Timer]
+OnCalendar=*-*-* 13:30:00 UTC
+OnCalendar=*-*-* 14:00:00 UTC
+OnCalendar=*-*-* 14:15:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=markethub-stock-intraday-gap-backfill.service
+
+[Install]
+WantedBy=timers.target
+GAP_TIMER
+    cat >/tmp/markethub-stock-30m-from-1m.service <<BAR_30M_SERVICE
+[Unit]
+Description=Derive missing stock 30m days from complete real 1m facts
+After=network-online.target postgresql.service markethub-api.service
+Wants=network-online.target
+Requires=markethub-api.service
+
+[Service]
+Type=oneshot
+User=$service_user
+Group=$service_group
+WorkingDirectory=$runtime_root
+EnvironmentFile=$env_path
+ExecStart=$runtime_root/.venv/bin/python $runtime_root/scripts/upsert-stock-30m-from-complete-1m.py --max-days 10
+Nice=10
+TimeoutStartSec=15min
+MemoryMax=2G
+BAR_30M_SERVICE
+    cat >/tmp/markethub-stock-30m-from-1m.timer <<BAR_30M_TIMER
+[Unit]
+Description=Derive 30m after the daily stock 1m capture
+
+[Timer]
+OnCalendar=*-*-* 14:30:00 UTC
+OnCalendar=*-*-* 15:30:00 UTC
+OnCalendar=*-*-* 17:30:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=markethub-stock-30m-from-1m.service
+
+[Install]
+WantedBy=timers.target
+BAR_30M_TIMER
+    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill.service /etc/systemd/system/markethub-stock-intraday-gap-backfill.service
+    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill.timer
+    sudo -n install -m 0644 /tmp/markethub-stock-30m-from-1m.service /etc/systemd/system/markethub-stock-30m-from-1m.service
+    sudo -n install -m 0644 /tmp/markethub-stock-30m-from-1m.timer /etc/systemd/system/markethub-stock-30m-from-1m.timer
+    sudo -n systemctl daemon-reload
+    sudo -n systemctl enable --now markethub-stock-intraday-gap-backfill.timer markethub-stock-30m-from-1m.timer
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/update-futures-1m.sh" "$runtime_root/scripts/update-futures-1m.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/manage_formal_export_freeze.sh" "$runtime_root/scripts/manage-formal-export-freeze.sh"
     install -m 0755 "$remote_root/current/MarketHub/migrations/storage_v2_20260823/cleanup_after_migration.sh" "$runtime_root/scripts/storage-v2-cleanup-after-migration.sh"

@@ -61,6 +61,7 @@ def sha256(path: Path) -> str:
 
 def candidate_days(connection: psycopg.Connection, minimum_codes: int, max_days: int) -> list[tuple[str, int]]:
     with connection.cursor() as cursor:
+        cursor.execute("set local statement_timeout = '120s'")
         cursor.execute(
             """
             with target as (
@@ -68,7 +69,7 @@ def candidate_days(connection: psycopg.Connection, minimum_codes: int, max_days:
                        count(*) as row_count,
                        count(*) filter (where amount is null) as null_amount
                 from fact.stock_bar_30m
-                where bar_time >= current_date - interval '30 days'
+                where bar_time >= current_date - interval '180 days'
                 group by 1, 2, 3
             ), incomplete_days as (
                 select source.trade_date, count(*)::int as code_count,
@@ -80,7 +81,7 @@ def candidate_days(connection: psycopg.Connection, minimum_codes: int, max_days:
                 left join target on target.trade_date = source.trade_date
                                 and target.market = source.market
                                 and target.code = source.code
-                where source.trade_date >= current_date - interval '30 days'
+                where source.trade_date >= current_date - interval '180 days'
                   and source.row_count = 240
                 group by source.trade_date
             )
@@ -243,6 +244,53 @@ def verify_target(connection: psycopg.Connection, trade_date: str, expected_code
         raise RuntimeError(f"{trade_date}: persisted 30m verification failed actual={actual} expected={expected}")
 
 
+def process_day(
+    connection: psycopg.Connection, audit_dir: Path, health: dict, trade_date: str, expected_codes: int
+) -> None:
+    day_dir = audit_dir / trade_date / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    day_dir.mkdir(parents=True)
+    try:
+        keys = source_keys_and_integrity(connection, trade_date, expected_codes)
+        keys_path = day_dir / "source-complete-1m-code-days.csv.gz"
+        with gzip.open(keys_path, "wt", encoding="utf-8", newline="") as stream:
+            writer = csv.writer(stream)
+            writer.writerow(("market", "code", "trade_date", "bars"))
+            writer.writerows((market, code, trade_date, 240) for market, code in keys)
+        manifest = {
+            "remediation": "explicit_30m_materialization_from_complete_real_1m",
+            "trade_date": trade_date,
+            "source": "fact.stock_bar_1m",
+            "source_complete_code_days": expected_codes,
+            "source_rows": expected_codes * 240,
+            "source_keys_sha256": sha256(keys_path),
+            "script_sha256": sha256(Path(__file__)),
+            "expected_target_rows": expected_codes * 10,
+            "release": health.get("version"),
+            "data_version_before": health.get("data_version"),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        manifest_path = day_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        # Read-only probes start a transaction; release it before staging temp tables.
+        connection.commit()
+        inserted, filled_amount = materialize(connection, trade_date, expected_codes)
+        verify_target(connection, trade_date, expected_codes)
+        connection.commit()
+        manifest["inserted_rows"] = inserted
+        manifest["filled_null_amount_rows"] = filled_amount
+        manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps({"trade_date": trade_date, "complete_codes": expected_codes,
+                          "inserted_rows": inserted, "filled_null_amount_rows": filled_amount}), flush=True)
+    except Exception as exc:
+        connection.rollback()
+        failure = {"trade_date": trade_date, "source_complete_code_days": expected_codes,
+                   "error": f"{type(exc).__name__}: {exc}",
+                   "failed_at": datetime.now(timezone.utc).isoformat()}
+        (day_dir / "failure.json").write_text(json.dumps(failure, indent=2) + "\n", encoding="utf-8")
+        raise
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--audit-dir", type=Path, default=Path("/data/markethub/audit/stock-30m-from-complete-1m"))
@@ -269,42 +317,24 @@ def main() -> int:
         raise RuntimeError("MarketHub health is not ok")
     with db_connection() as connection:
         candidates = candidate_days(connection, args.minimum_codes, args.max_days)
+        failures: list[str] = []
         for trade_date, expected_codes in candidates:
-            day_dir = args.audit_dir / trade_date
-            day_dir.mkdir(exist_ok=True)
-            keys = source_keys_and_integrity(connection, trade_date, expected_codes)
-            keys_path = day_dir / "source-complete-1m-code-days.csv.gz"
-            with gzip.open(keys_path, "wt", encoding="utf-8", newline="") as stream:
-                writer = csv.writer(stream)
-                writer.writerow(("market", "code", "trade_date", "bars"))
-                writer.writerows((market, code, trade_date, 240) for market, code in keys)
-            manifest = {
-                "remediation": "explicit_30m_materialization_from_complete_real_1m",
-                "trade_date": trade_date,
-                "source": "fact.stock_bar_1m",
-                "source_complete_code_days": expected_codes,
-                "source_rows": expected_codes * 240,
-                "source_keys_sha256": sha256(keys_path),
-                "script_sha256": sha256(Path(__file__)),
-                "expected_target_rows": expected_codes * 10,
-                "release": health.get("version"),
-                "data_version_before": health.get("data_version"),
-                "started_at": datetime.now(timezone.utc).isoformat(),
-            }
-            manifest_path = day_dir / "manifest.json"
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-            # Read-only probes start a psycopg transaction; commit them before
-            # the write so temp tables are dropped at this day's commit.
-            connection.commit()
-            inserted, filled_amount = materialize(connection, trade_date, expected_codes)
-            verify_target(connection, trade_date, expected_codes)
-            connection.commit()
-            manifest["inserted_rows"] = inserted
-            manifest["filled_null_amount_rows"] = filled_amount
-            manifest["finished_at"] = datetime.now(timezone.utc).isoformat()
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-            print(json.dumps({"trade_date": trade_date, "complete_codes": expected_codes, "inserted_rows": inserted, "filled_null_amount_rows": filled_amount}), flush=True)
-    return 0
+            current_health = query_api(args.api_url, "/api/health")
+            if not isinstance(current_health, dict) or current_health.get("version") != health.get("version"):
+                raise RuntimeError("MarketHub release changed during 30m materialization")
+            current_tasks = query_api(args.task_url, "/api/tasks")
+            if not isinstance(current_tasks, list) or any(
+                item.get("group_name") == "MARKETHUB" and item.get("status") == "running"
+                for item in current_tasks
+            ):
+                print("deferred: MARKETHUB task began during 30m repair", file=sys.stderr)
+                return 75
+            try:
+                process_day(connection, args.audit_dir, current_health, trade_date, expected_codes)
+            except Exception as exc:
+                failures.append(trade_date)
+                print(f"stock 30m day failed: {trade_date}: {type(exc).__name__}: {exc}", file=sys.stderr)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

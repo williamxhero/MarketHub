@@ -102,7 +102,7 @@ def unresolved_gaps() -> list[dict]:
             cursor.execute(
                 """select market, btrim(code), trade_date::text, status
                    from market_data_capture_gaps
-                   where capability_id = %s and status <> 'resolved'
+                   where capability_id = %s and status not in ('resolved', 'ineligible_suspended')
                    order by trade_date desc, market, code""",
                 (CAPABILITY,),
             )

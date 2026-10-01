@@ -8,6 +8,7 @@ from urllib.request import Request, urlopen
 
 TASK_ID = "markethub_global_data_update"
 INTRADAY_TASK_ID = "markethub_stock_intraday_capture"
+SUSPENSION_TASK_ID = "markethub_stock_suspension_eligibility"
 
 
 def desired_task() -> dict[str, object]:
@@ -54,12 +55,35 @@ def desired_intraday_task() -> dict[str, object]:
     }
 
 
+def desired_suspension_task() -> dict[str, object]:
+    return {
+        "task_id": SUSPENSION_TASK_ID,
+        "name": "MarketHub stock full-day suspension eligibility",
+        "group_name": "MARKETHUB",
+        "enabled": True,
+        "schedule_type": "cron",
+        "schedule_value": "45 19 * * 1-5",
+        "startup_delay_minutes": 0,
+        "timezone": "Asia/Shanghai",
+        "executor_type": "shell_file",
+        "script_path": "/data/markethub/scripts/stock-suspension-eligibility-reconcile.sh",
+        "working_directory": "/data/markethub",
+        "argument_text": "",
+        "timeout_seconds": 1800,
+        "description": "核对当日零成交日线与 Tushare 整日停牌原始记录；保留来源审计并刷新分钟缺口资格。",
+    }
+
+
 def reconcile(base_url: str) -> dict[str, object]:
     return _reconcile_task(base_url, desired_task())
 
 
 def reconcile_intraday(base_url: str) -> dict[str, object]:
     return _reconcile_task(base_url, desired_intraday_task())
+
+
+def reconcile_suspension(base_url: str) -> dict[str, object]:
+    return _reconcile_task(base_url, desired_suspension_task())
 
 
 def _reconcile_task(base_url: str, expected: dict[str, object]) -> dict[str, object]:
@@ -83,11 +107,13 @@ def _reconcile_task(base_url: str, expected: dict[str, object]) -> dict[str, obj
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reconcile MarketHub Task Center schedules")
     parser.add_argument("--base-url", default=os.getenv("MARKETHUB_TASK_CENTER_URL", "http://127.0.0.1:8810"))
-    parser.add_argument("--task", choices=("readiness", "intraday"), default="readiness")
+    parser.add_argument("--task", choices=("readiness", "intraday", "suspension"), default="readiness")
     parser.add_argument("--print", action="store_true", dest="print_only")
     args = parser.parse_args()
     if args.task == "intraday":
         result = desired_intraday_task() if args.print_only else reconcile_intraday(args.base_url)
+    elif args.task == "suspension":
+        result = desired_suspension_task() if args.print_only else reconcile_suspension(args.base_url)
     else:
         result = desired_task() if args.print_only else reconcile(args.base_url)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
