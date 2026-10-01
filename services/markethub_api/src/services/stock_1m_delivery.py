@@ -148,23 +148,14 @@ def _validate_coverage(
     expected_daily = 240 if is_open else 0
     by_code = _coverage_map(coverage)
     codes = sorted(set(payload.codes))
-    suspended = _confirmed_suspension_codes(codes, start.date()) if is_open else set()
+    zero_bar_codes = [code for code in codes if not int(by_code.get(code, {}).get("row_count", 0) or 0)]
+    suspended = _confirmed_suspension_codes(zero_bar_codes, start.date()) if is_open else set()
     summaries: list[dict[str, object]] = []
     total_rows = 0
     gaps: list[dict[str, object]] = []
     for code in codes:
         actual = by_code.get(code, {})
         daily_actual_count = int(actual.get("row_count", 0) or 0)
-        if code in suspended and daily_actual_count:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "SUSPENSION_MINUTE_CONFLICT",
-                    "message": "权威整日停牌记录与现存分钟线冲突；需审计来源，不能补写占位线",
-                    "details": {"code": code, "trade_date": start.date().isoformat(),
-                                "actual_rows": daily_actual_count, "dataset_version": dataset_version},
-                },
-            )
         code_expected_daily = 0 if code in suspended else expected_daily
         code_expected = 0 if code in suspended else expected
         complete = daily_actual_count == code_expected_daily
