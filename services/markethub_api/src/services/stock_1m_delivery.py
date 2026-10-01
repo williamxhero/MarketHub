@@ -106,6 +106,26 @@ def _coverage_map(batch: QueryBatch) -> dict[str, dict[str, object]]:
     return {str(row[0]).strip(): dict(zip(batch.columns, row, strict=True)) for row in batch.rows}
 
 
+def _confirmed_suspension_codes(codes: list[str], trade_date: date) -> set[str]:
+    if not codes:
+        return set()
+    batch = _READ_CLIENT.query_batch(
+        """select distinct btrim(daily.code) as code
+           from fact.stock_daily_1d daily
+           where daily.trade_date=%s and daily.code=any(%s::text[])
+             and daily.is_suspended is true and daily.volume=0 and daily.amount=0
+             and exists (
+                 select 1 from fact.stock_suspension_history suspension
+                 where suspension.market=daily.market and suspension.code=daily.code
+                   and suspension.status='suspended'
+                   and daily.trade_date between suspension.suspend_start_date and suspension.suspend_end_date
+             )""",
+        (trade_date, codes),
+        stage="stock_1m_suspensions",
+    )
+    return {str(row[0]).strip() for row in batch.rows}
+
+
 def _validate_coverage(
     payload: StockQuotesQueryPayload,
     coverage: QueryBatch,
@@ -127,21 +147,35 @@ def _validate_coverage(
     # verifies that the requested slice itself did not change after validation.
     expected_daily = 240 if is_open else 0
     by_code = _coverage_map(coverage)
+    codes = sorted(set(payload.codes))
+    suspended = _confirmed_suspension_codes(codes, start.date()) if is_open else set()
     summaries: list[dict[str, object]] = []
     total_rows = 0
     gaps: list[dict[str, object]] = []
-    for code in sorted(set(payload.codes)):
+    for code in codes:
         actual = by_code.get(code, {})
         daily_actual_count = int(actual.get("row_count", 0) or 0)
-        complete = daily_actual_count == expected_daily
-        actual_count = expected if complete else min(expected, daily_actual_count)
+        if code in suspended and daily_actual_count:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "SUSPENSION_MINUTE_CONFLICT",
+                    "message": "权威整日停牌记录与现存分钟线冲突；需审计来源，不能补写占位线",
+                    "details": {"code": code, "trade_date": start.date().isoformat(),
+                                "actual_rows": daily_actual_count, "dataset_version": dataset_version},
+                },
+            )
+        code_expected_daily = 0 if code in suspended else expected_daily
+        code_expected = 0 if code in suspended else expected
+        complete = daily_actual_count == code_expected_daily
+        actual_count = code_expected if complete else min(code_expected, daily_actual_count)
         total_rows += actual_count
         summary = {
             "code": code,
             "row_count": actual_count,
-            "expected_bar_count": expected,
+            "expected_bar_count": code_expected,
             "actual_bar_count": actual_count,
-            "missing_count": max(0, expected - actual_count),
+            "missing_count": max(0, code_expected - actual_count),
             "first_trade_time": str(actual.get("first_trade_time", "") or ""),
             "last_trade_time": str(actual.get("last_trade_time", "") or ""),
             "complete": complete,
@@ -151,7 +185,7 @@ def _validate_coverage(
         }
         summaries.append(summary)
         if not complete and len(gaps) < 100:
-            gaps.append({"code": code, "expected_rows": expected_daily, "actual_rows": daily_actual_count})
+            gaps.append({"code": code, "expected_rows": code_expected_daily, "actual_rows": daily_actual_count})
     if gaps:
         raise HTTPException(
             status_code=409,
@@ -161,7 +195,7 @@ def _validate_coverage(
                 "details": {
                     "dataset_id": STOCK_1M_DATASET_ID,
                     "dataset_version": dataset_version,
-                    "expected_rows": expected * len(summaries),
+                    "expected_rows": sum(int(item["expected_bar_count"]) for item in summaries),
                     "actual_rows": total_rows,
                     "missing_rows": sum(int(item["missing_count"]) for item in summaries),
                     "gap_sample": gaps,
@@ -169,7 +203,7 @@ def _validate_coverage(
                     "repair_template": {
                         "dataset_id": STOCK_1M_DATASET_ID,
                         "dataset_version": dataset_version,
-                        "scope": {"codes": payload.codes, "freq": "1m", "adjust": "none", "start_time": start.isoformat(sep=" "), "end_time": end.isoformat(sep=" ")},
+                        "scope": {"codes": [item["code"] for item in gaps], "freq": "1m", "adjust": "none", "start_time": start.isoformat(sep=" "), "end_time": end.isoformat(sep=" ")},
                     },
                 },
             },
