@@ -46,6 +46,19 @@ def api_json(base: str, path: str, *, post: bool = False) -> object:
         return json.load(response)
 
 
+def require_stable_daily_snapshot(before: object, after: object) -> None:
+    """Allow unrelated minute writes while guarding the daily facts being reconciled."""
+    if not isinstance(before, dict) or not isinstance(after, dict) or after.get("status") != "ok":
+        raise RuntimeError("MarketHub health changed during suspension source probe")
+    before_datasets, after_datasets = before.get("dataset_versions"), after.get("dataset_versions")
+    if not isinstance(before_datasets, dict) or not isinstance(after_datasets, dict):
+        raise RuntimeError("MarketHub daily dataset version unavailable during suspension source probe")
+    before_daily = before_datasets.get("stock_daily_1d")
+    after_daily = after_datasets.get("stock_daily_1d")
+    if not before_daily or not after_daily or (before.get("version"), before_daily) != (after.get("version"), after_daily):
+        raise RuntimeError("MarketHub release/stock daily dataset version changed during suspension source probe")
+
+
 def db_connection() -> psycopg.Connection:
     return psycopg.connect(
         host=os.environ["MARKETHUB_DB_HOST"], port=os.environ["MARKETHUB_DB_PORT"],
@@ -232,8 +245,7 @@ def main() -> int:
         connection.commit()
         raw, qualified, residual = source_probe(targets) if targets else ([], [], [])
         after_probe = api_json(API, "/api/health")
-        if not isinstance(after_probe, dict) or (after_probe.get("version"), after_probe.get("data_version")) != (before.get("version"), before.get("data_version")):
-            raise RuntimeError("MarketHub release/data version changed during suspension source probe")
+        require_stable_daily_snapshot(before, after_probe)
         captured_at = datetime.now(timezone.utc).isoformat()
         raw_path = run_dir / "source_raw.json"
         raw_path.write_text(json.dumps({"captured_at_utc": captured_at, "source": SOURCE,
@@ -245,6 +257,8 @@ def main() -> int:
         residual_path.write_text(json.dumps(residual, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
         manifest = {"captured_at_utc": captured_at, "source": SOURCE, "source_marker": SOURCE_MARKER,
                     "release": before.get("version"), "data_version_before": before.get("data_version"),
+                    "data_version_after_probe": after_probe.get("data_version"),
+                    "stock_daily_dataset_version": before["dataset_versions"]["stock_daily_1d"],
                     "target_count": len(targets), "qualified_count": len(qualified),
                     "residual_count": len(residual), "residual": residual,
                     "raw_sha256": sha256(raw_path), "qualified_sha256": sha256(qualified_path),
@@ -252,7 +266,7 @@ def main() -> int:
         manifest_path = run_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         inserted, updated, ineligible = apply_qualified(
-            connection, qualified, str(before.get("data_version", "")), captured_at
+            connection, qualified, str(after_probe.get("data_version", "")), captured_at
         )
         manifest["history_rows_inserted"] = inserted
         manifest["daily_flags_corrected"] = updated
