@@ -66,23 +66,28 @@ def records(frame: object) -> list[dict[str, object]]:
     return output
 
 
-def candidates(connection: psycopg.Connection, target_date: str) -> list[tuple[str, str, str]]:
+def candidates(connection: psycopg.Connection, target_date: str) -> list[tuple[str, str, str, int]]:
     with connection.cursor() as cursor:
         cursor.execute(
-            """select market, btrim(code), trade_date::text
-               from fact.stock_daily_1d
-               where trade_date = coalesce(%s::date, (select max(trade_date) from fact.stock_daily_1d))
-                 and volume = 0 and amount = 0 and is_suspended is false
-               order by market, code""",
+            """select daily.market, btrim(daily.code), daily.trade_date::text,
+                      coalesce(coverage.row_count, 0)
+               from fact.stock_daily_1d daily
+               left join readmodel.stock_bar_1m_daily_coverage coverage
+                 on coverage.market=daily.market and coverage.code=daily.code
+                and coverage.trade_date=daily.trade_date
+               where daily.trade_date = coalesce(%s::date, (select max(trade_date) from fact.stock_daily_1d))
+                 and daily.volume = 0 and daily.amount = 0 and daily.is_suspended is false
+               order by daily.market, daily.code""",
             (target_date or None,),
         )
-        result = [(str(market), str(code), str(day)) for market, code, day in cursor.fetchall()]
+        result = [(str(market), str(code), str(day), int(bars))
+                  for market, code, day, bars in cursor.fetchall()]
     if len(result) > 100:
         raise RuntimeError(f"zero-turnover candidate count {len(result)} exceeds safety bound 100")
     return result
 
 
-def source_probe(targets: list[tuple[str, str, str]]) -> tuple[list[dict], list[dict], list[dict]]:
+def source_probe(targets: list[tuple[str, str, str, int]]) -> tuple[list[dict], list[dict], list[dict]]:
     from quotemux.settings import QuoteMuxSettings
     from quotemux.source_packages.instance_context import use_source_instance
     from quotemux_packages.tushare.rate_limit import call_tushare_api
@@ -98,7 +103,7 @@ def source_probe(targets: list[tuple[str, str, str]]) -> tuple[list[dict], list[
         provider = get_ts_pro()
         if provider is None:
             raise RuntimeError("Tushare provider unavailable")
-        for market, code, day in targets:
+        for market, code, day, existing_bars in targets:
             key = {"market": market, "code": code, "trade_date": day}
             if market not in suffix:
                 residual.append({**key, "reason": "unsupported_market"})
@@ -117,8 +122,11 @@ def source_probe(targets: list[tuple[str, str, str]]) -> tuple[list[dict], list[
                         and str(row.get("trade_date", "")) == day.replace("-", "")
                         and str(row.get("suspend_type", "")).upper() == "S"
                         and row.get("suspend_timing") in (None, "")]
-            if not daily and len(verified) == 1:
+            if not daily and len(verified) == 1 and existing_bars == 0:
                 qualified.append({**key, "source_code": source_code, "source_record": verified[0]})
+            elif not daily and len(verified) == 1 and existing_bars > 0:
+                residual.append({**key, "reason": "source_confirmed_suspension_conflicts_with_existing_1m",
+                                 "existing_1m_bars": existing_bars})
             else:
                 residual.append({**key, "reason": "full_day_suspension_not_confirmed",
                                  "daily_rows": len(daily), "suspension_rows": len(verified)})
