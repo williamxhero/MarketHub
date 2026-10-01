@@ -128,8 +128,8 @@ def source_probe(targets: list[tuple[str, str, str]]) -> tuple[list[dict], list[
 
 
 def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_version: str,
-                    captured_at: str) -> tuple[int, int]:
-    inserted = updated = 0
+                    captured_at: str) -> tuple[int, int, int]:
+    inserted = updated = ineligible = 0
     with connection.transaction():
         with connection.cursor() as cursor:
             for row in qualified:
@@ -164,6 +164,26 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
                     (market, code, day, day, day),
                 )
                 updated += cursor.rowcount
+                cursor.execute(
+                    """update market_data_capture_gaps gaps
+                       set status='ineligible_suspended', last_seen_at=now(), resolved_at=null,
+                           last_error='source-confirmed full-day suspension; 1m bars not expected'
+                       from fact.stock_daily_1d daily
+                       where gaps.capability_id='stocks.quotes.intraday'
+                         and gaps.code=%s and gaps.trade_date=%s::date
+                         and gaps.status not in ('resolved', 'ineligible_suspended')
+                         and daily.market=%s and daily.code=gaps.code
+                         and daily.trade_date=gaps.trade_date
+                         and daily.is_suspended is true and daily.volume=0 and daily.amount=0
+                         and exists (
+                             select 1 from fact.stock_suspension_history history
+                             where history.market=daily.market and history.code=daily.code
+                               and history.status='suspended'
+                               and daily.trade_date between history.suspend_start_date and history.suspend_end_date
+                         )""",
+                    (code, day, market),
+                )
+                ineligible += cursor.rowcount
             for row in qualified:
                 cursor.execute(
                     """select daily.is_suspended and exists (
@@ -179,7 +199,7 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
                 result = cursor.fetchone()
                 if result != (True,):
                     raise RuntimeError(f"post-write suspension verification failed: {row['market']}:{row['code']}:{row['trade_date']}")
-    return inserted, updated
+    return inserted, updated, ineligible
 
 
 def main() -> int:
@@ -223,9 +243,12 @@ def main() -> int:
                     "residual_sha256": sha256(residual_path), "script_sha256": sha256(Path(__file__))}
         manifest_path = run_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        inserted, updated = apply_qualified(connection, qualified, str(before.get("data_version", "")), captured_at)
+        inserted, updated, ineligible = apply_qualified(
+            connection, qualified, str(before.get("data_version", "")), captured_at
+        )
         manifest["history_rows_inserted"] = inserted
         manifest["daily_flags_corrected"] = updated
+        manifest["capture_gaps_ineligible"] = ineligible
         manifest["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     audit = api_json(API, "/api/admin/capture-gaps/audit?window_count=90", post=True)
@@ -244,7 +267,8 @@ def main() -> int:
                     raise RuntimeError(f"capture gap not classified as source-confirmed suspension: {row['code']} {row['trade_date']} status={gap[0]}")
     print(json.dumps({"artifact": str(run_dir), "targets": len(targets), "qualified": len(qualified),
                       "residual": len(residual), "history_rows_inserted": inserted,
-                      "daily_flags_corrected": updated}, ensure_ascii=False), flush=True)
+                      "daily_flags_corrected": updated,
+                      "capture_gaps_ineligible": ineligible}, ensure_ascii=False), flush=True)
     return 2 if residual else 0
 
 
