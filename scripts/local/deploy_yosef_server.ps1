@@ -610,7 +610,7 @@ Nice=10
 TimeoutStartSec=2h20min
 MemoryMax=1G
 GAP_SERVICE
-    cat >/tmp/markethub-stock-intraday-gap-backfill.timer <<GAP_TIMER
+    cat >/tmp/${release_name}-markethub-stock-intraday-gap-backfill.timer <<GAP_TIMER
 [Unit]
 Description=Run stock 1m historical gap backfill after daily capture
 
@@ -625,7 +625,7 @@ Unit=markethub-stock-intraday-gap-backfill.service
 [Install]
 WantedBy=timers.target
 GAP_TIMER
-    cat >/tmp/markethub-stock-intraday-gap-backfill-postclose.service <<GAP_POSTCLOSE_SERVICE
+    cat >/tmp/${release_name}-markethub-stock-intraday-gap-backfill-postclose.service <<GAP_POSTCLOSE_SERVICE
 [Unit]
 Description=Bounded post-close MarketHub stock 1m historical gap backfill
 After=network-online.target markethub-api.service
@@ -643,7 +643,7 @@ Nice=10
 TimeoutStartSec=1h45min
 MemoryMax=1G
 GAP_POSTCLOSE_SERVICE
-    cat >/tmp/markethub-stock-intraday-gap-backfill-postclose.timer <<GAP_POSTCLOSE_TIMER
+    cat >/tmp/${release_name}-markethub-stock-intraday-gap-backfill-postclose.timer <<GAP_POSTCLOSE_TIMER
 [Unit]
 Description=Run stock 1m historical gap backfill after close and global update
 
@@ -656,7 +656,7 @@ Unit=markethub-stock-intraday-gap-backfill-postclose.service
 [Install]
 WantedBy=timers.target
 GAP_POSTCLOSE_TIMER
-    cat >/tmp/markethub-stock-intraday-gap-backfill-preopen.service <<GAP_PREOPEN_SERVICE
+    cat >/tmp/${release_name}-markethub-stock-intraday-gap-backfill-preopen.service <<GAP_PREOPEN_SERVICE
 [Unit]
 Description=Bounded pre-open MarketHub stock 1m historical gap backfill
 After=network-online.target markethub-api.service
@@ -674,7 +674,7 @@ Nice=10
 TimeoutStartSec=1h45min
 MemoryMax=1G
 GAP_PREOPEN_SERVICE
-    cat >/tmp/markethub-stock-intraday-gap-backfill-preopen.timer <<GAP_PREOPEN_TIMER
+    cat >/tmp/${release_name}-markethub-stock-intraday-gap-backfill-preopen.timer <<GAP_PREOPEN_TIMER
 [Unit]
 Description=Run stock 1m historical gap backfill before the next market open
 
@@ -721,11 +721,11 @@ Unit=markethub-stock-30m-from-1m.service
 WantedBy=timers.target
 BAR_30M_TIMER
     sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill.service /etc/systemd/system/markethub-stock-intraday-gap-backfill.service
-    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill.timer
-    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill-postclose.service /etc/systemd/system/markethub-stock-intraday-gap-backfill-postclose.service
-    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill-postclose.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill-postclose.timer
-    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill-preopen.service /etc/systemd/system/markethub-stock-intraday-gap-backfill-preopen.service
-    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill-preopen.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill-preopen.timer
+    sudo -n install -m 0644 /tmp/${release_name}-markethub-stock-intraday-gap-backfill.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill.timer
+    sudo -n install -m 0644 /tmp/${release_name}-markethub-stock-intraday-gap-backfill-postclose.service /etc/systemd/system/markethub-stock-intraday-gap-backfill-postclose.service
+    sudo -n install -m 0644 /tmp/${release_name}-markethub-stock-intraday-gap-backfill-postclose.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill-postclose.timer
+    sudo -n install -m 0644 /tmp/${release_name}-markethub-stock-intraday-gap-backfill-preopen.service /etc/systemd/system/markethub-stock-intraday-gap-backfill-preopen.service
+    sudo -n install -m 0644 /tmp/${release_name}-markethub-stock-intraday-gap-backfill-preopen.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill-preopen.timer
     sudo -n install -m 0644 /tmp/markethub-stock-30m-from-1m.service /etc/systemd/system/markethub-stock-30m-from-1m.service
     sudo -n install -m 0644 /tmp/markethub-stock-30m-from-1m.timer /etc/systemd/system/markethub-stock-30m-from-1m.timer
     cat >/tmp/markethub-index-observation.service <<INDEX_OBSERVATION_SERVICE
