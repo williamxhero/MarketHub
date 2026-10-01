@@ -559,6 +559,7 @@ for attempt in $(seq 1 20); do
     install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/reconcile_stock_intraday_suspensions.py" "$runtime_root/scripts/reconcile-stock-intraday-suspensions.py"
     install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/run_stock_intraday_gap_backfill.py" "$runtime_root/scripts/run-stock-intraday-gap-backfill.py"
     install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/upsert_stock_30m_from_complete_1m.py" "$runtime_root/scripts/upsert-stock-30m-from-complete-1m.py"
+    install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/capture_index_observation.py" "$runtime_root/scripts/capture-index-observation.py"
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/reconcile_task_center.py" "$runtime_root/scripts/reconcile_task_center.py"
     "$runtime_root/.venv/bin/python" "$runtime_root/scripts/reconcile_task_center.py"
     "$runtime_root/.venv/bin/python" "$runtime_root/scripts/reconcile_task_center.py" --task suspension
@@ -661,8 +662,38 @@ BAR_30M_TIMER
     sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill.timer
     sudo -n install -m 0644 /tmp/markethub-stock-30m-from-1m.service /etc/systemd/system/markethub-stock-30m-from-1m.service
     sudo -n install -m 0644 /tmp/markethub-stock-30m-from-1m.timer /etc/systemd/system/markethub-stock-30m-from-1m.timer
+    cat >/tmp/markethub-index-observation.service <<INDEX_OBSERVATION_SERVICE
+[Unit]
+Description=MarketHub daily PostgreSQL index observation
+After=postgresql@16-main.service
+Requires=postgresql@16-main.service
+
+[Service]
+Type=oneshot
+User=$service_user
+Group=$service_group
+EnvironmentFile=$env_path
+ExecStart=$runtime_root/.venv/bin/python $runtime_root/scripts/capture-index-observation.py --output-root $runtime_root/observability/indexes
+NoNewPrivileges=true
+PrivateTmp=true
+INDEX_OBSERVATION_SERVICE
+    cat >/tmp/markethub-index-observation.timer <<INDEX_OBSERVATION_TIMER
+[Unit]
+Description=Run MarketHub index observation after each trading-day window
+
+[Timer]
+OnCalendar=*-*-* 21:30:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=120
+Unit=markethub-index-observation.service
+
+[Install]
+WantedBy=timers.target
+INDEX_OBSERVATION_TIMER
+    sudo -n install -m 0644 /tmp/markethub-index-observation.service /etc/systemd/system/markethub-index-observation.service
+    sudo -n install -m 0644 /tmp/markethub-index-observation.timer /etc/systemd/system/markethub-index-observation.timer
     sudo -n systemctl daemon-reload
-    sudo -n systemctl enable --now markethub-stock-intraday-gap-backfill.timer markethub-stock-30m-from-1m.timer
+    sudo -n systemctl enable --now markethub-stock-intraday-gap-backfill.timer markethub-stock-30m-from-1m.timer markethub-index-observation.timer
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/update-futures-1m.sh" "$runtime_root/scripts/update-futures-1m.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/manage_formal_export_freeze.sh" "$runtime_root/scripts/manage-formal-export-freeze.sh"
     install -m 0755 "$remote_root/current/MarketHub/migrations/storage_v2_20260823/cleanup_after_migration.sh" "$runtime_root/scripts/storage-v2-cleanup-after-migration.sh"
