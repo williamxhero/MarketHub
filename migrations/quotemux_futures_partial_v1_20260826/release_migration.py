@@ -133,7 +133,8 @@ def _probe_role(user: str, password: str, *, reader: bool) -> None:
                 "has_table_privilege(current_user,'fact.future_bar_1m','insert'),"
                 "has_table_privilege(current_user,'fact.future_bar_1m','update'),"
                 "has_table_privilege(current_user,'fact.future_bar_1m','delete'),"
-                "has_table_privilege(current_user,'fact.future_bar_1m','truncate')"
+                "has_table_privilege(current_user,'fact.future_bar_1m','truncate'),"
+                "has_table_privilege(current_user,'fact.stock_suspension_history','select')"
             )
             row = cursor.fetchone()
         connection.rollback()
@@ -141,12 +142,14 @@ def _probe_role(user: str, password: str, *, reader: bool) -> None:
         connection.close()
     if row is None:
         raise RuntimeError("QuoteMux role privilege probe returned no row")
-    actual_user, can_select, can_insert, can_update, can_delete, can_truncate = row
+    actual_user, can_select, can_insert, can_update, can_delete, can_truncate, can_read_suspensions = row
     expected_user = "quotemux_public_reader" if reader else "quotemux_futures_partial_publisher"
     if actual_user != expected_user or not bool(can_select) or bool(can_update) or bool(can_delete) or bool(can_truncate):
         raise RuntimeError("QuoteMux role probe found unexpected identity or write privilege")
     if reader and bool(can_insert):
         raise RuntimeError("QuoteMux public reader unexpectedly has INSERT")
+    if reader and not bool(can_read_suspensions):
+        raise RuntimeError("QuoteMux public reader lacks stock suspension history SELECT")
     if not reader and not bool(can_insert):
         raise RuntimeError("QuoteMux partial publisher lacks required INSERT")
 
