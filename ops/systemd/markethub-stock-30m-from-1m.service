@@ -1,0 +1,16 @@
+[Unit]
+Description=Derive missing stock 30m days from complete real 1m facts
+After=network-online.target postgresql.service markethub-api.service
+Wants=network-online.target
+Requires=markethub-api.service
+
+[Service]
+Type=oneshot
+User=yosef
+Group=yosef
+WorkingDirectory=/data/markethub
+EnvironmentFile=/data/markethub/env/markethub.env
+ExecStart=/data/markethub/.venv/bin/python /data/markethub/scripts/upsert-stock-30m-from-complete-1m.py --max-days 10
+Nice=10
+TimeoutStartSec=15min
+MemoryMax=2G

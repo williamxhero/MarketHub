@@ -1,0 +1,13 @@
+[Unit]
+Description=Derive 30m after the daily stock 1m capture
+
+[Timer]
+OnCalendar=*-*-* 14:30:00 UTC
+OnCalendar=*-*-* 15:30:00 UTC
+OnCalendar=*-*-* 17:30:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=markethub-stock-30m-from-1m.service
+
+[Install]
+WantedBy=timers.target

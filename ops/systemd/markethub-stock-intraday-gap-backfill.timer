@@ -1,0 +1,13 @@
+[Unit]
+Description=Run stock 1m historical gap backfill after daily capture
+
+[Timer]
+OnCalendar=*-*-* 13:30:00 UTC
+OnCalendar=*-*-* 14:00:00 UTC
+OnCalendar=*-*-* 14:15:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=markethub-stock-intraday-gap-backfill.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Bounded MarketHub stock 1m historical gap backfill
+After=network-online.target markethub-api.service
+Wants=network-online.target
+Requires=markethub-api.service
+
+[Service]
+Type=oneshot
+User=yosef
+Group=yosef
+WorkingDirectory=/data/markethub
+EnvironmentFile=/data/markethub/env/markethub.env
+ExecStart=/data/markethub/.venv/bin/python /data/markethub/scripts/run-stock-intraday-gap-backfill.py --batch-size 50 --max-batches 500 --stop-at-utc 15:40
+Nice=10
+TimeoutStartSec=2h20min
+MemoryMax=1G
