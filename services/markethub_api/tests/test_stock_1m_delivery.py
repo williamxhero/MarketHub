@@ -41,6 +41,26 @@ def _payload() -> StockQuotesQueryPayload:
     return StockQuotesQueryPayload(codes=["600000"], freq="1m", trade_date="2026-08-14", dataset_version="mhd-v1-test")
 
 
+def test_stock_1m_accepts_only_source_confirmed_suspension_without_minute_rows(monkeypatch) -> None:
+    monkeypatch.setattr(stock_1m_delivery, "_is_open_trade_date", lambda _date: True)
+    monkeypatch.setattr(stock_1m_delivery, "_confirmed_suspension_codes", lambda codes, _date: {"600363"} if "600363" in codes else set())
+    coverage = QueryBatch(("code", "row_count", "first_trade_time", "last_trade_time"), ())
+
+    payload = StockQuotesQueryPayload(codes=["600363"], freq="1m", trade_date="2026-09-29")
+    summaries, total = stock_1m_delivery._validate_coverage(
+        payload,
+        coverage,
+        stock_1m_delivery.datetime(2026, 9, 29, 9, 31),
+        stock_1m_delivery.datetime(2026, 9, 29, 15, 0),
+        "mhd-v1-test",
+    )
+
+    assert total == 0
+    assert summaries[0]["expected_bar_count"] == 0
+    assert summaries[0]["missing_count"] == 0
+    assert summaries[0]["complete"] is True
+
+
 def test_stock_1m_arrow_streams_record_batches_without_row_models(monkeypatch) -> None:
     monkeypatch.setattr(stock_1m_delivery, "_is_open_trade_date", lambda _date: True)
     coverage = QueryBatch(("code", "row_count", "first_trade_time", "last_trade_time"), (("600000", 240, "2026-08-14 09:31:00", "2026-08-14 15:00:00"),))
