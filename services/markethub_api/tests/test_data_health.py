@@ -275,6 +275,26 @@ def test_recent_coverage_rejects_missing_provider_earliest_date() -> None:
     assert "provider_earliest_date" in check.error_text
 
 
+def test_recent_minute_coverage_warns_for_exact_gaps_when_all_dates_have_bars(monkeypatch) -> None:
+    import pandas as pd
+
+    def fake_query_dataframe(query: str, params: object = None):
+        if "market_data_capture_gaps" in query:
+            return pd.DataFrame([{"unresolved_keys": 84519}])
+        if "expected_days" in query:
+            return pd.DataFrame([{"expected_days": 63}])
+        return pd.DataFrame([{"actual_days": 63}])
+
+    monkeypatch.setattr(data_health, "query_dataframe", fake_query_dataframe)
+    check = data_health._recent_coverage_check(
+        "minute_session_coverage_90d:fact.stock_bar_1m", "",
+        "fact.stock_bar_1m", "bar_time", "2024-01-01",
+        {"fact.stock_bar_1m": {"exists": True}}, True, {"status": "healthy"},
+    )
+    assert check.status == "warning"
+    assert "84519" in check.error_text
+
+
 def test_recent_minute_session_check_reports_incomplete_trade_day(monkeypatch) -> None:
     import pandas as pd
 
@@ -282,6 +302,8 @@ def test_recent_minute_session_check_reports_incomplete_trade_day(monkeypatch) -
         if "from ref.trade_calendar" in query:
             assert params == (10,)
             return pd.DataFrame([{"trade_date": "2026-07-09"}])
+        if "from market_data_capture_gaps" in query:
+            return pd.DataFrame(columns=["trade_date", "unresolved_keys"])
         assert ">= %s::timestamp" in query
         assert "<= %s::timestamp" in query
         assert "= any(%s::date[])" in query
@@ -325,6 +347,8 @@ def test_recent_minute_session_check_passes_complete_trade_days(monkeypatch) -> 
     def fake_query_dataframe(query: str, params: object = None):
         if "from ref.trade_calendar" in query:
             return pd.DataFrame([{"trade_date": "2026-07-08"}])
+        if "from market_data_capture_gaps" in query:
+            return pd.DataFrame(columns=["trade_date", "unresolved_keys"])
         return pd.DataFrame(
             [
                 {
@@ -363,6 +387,8 @@ def test_recent_minute_session_check_reports_missing_expected_day(monkeypatch) -
     def fake_query_dataframe(query: str, params: object = None):
         if "from ref.trade_calendar" in query:
             return pd.DataFrame([{"trade_date": "2026-07-09"}, {"trade_date": "2026-07-08"}])
+        if "from market_data_capture_gaps" in query:
+            return pd.DataFrame(columns=["trade_date", "unresolved_keys"])
         return pd.DataFrame(
             [
                 {
@@ -392,6 +418,33 @@ def test_recent_minute_session_check_reports_missing_expected_day(monkeypatch) -
 
     assert check.status == "warning"
     assert "2026-07-08 无 1m 数据" in check.error_text
+
+
+def test_recent_minute_session_check_reports_unresolved_exact_stock_days(monkeypatch) -> None:
+    import pandas as pd
+
+    def fake_query_dataframe(query: str, params: object = None):
+        if "from ref.trade_calendar" in query:
+            return pd.DataFrame([{"trade_date": "2026-09-29"}])
+        if "from market_data_capture_gaps" in query:
+            assert params == (["2026-09-29"],)
+            return pd.DataFrame([{"trade_date": "2026-09-29", "unresolved_keys": 2639}])
+        return pd.DataFrame([{
+            "trade_date": "2026-09-29", "minute_count": 240,
+            "total_rows": 695000, "first_minute": "09:31:00",
+            "last_minute": "15:00:00", "min_rows_per_minute": 2895,
+            "max_rows_per_minute": 2896,
+        }])
+
+    monkeypatch.setattr(data_health, "query_dataframe", fake_query_dataframe)
+    check = data_health._recent_minute_session_check(
+        "recent_minute_session_complete:fact.stock_bar_1m", "",
+        "fact.stock_bar_1m", 240, 10, 0.95,
+        {"fact.stock_bar_1m": {"exists": True}}, True, {"status": "healthy"},
+    )
+    assert check.status == "warning"
+    assert "2026-09-29" in check.error_text
+    assert "2639" in check.error_text
 
 
 def test_market_data_contract_check_reports_metric_failure() -> None:

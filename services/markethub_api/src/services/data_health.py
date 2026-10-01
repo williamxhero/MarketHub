@@ -695,8 +695,30 @@ def _recent_coverage_check(check_id: str, title: str, object_name: str, column: 
         return CheckSpec(check_id, title, "unknown", "未执行", "provider 起点后的最近窗口没有交易日记录")
     if actual_days <= 0:
         return CheckSpec(check_id, title, "unhealthy", "异常", f"provider 起点 {provider_earliest_date} 后的最近窗口没有本地覆盖数据")
-    if actual_days < expected_days:
-        return CheckSpec(check_id, title, "warning", "警告", f"provider 起点 {provider_earliest_date} 后的最近窗口覆盖 {actual_days}/{expected_days} 个交易日")
+    unresolved_keys = 0
+    if object_name == "fact.stock_bar_1m":
+        try:
+            gap_frame = query_dataframe(
+                """
+                select count(*)::int as unresolved_keys
+                from market_data_capture_gaps
+                where capability_id = 'stocks.quotes.intraday'
+                  and trade_date >= greatest((current_date - interval '90 days')::date, %s::date)
+                  and trade_date < current_date
+                  and status not in ('resolved', 'ineligible_suspended')
+                """,
+                (provider_earliest_date,),
+            )
+        except Exception as error:
+            return CheckSpec(check_id, title, "warning", "警告", f"无法核对近 90 天逐股票分钟缺口: {type(error).__name__}")
+        if gap_frame.empty or "unresolved_keys" not in gap_frame.columns:
+            return CheckSpec(check_id, title, "warning", "警告", "近 90 天逐股票分钟缺口查询无有效结果")
+        unresolved_keys = int(gap_frame.iloc[0]["unresolved_keys"] or 0)
+    if actual_days < expected_days or unresolved_keys:
+        detail = f"provider 起点 {provider_earliest_date} 后的最近窗口覆盖 {actual_days}/{expected_days} 个交易日"
+        if unresolved_keys:
+            detail += f"；尚有 {unresolved_keys} 个逐股票分钟缺口"
+        return CheckSpec(check_id, title, "warning", "警告", detail)
     return CheckSpec(check_id, title, "healthy", "正常")
 
 
@@ -781,8 +803,33 @@ def _recent_minute_session_check(
     )
     rows_by_day = {str(row["trade_date"]): row for row in frame.to_dict("records")}
     issues: list[str] = []
+    gap_counts: dict[str, int] = {}
+    if object_name == "fact.stock_bar_1m":
+        try:
+            gap_frame = query_dataframe(
+                """
+                select trade_date::text as trade_date, count(*)::int as unresolved_keys
+                from market_data_capture_gaps
+                where capability_id = 'stocks.quotes.intraday'
+                  and trade_date = any(%s::date[])
+                  and status not in ('resolved', 'ineligible_suspended')
+                group by trade_date
+                """,
+                (expected_days,),
+            )
+        except Exception as error:
+            return CheckSpec(check_id, title, "warning", "警告", f"无法核对逐股票分钟缺口: {type(error).__name__}")
+        if not gap_frame.empty and not {"trade_date", "unresolved_keys"}.issubset(gap_frame.columns):
+            return CheckSpec(check_id, title, "warning", "警告", "逐股票分钟缺口查询缺少必要字段")
+        gap_counts = {
+            str(row["trade_date"]): int(row["unresolved_keys"])
+            for row in gap_frame.to_dict("records")
+        }
     for trade_date in expected_days:
         row = rows_by_day.get(trade_date, {})
+        unresolved_keys = gap_counts.get(trade_date, 0)
+        if unresolved_keys:
+            issues.append(f"{trade_date} 尚有 {unresolved_keys} 个股票日缺口")
         minute_count = int(row.get("minute_count", 0) or 0)
         min_rows = int(row.get("min_rows_per_minute", 0) or 0)
         max_rows = int(row.get("max_rows_per_minute", 0) or 0)
