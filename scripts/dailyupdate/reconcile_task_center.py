@@ -87,12 +87,19 @@ def reconcile_suspension(base_url: str) -> dict[str, object]:
 
 
 def _reconcile_task(base_url: str, expected: dict[str, object]) -> dict[str, object]:
+    with urlopen(f"{base_url.rstrip('/')}/api/tasks", timeout=30) as response:
+        existing = json.load(response)
+    if not isinstance(existing, list):
+        raise RuntimeError("Task Center returned a non-list task index")
+    task_exists = any(isinstance(item, dict) and item.get("task_id") == expected["task_id"]
+                      for item in existing)
     payload = json.dumps(expected, ensure_ascii=False).encode("utf-8")
     request = Request(
-        f"{base_url.rstrip('/')}/api/tasks/{expected['task_id']}",
+        (f"{base_url.rstrip('/')}/api/tasks/{expected['task_id']}" if task_exists
+         else f"{base_url.rstrip('/')}/api/tasks"),
         data=payload,
         headers={"Content-Type": "application/json; charset=utf-8"},
-        method="PUT",
+        method="PUT" if task_exists else "POST",
     )
     with urlopen(request, timeout=30) as response:
         result = json.load(response)

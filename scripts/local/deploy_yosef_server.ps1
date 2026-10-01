@@ -206,7 +206,7 @@ restart_on_exit() {
   if [ "$service_stopped" = 1 ] || [ "$current_switched" = 1 ]; then
     sudo -n systemctl daemon-reload || true
     sudo -n systemctl restart "$service_name.service" >/dev/null 2>&1 || true
-    if ! curl -fsS "$health_url" >/dev/null; then
+    if ! curl -fsS --retry 20 --retry-delay 2 --retry-connrefused --max-time 5 "$health_url" >/dev/null; then
       echo "rollback failed: previous release health check also failed" >&2
     fi
   fi
