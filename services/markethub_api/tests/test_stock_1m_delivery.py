@@ -20,6 +20,11 @@ from app import app
 from services import stock_1m_delivery
 
 
+@pytest.fixture(autouse=True)
+def no_source_confirmed_suspensions(monkeypatch) -> None:
+    monkeypatch.setattr(stock_1m_delivery, "_confirmed_suspension_codes", lambda *_args: set())
+
+
 class _FakeStream:
     def __init__(self, coverage: QueryBatch, batches: tuple[QueryBatch, ...]) -> None:
         self.coverage = coverage
@@ -59,6 +64,29 @@ def test_stock_1m_accepts_only_source_confirmed_suspension_without_minute_rows(m
     assert summaries[0]["expected_bar_count"] == 0
     assert summaries[0]["missing_count"] == 0
     assert summaries[0]["complete"] is True
+
+
+@pytest.mark.parametrize("actual_rows", [1, 240])
+def test_stock_1m_rejects_minutes_conflicting_with_source_confirmed_suspension(monkeypatch, actual_rows: int) -> None:
+    monkeypatch.setattr(stock_1m_delivery, "_is_open_trade_date", lambda _date: True)
+    monkeypatch.setattr(stock_1m_delivery, "_confirmed_suspension_codes", lambda *_args: {"600363"})
+    coverage = QueryBatch(
+        ("code", "row_count", "first_trade_time", "last_trade_time"),
+        (("600363", actual_rows, "2026-09-29 09:31:00", "2026-09-29 15:00:00"),),
+    )
+    payload = StockQuotesQueryPayload(codes=["600363"], freq="1m", trade_date="2026-09-29")
+
+    with pytest.raises(HTTPException) as error:
+        stock_1m_delivery._validate_coverage(
+            payload,
+            coverage,
+            stock_1m_delivery.datetime(2026, 9, 29, 9, 31),
+            stock_1m_delivery.datetime(2026, 9, 29, 15, 0),
+            "mhd-v1-test",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "SUSPENSION_MINUTE_CONFLICT"
 
 
 def test_stock_1m_arrow_streams_record_batches_without_row_models(monkeypatch) -> None:
