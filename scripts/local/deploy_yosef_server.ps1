@@ -618,13 +618,75 @@ Description=Run stock 1m historical gap backfill after daily capture
 OnCalendar=*-*-* 13:30:00 UTC
 OnCalendar=*-*-* 14:00:00 UTC
 OnCalendar=*-*-* 14:15:00 UTC
-Persistent=true
+Persistent=false
 AccuracySec=1min
 Unit=markethub-stock-intraday-gap-backfill.service
 
 [Install]
 WantedBy=timers.target
 GAP_TIMER
+    cat >/tmp/markethub-stock-intraday-gap-backfill-postclose.service <<GAP_POSTCLOSE_SERVICE
+[Unit]
+Description=Bounded post-close MarketHub stock 1m historical gap backfill
+After=network-online.target markethub-api.service
+Wants=network-online.target
+Requires=markethub-api.service
+
+[Service]
+Type=oneshot
+User=$service_user
+Group=$service_group
+WorkingDirectory=$runtime_root
+EnvironmentFile=$env_path
+ExecStart=$runtime_root/.venv/bin/python $runtime_root/scripts/run-stock-intraday-gap-backfill.py --batch-size 50 --max-batches 500 --stop-at-utc 11:00
+Nice=10
+TimeoutStartSec=1h45min
+MemoryMax=1G
+GAP_POSTCLOSE_SERVICE
+    cat >/tmp/markethub-stock-intraday-gap-backfill-postclose.timer <<GAP_POSTCLOSE_TIMER
+[Unit]
+Description=Run stock 1m historical gap backfill after close and global update
+
+[Timer]
+OnCalendar=*-*-* 09:30:00 UTC
+Persistent=false
+AccuracySec=1min
+Unit=markethub-stock-intraday-gap-backfill-postclose.service
+
+[Install]
+WantedBy=timers.target
+GAP_POSTCLOSE_TIMER
+    cat >/tmp/markethub-stock-intraday-gap-backfill-preopen.service <<GAP_PREOPEN_SERVICE
+[Unit]
+Description=Bounded pre-open MarketHub stock 1m historical gap backfill
+After=network-online.target markethub-api.service
+Wants=network-online.target
+Requires=markethub-api.service
+
+[Service]
+Type=oneshot
+User=$service_user
+Group=$service_group
+WorkingDirectory=$runtime_root
+EnvironmentFile=$env_path
+ExecStart=$runtime_root/.venv/bin/python $runtime_root/scripts/run-stock-intraday-gap-backfill.py --batch-size 50 --max-batches 500 --stop-at-utc 23:45
+Nice=10
+TimeoutStartSec=1h45min
+MemoryMax=1G
+GAP_PREOPEN_SERVICE
+    cat >/tmp/markethub-stock-intraday-gap-backfill-preopen.timer <<GAP_PREOPEN_TIMER
+[Unit]
+Description=Run stock 1m historical gap backfill before the next market open
+
+[Timer]
+OnCalendar=*-*-* 22:15:00 UTC
+Persistent=false
+AccuracySec=1min
+Unit=markethub-stock-intraday-gap-backfill-preopen.service
+
+[Install]
+WantedBy=timers.target
+GAP_PREOPEN_TIMER
     cat >/tmp/markethub-stock-30m-from-1m.service <<BAR_30M_SERVICE
 [Unit]
 Description=Derive missing stock 30m days from complete real 1m facts
@@ -660,6 +722,10 @@ WantedBy=timers.target
 BAR_30M_TIMER
     sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill.service /etc/systemd/system/markethub-stock-intraday-gap-backfill.service
     sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill.timer
+    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill-postclose.service /etc/systemd/system/markethub-stock-intraday-gap-backfill-postclose.service
+    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill-postclose.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill-postclose.timer
+    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill-preopen.service /etc/systemd/system/markethub-stock-intraday-gap-backfill-preopen.service
+    sudo -n install -m 0644 /tmp/markethub-stock-intraday-gap-backfill-preopen.timer /etc/systemd/system/markethub-stock-intraday-gap-backfill-preopen.timer
     sudo -n install -m 0644 /tmp/markethub-stock-30m-from-1m.service /etc/systemd/system/markethub-stock-30m-from-1m.service
     sudo -n install -m 0644 /tmp/markethub-stock-30m-from-1m.timer /etc/systemd/system/markethub-stock-30m-from-1m.timer
     cat >/tmp/markethub-index-observation.service <<INDEX_OBSERVATION_SERVICE
@@ -693,7 +759,7 @@ INDEX_OBSERVATION_TIMER
     sudo -n install -m 0644 /tmp/markethub-index-observation.service /etc/systemd/system/markethub-index-observation.service
     sudo -n install -m 0644 /tmp/markethub-index-observation.timer /etc/systemd/system/markethub-index-observation.timer
     sudo -n systemctl daemon-reload
-    sudo -n systemctl enable --now markethub-stock-intraday-gap-backfill.timer markethub-stock-30m-from-1m.timer markethub-index-observation.timer
+    sudo -n systemctl enable --now markethub-stock-intraday-gap-backfill.timer markethub-stock-intraday-gap-backfill-postclose.timer markethub-stock-intraday-gap-backfill-preopen.timer markethub-stock-30m-from-1m.timer markethub-index-observation.timer
     install -m 0755 "$remote_root/current/MarketHub/scripts/dailyupdate/update-futures-1m.sh" "$runtime_root/scripts/update-futures-1m.sh"
     install -m 0755 "$remote_root/current/MarketHub/scripts/maintenance/manage_formal_export_freeze.sh" "$runtime_root/scripts/manage-formal-export-freeze.sh"
     install -m 0755 "$remote_root/current/MarketHub/migrations/storage_v2_20260823/cleanup_after_migration.sh" "$runtime_root/scripts/storage-v2-cleanup-after-migration.sh"
