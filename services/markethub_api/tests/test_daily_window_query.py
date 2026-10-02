@@ -503,6 +503,31 @@ def test_daily_window_rejects_unknown_accept_before_query() -> None:
     assert response.json()["code"] == "DAILY_WINDOW_MEDIA_TYPE_NOT_ACCEPTABLE"
 
 
+def test_response_cache_is_keyed_by_global_data_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def build(payload: StockDailyWindowQueryPayload, _accept_gzip: bool) -> daily_window.EncodedDailyWindowResponse:
+        nonlocal calls
+        calls += 1
+        content = json.dumps({"data_version": payload.data_version}).encode()
+        return daily_window.EncodedDailyWindowResponse(
+            content=content,
+            headers={"Content-Encoding": "identity", "Content-Length": str(len(content))},
+        )
+
+    monkeypatch.setattr(daily_window, "_build_response_uncached", build)
+    daily_window.clear_response_cache()
+    first = _payload(data_version="mhf-v1-first")
+    second = _payload(data_version="mhf-v1-second")
+
+    first_response = daily_window.build_response(first, False)
+    second_response = daily_window.build_response(second, False)
+
+    assert json.loads(first_response.content)["data_version"] == "mhf-v1-first"
+    assert json.loads(second_response.content)["data_version"] == "mhf-v1-second"
+    assert calls == 2
+
+
 def test_coverage_cache_is_keyed_by_immutable_dataset_version_and_window(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
 

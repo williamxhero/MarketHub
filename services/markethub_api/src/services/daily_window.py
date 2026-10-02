@@ -732,6 +732,7 @@ def _pin_dataset_version(payload: StockDailyWindowQueryPayload) -> StockDailyWin
 def build_response(payload: StockDailyWindowQueryPayload, accept_gzip: bool) -> EncodedDailyWindowResponse:
     payload = _pin_dataset_version(payload)
     key_payload = {
+        "data_version": payload.data_version,
         "dataset_version": payload.dataset_version,
         "fingerprint": _request_fingerprint(payload),
         "page_size": payload.page_size,
