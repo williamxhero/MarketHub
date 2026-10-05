@@ -23,6 +23,9 @@ SOURCE = "Tushare.suspend_d"
 SOURCE_MARKER = "suspend_type_S_full_day_no_daily"
 API = "http://127.0.0.1:8803"
 TASK_CENTER = "http://127.0.0.1:8810"
+# Some historical daily imports contain the smallest positive float instead of
+# numeric zero for an absent turnover value.  Only source-confirmed full-day
+# suspension can turn one of these candidates into a non-trading day.
 
 
 def service_environment() -> None:
@@ -89,7 +92,9 @@ def candidates(connection: psycopg.Connection, target_date: str) -> list[tuple[s
                  on coverage.market=daily.market and coverage.code=daily.code
                 and coverage.trade_date=daily.trade_date
                where daily.trade_date = coalesce(%s::date, (select max(trade_date) from fact.stock_daily_1d))
-                 and daily.volume = 0 and daily.amount = 0 and daily.is_suspended is false
+                 and daily.volume = 0
+                 and daily.amount is not null and abs(daily.amount) <= 1e-12
+                 and daily.is_suspended is false
                order by daily.market, daily.code""",
             (target_date or None,),
         )
@@ -172,9 +177,11 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
                 inserted += cursor.rowcount
                 cursor.execute(
                     """update fact.stock_daily_1d daily
-                       set is_suspended = true
+                       set is_suspended = true, amount = 0
                        where daily.market=%s and daily.code=%s and daily.trade_date=%s::date
-                         and daily.volume=0 and daily.amount=0 and daily.is_suspended is false
+                         and daily.volume=0
+                         and daily.amount is not null and abs(daily.amount) <= 1e-12
+                         and daily.is_suspended is false
                          and not exists (
                              select 1 from fact.stock_bar_1m minute
                              where minute.market=daily.market
@@ -195,7 +202,9 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
                          and gaps.status not in ('resolved', 'ineligible_suspended')
                          and daily.market=%s and daily.code=gaps.code
                          and daily.trade_date=gaps.trade_date
-                         and daily.is_suspended is true and daily.volume=0 and daily.amount=0
+                         and daily.is_suspended is true
+                         and daily.volume=0
+                         and daily.amount = 0
                          and exists (
                              select 1 from fact.stock_suspension_history history
                              where history.market=daily.market and history.code=daily.code
@@ -214,7 +223,8 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
                              and daily.trade_date between history.suspend_start_date and history.suspend_end_date)
                        from fact.stock_daily_1d daily
                        where daily.market=%s and daily.code=%s and daily.trade_date=%s::date
-                         and daily.volume=0 and daily.amount=0""",
+                         and daily.volume=0
+                         and daily.amount = 0""",
                     (row["market"], row["code"], row["trade_date"]),
                 )
                 result = cursor.fetchone()

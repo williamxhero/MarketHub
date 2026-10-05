@@ -130,11 +130,19 @@ def gap_key(gap: dict) -> str:
     return f"{gap['trade_date']}|{gap['market']}|{gap['code']}"
 
 
-def select_batch(gaps: list[dict], attempts: dict[str, int], size: int) -> list[dict]:
+def select_batch(gaps: list[dict], run_attempts: dict[str, int], size: int) -> list[dict]:
+    """Select a bounded retry batch without permanently blacklisting a key.
+
+    The durable attempt counter is audit telemetry.  Using it as an eligibility
+    gate made a provider outage permanent: after two failures a key was never
+    retried by a later timer run, even after the provider recovered.  The only
+    retry limit here is per invocation; the next scheduled run starts a fresh
+    retry budget and retains all failure evidence.
+    """
     eligible = [
         gap for gap in gaps
         if gap.get("status") != "resolved"
-        and attempts.get(gap_key(gap), 0) < 2
+        and run_attempts.get(gap_key(gap), 0) < 2
     ]
     if not eligible:
         return []
