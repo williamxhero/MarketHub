@@ -111,7 +111,7 @@ def test_remote_migration_discovers_environment_before_deploying() -> None:
     assert 'systemctl show "$SERVICE_NAME.service"' in governance
     assert 'for venv in "$package_venv_root"/*' in governance
     assert '[[ -L "$venv" && ! -e "$venv" ]]' in governance
-    assert "不是 package_venvs 的直接子目录" in governance
+    assert "Configured QuoteMux provider environment is outside package_venvs; refusing governance" in governance
 
 
 def test_package_installer_uses_the_discovered_runtime_root() -> None:
