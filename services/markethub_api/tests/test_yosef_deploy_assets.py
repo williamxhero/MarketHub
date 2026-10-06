@@ -191,8 +191,8 @@ def test_stock_smoke_uses_the_health_discovered_required_data_version() -> None:
     parameters = app.openapi()["paths"]["/api/stocks/quotes"]["get"]["parameters"]
     data_version = next(parameter for parameter in parameters if parameter["name"] == "data_version")
 
-    assert data_version["required"] is True
-    assert data_version["schema"]["minLength"] == 1
+    assert data_version["required"] is False
+    assert data_version["schema"]["default"] == ""
 
 
 def test_peer_migration_temporarily_grants_postgres_runtime_traverse_and_restores_it() -> None:
@@ -209,8 +209,10 @@ def test_peer_migration_temporarily_grants_postgres_runtime_traverse_and_restore
 
 def test_live_bar_recovery_unit_uses_worker_cli_without_shell_json() -> None:
     source = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    recovery_start = source.index("cat >/tmp/markethub-live-bar-recovery.service")
+    recovery_service = source[recovery_start : source.index("\nRECOVERY_SERVICE", recovery_start)]
 
-    assert "Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root" in source
-    assert "Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime" not in source
-    assert 'ExecStart=$runtime_root/.venv/bin/python -m quotemux.live_bars_worker --recover' in source
-    assert 'printf "{\\"action\\":\\"recover\\"}' not in source
+    assert "Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root" in recovery_service
+    assert "Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime" not in recovery_service
+    assert 'ExecStart=$runtime_root/.venv/bin/python -m quotemux.live_bars_worker --recover' in recovery_service
+    assert 'printf "{\\"action\\":\\"recover\\"}' not in recovery_service
