@@ -24,6 +24,10 @@ MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH="${MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH
 MARKETHUB_DATA_HEALTH_FAILURE_POLICY="${MARKETHUB_DATA_HEALTH_FAILURE_POLICY:-warn}"
 MARKETHUB_GLOBAL_UPDATE_LOCK_PATH="${MARKETHUB_GLOBAL_UPDATE_LOCK_PATH:-$RUNTIME_ROOT/locks/global-data-update.lock}"
 MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS="${MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS:-60}"
+MARKETHUB_SUSPENSION_RECONCILE_SCRIPT="${MARKETHUB_SUSPENSION_RECONCILE_SCRIPT:-$RUNTIME_ROOT/scripts/reconcile-stock-intraday-suspensions.py}"
+MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS="${MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS:-900}"
+MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT="${MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT:-$RUNTIME_ROOT/audit/stock-intraday-suspension-reconcile-preflight}"
+MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE="${MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE:-$(TZ=Asia/Shanghai date '+%F')}"
 # A direct historical capture can write the same market-data version while the
 # publisher is reading it. The shared lock serializes the write pipeline; the
 # global update must never wait on a long historical capture while holding it.
@@ -32,7 +36,7 @@ MARKETHUB_CAPTURE_RUNS_ENDPOINT="${MARKETHUB_CAPTURE_RUNS_ENDPOINT:-/api/admin/c
 # historical repairs and unrelated long-running capabilities, so waiting for it
 # turns a routine publication into an unbounded global backlog drain.
 MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"
-MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily_snapshot}"
+MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily_snapshot,indexes.quotes.daily}"
 # The publication is gated on its own declared health dependencies, not on the
 # platform-wide aggregate.  The aggregate covers every registered capability,
 # so a durable alert on an unrelated dataset (index/board/concept freshness,
@@ -82,8 +86,34 @@ evaluate_publication_health() {
         --not-before "$health_started_at"
 }
 
+run_suspension_reconcile_preflight() {
+    local evidence_dir="$MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT/$(date '+%Y%m%d_%H%M%S')"
+    local status=0
+    mkdir -p "$evidence_dir"
+    log "suspension_reconcile_preflight=started target_date=$MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE timeout_seconds=$MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS evidence=$evidence_dir"
+    set +e
+    timeout --signal=TERM --kill-after=30s "$MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS" \
+        "$MARKETHUB_PYTHON" "$MARKETHUB_SUSPENSION_RECONCILE_SCRIPT" \
+        --target-date "$MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE" \
+        --include-snapshot-shortfall \
+        >"$evidence_dir/stdout.log" 2>"$evidence_dir/stderr.log"
+    status=$?
+    set -e
+    printf '%s\n' "$status" >"$evidence_dir/exit_status"
+    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+        log "suspension_reconcile_preflight=failed reason=timeout evidence=$evidence_dir"
+        return 124
+    fi
+    if [ "$status" -ne 0 ]; then
+        log "suspension_reconcile_preflight=failed reason=exit_$status evidence=$evidence_dir"
+        return "$status"
+    fi
+    log "suspension_reconcile_preflight=completed evidence=$evidence_dir"
+}
+
 run_once() {
     log "开始 MarketHub 全局数据更新和数据健康检查 capture_endpoint=$MARKETHUB_HEALTH_CAPTURE_ENDPOINT"
+    run_suspension_reconcile_preflight
     MARKETHUB_CAPTURE_ENDPOINT="$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" \
         MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES" \
         "$GLOBAL_DATA_UPDATE_SCRIPT"

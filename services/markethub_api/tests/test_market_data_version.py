@@ -37,7 +37,6 @@ def _version_frame(mutation: str = "42") -> pd.DataFrame:
             {"source": "fact.stock_price_band_daily", "row_count": "10", "watermark": "2026-08-07", "mutation": mutation},
             {"source": "fact.concept_daily_1d", "row_count": "10", "watermark": "2026-08-07", "mutation": mutation},
             {"source": "audit.stock_bar_1m_write_event", "row_count": "3", "watermark": "2026-08-07 15:00:00", "mutation": mutation},
-            {"source": "public.capability_cache_rows.market_inputs", "row_count": "3", "watermark": "2026-08-07 20:00:00", "mutation": mutation},
             {"source": "ref.concept", "row_count": "4", "watermark": "2026-08-07 20:00:00", "mutation": mutation},
             {"source": "ref.concept_stock_membership", "row_count": "20", "watermark": "2026-08-07", "mutation": mutation},
             {"source": "ref.stock", "row_count": "2", "watermark": "2020-01-01", "mutation": mutation},
@@ -45,6 +44,29 @@ def _version_frame(mutation: str = "42") -> pd.DataFrame:
             {"source": "schema.ref.concept_stock_membership.pit", "row_count": "2", "watermark": "knowledge_time:timestamp with time zone,knowledge_time_status:text", "mutation": "0"},
         ]
     )
+
+
+def test_market_data_version_query_excludes_derived_capability_cache() -> None:
+    assert "capability_cache_rows" not in market_data_version._VERSION_QUERY
+
+
+def test_health_returns_stable_data_version_on_repeated_reads(monkeypatch) -> None:
+    import main
+    from fastapi.testclient import TestClient
+
+    readiness = type("Readiness", (), {"registry_active": False, "current": None})()
+    monkeypatch.setattr(main, "catalog_publication_readiness", lambda: readiness)
+    monkeypatch.setattr(main, "current_market_data_version", lambda: "mhf-v1-stable")
+    monkeypatch.setattr(main, "current_dataset_versions", lambda: {"stock_research_daily": "mhd-v1-stable"})
+    monkeypatch.setattr(main, "current_dataset_publications", lambda _versions: {})
+    monkeypatch.setattr(main.live_bars, "get_current_bar_health", lambda: {"status": "healthy"})
+
+    client = TestClient(app)
+    first = client.get("/api/health")
+    second = client.get("/api/health")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["data_version"] == second.json()["data_version"] == "mhf-v1-stable"
 
 
 def test_market_data_version_changes_with_market_fact_mutation(monkeypatch) -> None:

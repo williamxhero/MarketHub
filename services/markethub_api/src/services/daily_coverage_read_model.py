@@ -213,6 +213,11 @@ def _build_current_stock_daily_coverage_once(start: date | None = None, end: dat
     try:
         with _connect() as connection:
             connection.execute("set transaction isolation level repeatable read")
+            # Serialize the repeatable-read coverage snapshot with every writer
+            # of stock facts/reference rows; never relax the coverage checks.
+            connection.execute(
+                "select pg_advisory_xact_lock(hashtext('markethub:stock-fact-publication'))"
+            )
             _, snapshot_generation, snapshot_version = _dataset_state(connection)
             if snapshot_version != dataset_version:
                 raise DatasetVersionChanged(f"dataset changed before coverage build: {dataset_version} -> {snapshot_version}")

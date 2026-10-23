@@ -24,8 +24,12 @@ def test_health_gated_update_waits_for_due_capture_and_serializes_runs() -> None
     source = (SCRIPT_DIR / "global-data-update-with-health.sh").read_text(encoding="utf-8")
 
     assert 'MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"' in source
-    assert 'MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily_snapshot}"' in source
+    assert 'MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily_snapshot,indexes.quotes.daily}"' in source
     assert 'MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES"' in source
+    assert 'MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS="${MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS:-900}"' in source
+    assert '--include-snapshot-shortfall' in source
+    assert 'suspension_reconcile_preflight=failed' in source
+    assert source.index('run_suspension_reconcile_preflight') < source.index('"$GLOBAL_DATA_UPDATE_SCRIPT"')
     assert 'flock -w "$MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS"' in source
     assert "未启动重复采集或发布" in source
     assert "global_update_outcome=skipped reason=lock_busy retry_semantics=next_timer" in source
@@ -158,6 +162,9 @@ def test_required_capture_retries_after_a_failed_snapshot(tmp_path: Path) -> Non
     health = tmp_path / "health.sh"
     health.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     health.chmod(0o755)
+    reconcile = tmp_path / "reconcile.sh"
+    reconcile.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    reconcile.chmod(0o755)
     environment = dict(os.environ)
     environment.update({
         "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
@@ -165,6 +172,9 @@ def test_required_capture_retries_after_a_failed_snapshot(tmp_path: Path) -> Non
         "MARKETHUB_BASE_URL": "http://fake",
         "MARKETHUB_RUNTIME_ROOT": str(tmp_path),
         "MARKETHUB_PYTHON": sys.executable,
+        "MARKETHUB_SUSPENSION_RECONCILE_SCRIPT": str(reconcile),
+        "MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT": str(tmp_path / "reconcile-evidence"),
+        "MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE": "2026-10-23",
         "MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES": "stocks.quotes.daily_snapshot",
         "MARKETHUB_REQUIRED_CAPTURE_RETRIES": "3",
         "MARKETHUB_REQUIRED_CAPTURE_RETRY_DELAY_SECONDS": "0",
@@ -215,6 +225,7 @@ def _pipeline_harness(tmp_path: Path, *, stock_daily_status: str, health_exit_co
     capture = tmp_path / "capture.sh"
     health = tmp_path / "health.sh"
     publisher = tmp_path / "publisher.py"
+    reconcile = tmp_path / "reconcile.sh"
     payload_path = tmp_path / "latest.json"
     report = {
         "status": "unhealthy",
@@ -240,6 +251,7 @@ def _pipeline_harness(tmp_path: Path, *, stock_daily_status: str, health_exit_co
         encoding="utf-8",
     )
     publisher.write_text(f'from pathlib import Path\nPath(r"{log_path}").open("a").write("publish\\n")\n', encoding="utf-8")
+    reconcile.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     curl = fake_bin / "curl"
@@ -259,11 +271,15 @@ def _pipeline_harness(tmp_path: Path, *, stock_daily_status: str, health_exit_co
         encoding="utf-8",
     )
     curl.chmod(0o755)
-    for script in (capture, health):
+    for script in (capture, health, reconcile):
         script.chmod(0o755)
     environment = dict(os.environ)
     environment.update({
         "MARKETHUB_GLOBAL_DATA_UPDATE_SCRIPT": str(capture),
+        "MARKETHUB_SUSPENSION_RECONCILE_SCRIPT": str(reconcile),
+        "MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT": str(tmp_path / "reconcile-evidence"),
+        "MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS": "5",
+        "MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE": "2026-10-23",
         "MARKETHUB_DATA_HEALTH_SCRIPT": str(health),
         "MARKETHUB_PARQUET_PUBLISHER_SCRIPT": str(publisher),
         "MARKETHUB_PYTHON": sys.executable,
@@ -330,3 +346,61 @@ def test_health_gated_update_does_not_run_duplicate_pipeline(tmp_path: Path) -> 
     assert "未启动重复采集或发布" in second.stdout
     assert "global_update_outcome=skipped reason=lock_busy retry_semantics=next_timer" in second.stdout
     assert log_path.read_text(encoding="utf-8").splitlines() == ["capture", "health", "publish"]
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("bash") is None or shutil.which("flock") is None, reason="requires a native bash and flock")
+def test_suspension_reconcile_preflight_failure_is_fatal_and_audited(tmp_path: Path) -> None:
+    reconcile = tmp_path / "reconcile.py"
+    reconcile.write_text("import sys\nprint('source probe failed', file=sys.stderr)\nraise SystemExit(23)\n", encoding="utf-8")
+    capture_log = tmp_path / "capture.log"
+    capture = tmp_path / "capture.sh"
+    capture.write_text(f"#!/usr/bin/env bash\nprintf '%s\\n' capture >> '{capture_log}'\n", encoding="utf-8")
+    capture.chmod(0o755)
+    health = tmp_path / "health.sh"
+    health.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    health.chmod(0o755)
+    evidence_root = tmp_path / "evidence"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    timeout = fake_bin / "timeout"
+    timeout.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [ \"$1\" = \"--signal=TERM\" ]; then shift; fi\n"
+        "if [ \"$1\" = \"--kill-after=30s\" ]; then shift; fi\n"
+        "shift\n"
+        "\"$@\"\n",
+        encoding="utf-8",
+    )
+    timeout.chmod(0o755)
+    environment = dict(os.environ)
+    environment.update({
+        "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+        "MARKETHUB_GLOBAL_DATA_UPDATE_SCRIPT": str(capture),
+        "MARKETHUB_SUSPENSION_RECONCILE_SCRIPT": str(reconcile),
+        "MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT": str(evidence_root),
+        "MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS": "5",
+        "MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE": "2026-10-23",
+        "MARKETHUB_DATA_HEALTH_SCRIPT": str(health),
+        "MARKETHUB_PYTHON": sys.executable,
+        "MARKETHUB_RUNTIME_ROOT": str(tmp_path),
+        "MARKETHUB_GLOBAL_UPDATE_LOCK_PATH": str(tmp_path / "global-update.lock"),
+        "MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH": "0",
+    })
+
+    completed = subprocess.run(
+        ["bash", "./global-data-update-with-health.sh"],
+        cwd=SCRIPT_DIR,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 23
+    assert "suspension_reconcile_preflight=failed" in completed.stdout
+    assert not capture_log.exists()
+    evidence_dirs = list(evidence_root.iterdir())
+    assert len(evidence_dirs) == 1
+    evidence_dir = evidence_dirs[0]
+    assert (evidence_dir / "exit_status").read_text(encoding="utf-8").strip() == "23"
+    assert "source probe failed" in (evidence_dir / "stderr.log").read_text(encoding="utf-8")
