@@ -60,7 +60,13 @@ with catalog as materialized (
             or (catalog.market = 'SZSE' and left(catalog.code, 1) in ('0', '3'))
             or (
                 catalog.market = 'BJSE'
-                and (left(catalog.code, 1) in ('4', '8', '9'))
+                and (
+                    (left(catalog.code, 3) = '920' and catalog.listed_date >= date '2024-04-22')
+                    or exists (
+                        select 1 from ref.stock_code_migration migration
+                        where migration.old_market = 'BJSE' and migration.old_code = catalog.code
+                    )
+                )
             )
         )
     )
