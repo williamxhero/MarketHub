@@ -7,6 +7,11 @@ import pytest
 from services import daily_coverage_read_model as read_model
 
 
+def test_coverage_builder_serializes_with_stock_fact_writers() -> None:
+    source = __import__("inspect").getsource(read_model._build_current_stock_daily_coverage_once)
+    assert "pg_advisory_xact_lock(hashtext('markethub:stock-fact-publication'))" in source
+
+
 def test_coverage_universe_requires_auditable_bse_identity() -> None:
     assert "ref.stock_code_migration migration" in read_model._CREATE_STATE_SQL
     assert "left(code,3)='920'" in read_model._CREATE_STATE_SQL

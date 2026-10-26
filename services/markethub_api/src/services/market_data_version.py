@@ -66,26 +66,11 @@ with sources as (
     select 'ref.trade_calendar', count(*)::text, coalesce(max(trade_date)::text, ''),
            coalesce(max(xmin::text::bigint)::text, '0')
     from ref.trade_calendar
-    union all
-    select 'public.capability_cache_rows.market_inputs', count(*)::text,
-           coalesce(max(updated_at)::text, ''), coalesce(max(xmin::text::bigint)::text, '0')
-    from public.capability_cache_rows
-    where capability_id = any(%s)
 )
 select source, row_count, watermark, mutation
 from sources
 order by source
 """
-
-_MARKET_CACHE_CAPABILITIES = (
-    "markets.calendar.trading",
-    "stocks.indicators.premarket",
-    "stocks.corporate_actions.dividends",
-    "stocks.corporate_actions.repurchases",
-    "stocks.corporate_actions.rights_issues",
-    "stocks.corporate_actions.share_changes",
-    "stocks.corporate_actions.unlock_schedules",
-)
 
 _VERSION_STATE_QUERY = """
 select baseline_id, generation
@@ -127,8 +112,8 @@ def market_data_base_version_from_state(
 
 
 def _compute_market_data_version() -> str:
-    frame = query_dataframe(_VERSION_QUERY, (list(_MARKET_CACHE_CAPABILITIES),))
-    if len(frame.index) != 14:
+    frame = query_dataframe(_VERSION_QUERY)
+    if len(frame.index) != 13:
         return ""
     sources = [
         {
@@ -214,8 +199,8 @@ def current_market_data_version() -> str:
 
 def current_market_data_lineage() -> list[dict[str, object]]:
     """Return the exact source rows used by the market-data fingerprint."""
-    frame = query_dataframe(_VERSION_QUERY, (list(_MARKET_CACHE_CAPABILITIES),))
-    if len(frame.index) != 14:
+    frame = query_dataframe(_VERSION_QUERY)
+    if len(frame.index) != 13:
         return []
     return [
         {

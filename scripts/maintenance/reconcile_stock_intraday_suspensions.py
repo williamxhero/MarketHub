@@ -19,6 +19,9 @@ import pandas as pd
 import psycopg
 
 
+Candidate = tuple[str, str, str, int, str]
+
+
 SOURCE = "Tushare.suspend_d"
 SOURCE_MARKER = "suspend_type_S_full_day_no_daily"
 API = "http://127.0.0.1:8803"
@@ -82,7 +85,36 @@ def records(frame: object) -> list[dict[str, object]]:
     return output
 
 
-def candidates(connection: psycopg.Connection, target_date: str) -> list[tuple[str, str, str, int]]:
+def _snapshot_shortfall_codes(target_date: str) -> tuple[str, ...]:
+    from quotemux.infra.db.reference_reads import load_stock_active_codes_frame
+    from quotemux.settings import QuoteMuxSettings
+    from quotemux.source_packages.instance_context import use_source_instance
+    from quotemux.source_packages.registry import get_default_source_package_registry
+    from quotemux.stocks import _snapshot_complete_codes
+
+    active_frame = load_stock_active_codes_frame(target_date)
+    if active_frame.empty:
+        return ()
+    instance = next((item for item in QuoteMuxSettings().get_contract_source_instances(
+        "stocks.quotes.daily_snapshot", ("tushare",)) if item.package_id == "tushare"), None)
+    if instance is None:
+        raise RuntimeError("Tushare snapshot source instance unavailable")
+    with use_source_instance(instance):
+        items = get_default_source_package_registry().get_handler(
+            "tushare", "get_stock_daily_snapshot_full"
+        )(target_date)
+    active_codes, complete_codes = _snapshot_complete_codes(active_frame, items, target_date)
+    return tuple(code for code in dict.fromkeys(active_codes) if code not in complete_codes)
+
+
+def candidates(
+    connection: psycopg.Connection,
+    target_date: str,
+    *,
+    include_snapshot_shortfall: bool = False,
+) -> list[Candidate]:
+    if include_snapshot_shortfall and not target_date:
+        raise ValueError("--target-date is required with --include-snapshot-shortfall")
     with connection.cursor() as cursor:
         cursor.execute(
             """select daily.market, btrim(daily.code), daily.trade_date::text,
@@ -98,14 +130,40 @@ def candidates(connection: psycopg.Connection, target_date: str) -> list[tuple[s
                order by daily.market, daily.code""",
             (target_date or None,),
         )
-        result = [(str(market), str(code), str(day), int(bars))
-                  for market, code, day, bars in cursor.fetchall()]
+        result = [
+            (str(market), str(code), str(day), int(bars), "daily_row")
+            for market, code, day, bars in cursor.fetchall()
+        ]
+        if include_snapshot_shortfall:
+            shortfall_codes = _snapshot_shortfall_codes(target_date)
+            if shortfall_codes:
+                cursor.execute(
+                    """select stock.market, btrim(stock.code), %s::date
+                       from ref.stock stock
+                       where stock.code = any(%s::text[])
+                         and stock.listed_date <= %s::date
+                         and (stock.delisted_date is null or stock.delisted_date > %s::date)
+                         and stock.identity_status = 'authoritative'
+                         and not (stock.market = 'SHSE' and left(stock.code, 3) = '900')
+                         and not (stock.market = 'SZSE' and left(stock.code, 3) = '200')
+                         and not exists (
+                             select 1 from fact.stock_daily_1d daily
+                             where daily.market=stock.market and daily.code=stock.code
+                               and daily.trade_date=%s::date
+                         )
+                       order by stock.market, stock.code""",
+                    (target_date, list(shortfall_codes), target_date, target_date, target_date),
+                )
+                result.extend(
+                    (str(market), str(code), str(day), 0, "snapshot_shortfall_no_daily")
+                    for market, code, day in cursor.fetchall()
+                )
     if len(result) > 100:
-        raise RuntimeError(f"zero-turnover candidate count {len(result)} exceeds safety bound 100")
+        raise RuntimeError(f"suspension candidate count {len(result)} exceeds safety bound 100")
     return result
 
 
-def source_probe(targets: list[tuple[str, str, str, int]]) -> tuple[list[dict], list[dict], list[dict]]:
+def source_probe(targets: list[Candidate]) -> tuple[list[dict], list[dict], list[dict]]:
     from quotemux.settings import QuoteMuxSettings
     from quotemux.source_packages.instance_context import use_source_instance
     from quotemux_packages.tushare.rate_limit import call_tushare_api
@@ -121,8 +179,8 @@ def source_probe(targets: list[tuple[str, str, str, int]]) -> tuple[list[dict], 
         provider = get_ts_pro()
         if provider is None:
             raise RuntimeError("Tushare provider unavailable")
-        for market, code, day, existing_bars in targets:
-            key = {"market": market, "code": code, "trade_date": day}
+        for market, code, day, existing_bars, candidate_kind in targets:
+            key = {"market": market, "code": code, "trade_date": day, "candidate_kind": candidate_kind}
             if market not in suffix:
                 residual.append({**key, "reason": "unsupported_market"})
                 continue
@@ -158,6 +216,9 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
     inserted = updated = ineligible = 0
     with connection.transaction():
         with connection.cursor() as cursor:
+            cursor.execute(
+                "select pg_advisory_xact_lock(hashtext('markethub:stock-fact-publication'))"
+            )
             for row in qualified:
                 market, code, day = row["market"], row["code"], row["trade_date"]
                 cursor.execute(
@@ -175,46 +236,49 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
                      market, code, day),
                 )
                 inserted += cursor.rowcount
-                cursor.execute(
-                    """update fact.stock_daily_1d daily
-                       set is_suspended = true, amount = 0
-                       where daily.market=%s and daily.code=%s and daily.trade_date=%s::date
-                         and daily.volume=0
-                         and daily.amount is not null and abs(daily.amount) <= 1e-12
-                         and daily.is_suspended is false
-                         and not exists (
-                             select 1 from fact.stock_bar_1m minute
-                             where minute.market=daily.market
-                               and minute.code=daily.code
-                               and minute.bar_time >= %s::date
-                               and minute.bar_time < %s::date + interval '1 day'
-                         )""",
-                    (market, code, day, day, day),
-                )
-                updated += cursor.rowcount
-                cursor.execute(
-                    """update market_data_capture_gaps gaps
-                       set status='ineligible_suspended', last_seen_at=now(), resolved_at=null,
-                           last_error='source-confirmed full-day suspension; 1m bars not expected'
-                       from fact.stock_daily_1d daily
-                       where gaps.capability_id='stocks.quotes.intraday'
-                         and gaps.code=%s and gaps.trade_date=%s::date
-                         and gaps.status not in ('resolved', 'ineligible_suspended')
-                         and daily.market=%s and daily.code=gaps.code
-                         and daily.trade_date=gaps.trade_date
-                         and daily.is_suspended is true
-                         and daily.volume=0
-                         and daily.amount = 0
-                         and exists (
-                             select 1 from fact.stock_suspension_history history
-                             where history.market=daily.market and history.code=daily.code
-                               and history.status='suspended'
-                               and daily.trade_date between history.suspend_start_date and history.suspend_end_date
-                         )""",
-                    (code, day, market),
-                )
-                ineligible += cursor.rowcount
+                if row["candidate_kind"] == "daily_row":
+                    cursor.execute(
+                        """update fact.stock_daily_1d daily
+                           set is_suspended = true, amount = 0
+                           where daily.market=%s and daily.code=%s and daily.trade_date=%s::date
+                             and daily.volume=0
+                             and daily.amount is not null and abs(daily.amount) <= 1e-12
+                             and daily.is_suspended is false
+                             and not exists (
+                                 select 1 from fact.stock_bar_1m minute
+                                 where minute.market=daily.market
+                                   and minute.code=daily.code
+                                   and minute.bar_time >= %s::date
+                                   and minute.bar_time < %s::date + interval '1 day'
+                             )""",
+                        (market, code, day, day, day),
+                    )
+                    updated += cursor.rowcount
+                    cursor.execute(
+                        """update market_data_capture_gaps gaps
+                           set status='ineligible_suspended', last_seen_at=now(), resolved_at=null,
+                               last_error='source-confirmed full-day suspension; 1m bars not expected'
+                           from fact.stock_daily_1d daily
+                           where gaps.capability_id='stocks.quotes.intraday'
+                             and gaps.code=%s and gaps.trade_date=%s::date
+                             and gaps.status not in ('resolved', 'ineligible_suspended')
+                             and daily.market=%s and daily.code=gaps.code
+                             and daily.trade_date=gaps.trade_date
+                             and daily.is_suspended is true
+                             and daily.volume=0
+                             and daily.amount = 0
+                             and exists (
+                                 select 1 from fact.stock_suspension_history history
+                                 where history.market=daily.market and history.code=daily.code
+                                   and history.status='suspended'
+                                   and daily.trade_date between history.suspend_start_date and history.suspend_end_date
+                             )""",
+                        (code, day, market),
+                    )
+                    ineligible += cursor.rowcount
             for row in qualified:
+                if row["candidate_kind"] != "daily_row":
+                    continue
                 cursor.execute(
                     """select daily.is_suspended and exists (
                            select 1 from fact.stock_suspension_history history
@@ -236,6 +300,11 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-date", default="", help="default: latest daily fact date")
+    parser.add_argument(
+        "--include-snapshot-shortfall",
+        action="store_true",
+        help="include active codes absent from the daily fact and QuoteMux snapshot",
+    )
     parser.add_argument("--audit-root", type=Path, default=Path("/data/markethub/audit/stock-intraday-suspension-reconcile"))
     args = parser.parse_args()
     service_environment()
@@ -251,7 +320,11 @@ def main() -> int:
     run_dir = args.audit_root / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     run_dir.mkdir()
     with db_connection() as connection:
-        targets = candidates(connection, args.target_date)
+        targets = candidates(
+            connection,
+            args.target_date,
+            include_snapshot_shortfall=args.include_snapshot_shortfall,
+        )
         connection.commit()
         raw, qualified, residual = source_probe(targets) if targets else ([], [], [])
         after_probe = api_json(API, "/api/health")
@@ -265,11 +338,17 @@ def main() -> int:
         qualified_path.write_text(json.dumps(qualified, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
         residual_path = run_dir / "residual.json"
         residual_path.write_text(json.dumps(residual, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+        qualified_by_kind = {
+            kind: sum(1 for row in qualified if row.get("candidate_kind") == kind)
+            for kind in ("daily_row", "snapshot_shortfall_no_daily")
+        }
         manifest = {"captured_at_utc": captured_at, "source": SOURCE, "source_marker": SOURCE_MARKER,
                     "release": before.get("version"), "data_version_before": before.get("data_version"),
                     "data_version_after_probe": after_probe.get("data_version"),
                     "stock_daily_dataset_version": before["dataset_versions"]["stock_daily_1d"],
+                    "include_snapshot_shortfall": args.include_snapshot_shortfall,
                     "target_count": len(targets), "qualified_count": len(qualified),
+                    "qualified_by_kind": qualified_by_kind,
                     "residual_count": len(residual), "residual": residual,
                     "raw_sha256": sha256(raw_path), "qualified_sha256": sha256(qualified_path),
                     "residual_sha256": sha256(residual_path), "script_sha256": sha256(Path(__file__))}
@@ -288,6 +367,8 @@ def main() -> int:
     if qualified:
         with db_connection() as connection, connection.cursor() as cursor:
             for row in qualified:
+                if row["candidate_kind"] != "daily_row":
+                    continue
                 cursor.execute(
                     """select status from market_data_capture_gaps
                        where capability_id='stocks.quotes.intraday'
@@ -298,6 +379,8 @@ def main() -> int:
                 if gap is not None and gap[0] != "ineligible_suspended":
                     raise RuntimeError(f"capture gap not classified as source-confirmed suspension: {row['code']} {row['trade_date']} status={gap[0]}")
     print(json.dumps({"artifact": str(run_dir), "targets": len(targets), "qualified": len(qualified),
+                      "qualified_by_kind": {kind: sum(1 for row in qualified if row.get("candidate_kind") == kind)
+                                            for kind in ("daily_row", "snapshot_shortfall_no_daily")},
                       "residual": len(residual), "history_rows_inserted": inserted,
                       "daily_flags_corrected": updated,
                       "capture_gaps_ineligible": ineligible}, ensure_ascii=False), flush=True)

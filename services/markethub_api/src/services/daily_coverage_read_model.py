@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import date
 import hashlib
 import json
@@ -195,7 +196,23 @@ def _set_build_state(
         )
 
 
+@contextmanager
+def _stock_fact_publication_lock():
+    with _connect(autocommit=True) as lock_connection:
+        lock_connection.execute("select pg_advisory_lock(hashtext('markethub:stock-fact-publication'))")
+        try:
+            yield
+        finally:
+            lock_connection.execute("select pg_advisory_unlock(hashtext('markethub:stock-fact-publication'))")
+
+
 def _build_current_stock_daily_coverage_once(start: date | None = None, end: date | None = None) -> dict[str, object]:
+    # Acquire the writer's lock before any source read or RR snapshot is taken.
+    with _stock_fact_publication_lock():
+        return _build_stock_daily_coverage_locked(start, end)
+
+
+def _build_stock_daily_coverage_locked(start: date | None, end: date | None) -> dict[str, object]:
     with _connect() as probe:
         _, generation, dataset_version = _dataset_state(probe)
         bounds = probe.execute(
