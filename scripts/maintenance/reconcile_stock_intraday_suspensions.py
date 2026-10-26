@@ -87,19 +87,24 @@ def records(frame: object) -> list[dict[str, object]]:
 
 def _snapshot_shortfall_codes(target_date: str) -> tuple[str, ...]:
     from quotemux.infra.db.reference_reads import load_stock_active_codes_frame
-    from quotemux.local_daily import get_stock_daily_snapshot_full
+    from quotemux.settings import QuoteMuxSettings
+    from quotemux.source_packages.instance_context import use_source_instance
+    from quotemux.source_packages.registry import get_default_source_package_registry
     from quotemux.stocks import _snapshot_complete_codes
 
     active_frame = load_stock_active_codes_frame(target_date)
     if active_frame.empty:
         return ()
-    items = get_stock_daily_snapshot_full(target_date)
-    _, complete_codes = _snapshot_complete_codes(active_frame, items, target_date)
-    return tuple(
-        str(code)
-        for code in active_frame["code"].astype(str).str.zfill(6).tolist()
-        if str(code).zfill(6) not in complete_codes
-    )
+    instance = next((item for item in QuoteMuxSettings().get_contract_source_instances(
+        "stocks.quotes.daily_snapshot", ("tushare",)) if item.package_id == "tushare"), None)
+    if instance is None:
+        raise RuntimeError("Tushare snapshot source instance unavailable")
+    with use_source_instance(instance):
+        items = get_default_source_package_registry().get_handler(
+            "tushare", "get_stock_daily_snapshot_full"
+        )(target_date)
+    active_codes, complete_codes = _snapshot_complete_codes(active_frame, items, target_date)
+    return tuple(code for code in dict.fromkeys(active_codes) if code not in complete_codes)
 
 
 def candidates(

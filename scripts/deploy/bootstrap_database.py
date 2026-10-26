@@ -250,6 +250,7 @@ def main() -> None:
     _ensure_daily_snapshot_index(database_config)
     _ensure_quotemux_schema()
     _ensure_dataset_version_vector(database_config)
+    _ensure_cache_version_trigger_migration(database_config)
     print("数据库初始化完成")
 
 
@@ -503,6 +504,36 @@ def _ensure_dataset_version_vector(database_config: dict[str, str]) -> None:
             "无法初始化 dataset version/readmodel schema；目标数据库需要管理凭证，"
             "或本机 postgres 账号的非交互 sudo 权限"
         ) from exc
+
+
+def _ensure_cache_version_trigger_migration(database_config: dict[str, str]) -> None:
+    migration_sql = (SCRIPT_ROOT / "remove-cache-version-triggers.sql").read_text(encoding="utf-8")
+    try:
+        with _connect(database_config) as connection:
+            connection.execute(migration_sql)
+    except psycopg.errors.InsufficientPrivilege as exc:
+        if _ensure_cache_version_trigger_migration_with_admin(database_config, migration_sql):
+            return
+        raise RuntimeError("无法移除 cache version triggers；需要目标数据库管理员凭证或本机 postgres 非交互 sudo") from exc
+
+
+def _ensure_cache_version_trigger_migration_with_admin(database_config: dict[str, str], migration_sql: str) -> bool:
+    admin_config = {**_admin_config(database_config), "dbname": database_config["dbname"]}
+    if admin_config["password"]:
+        try:
+            with _connect(admin_config) as connection:
+                connection.execute(migration_sql)
+            return True
+        except psycopg.Error:
+            pass
+    if database_config["host"] not in ("", "127.0.0.1", "localhost", "::1"):
+        return False
+    psql = shutil.which("psql")
+    sudo = shutil.which("sudo")
+    if os.name == "nt" or psql is None or sudo is None:
+        return False
+    common = ("-X", "-p", database_config["port"], "-v", "ON_ERROR_STOP=1", "-d", database_config["dbname"])
+    return _run_as_postgres(psql, (*common, "-f", str(SCRIPT_ROOT / "remove-cache-version-triggers.sql"))) == 0
 
 
 def _dataset_vector_grants(database_user: str) -> str:

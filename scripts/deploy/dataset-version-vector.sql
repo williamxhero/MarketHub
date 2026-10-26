@@ -97,8 +97,7 @@ values
     ('stock_research_daily','fact','stock_listing_board_history','query_read_v3'),
     ('stock_research_daily','fact','stock_market_indicators_daily','query_read_v3'),
     ('stock_research_daily','fact','stock_money_flow_daily','query_read_v3'),
-    ('stock_research_daily','fact','stock_price_band_daily','query_read_v3'),
-    ('stock_research_daily','public','capability_cache_rows','query_read_v3')
+    ('stock_research_daily','fact','stock_price_band_daily','query_read_v3')
 on conflict (dataset_id,source_schema,source_table) do update set managed_by=excluded.managed_by;
 
 create or replace function audit.bump_dataset_versions()

@@ -13,8 +13,7 @@ lock table
     ref.concept_stock_membership,
     ref.concept,
     ref.stock,
-    ref.trade_calendar,
-    public.capability_cache_rows
+    ref.trade_calendar
 in share row exclusive mode;
 
 create table if not exists audit.market_data_version_state (
@@ -64,8 +63,7 @@ begin
         'ref.concept_stock_membership'::regclass,
         'ref.concept'::regclass,
         'ref.stock'::regclass,
-        'ref.trade_calendar'::regclass,
-        'public.capability_cache_rows'::regclass
+        'ref.trade_calendar'::regclass
     ]
     loop
         if not exists (
