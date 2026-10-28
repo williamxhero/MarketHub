@@ -116,6 +116,10 @@ PY
             ;;
         1)
             log "capture_event=due_enqueue_started endpoint=$MARKETHUB_CAPTURE_ENDPOINT timeout_seconds=${MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60}"
+            if [ -n "${MARKETHUB_DUE_CAPTURE_PENDING_PATH:-}" ]; then
+                mkdir -p "$(dirname "$MARKETHUB_DUE_CAPTURE_PENDING_PATH")"
+                printf 'capture_endpoint=%s started_at=%s\n' "$MARKETHUB_CAPTURE_ENDPOINT" "$(date '+%F %T')" > "$MARKETHUB_DUE_CAPTURE_PENDING_PATH"
+            fi
             curl --fail --silent --show-error --connect-timeout 10 --max-time "${MARKETHUB_CAPTURE_TIMEOUT_SECONDS:-60}" \
                 -X POST "$MARKETHUB_BASE_URL$MARKETHUB_CAPTURE_ENDPOINT" \
                 -o "$RESULT_PATH" || {
@@ -138,18 +142,30 @@ postprocess() {
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+require_success = os.environ.get("MARKETHUB_REQUIRE_DUE_CAPTURE_SUCCESS") == "1"
 if isinstance(payload, dict):
+    if require_success:
+        raise SystemExit("同步到期采集未返回完整运行结果")
     if payload.get("accepted") is not True:
         raise SystemExit("到期采集异步请求未被接受")
     print(f"capture_event=due_enqueued accepted=true detail={json.dumps(payload, ensure_ascii=False, sort_keys=True)}")
 elif isinstance(payload, list):
-    failed = [str(item.get("capability_id", "")) for item in payload if isinstance(item, dict) and str(item.get("status", "")) == "failed"]
+    if require_success:
+        failed = [
+            f"{item.get('capability_id', '')}:{item.get('status', '')}" if isinstance(item, dict) else "invalid_result"
+            for item in payload
+            if not isinstance(item, dict) or item.get("status") != "success"
+        ]
+    else:
+        failed = [str(item.get("capability_id", "")) for item in payload if isinstance(item, dict) and item.get("status") == "failed"]
     if failed:
-        raise SystemExit(f"到期采集失败: {','.join(failed)}")
+        message = "到期采集未完全成功" if require_success else "到期采集失败"
+        raise SystemExit(f"{message}: {','.join(failed)}")
     print(f"due_capture_completed=true runs={len(payload)}")
 else:
     raise SystemExit("到期采集接口返回值无效")
@@ -163,6 +179,9 @@ main() {
     core_execute
     log "后处理：校验采集结果"
     postprocess
+    if [ -n "${MARKETHUB_DUE_CAPTURE_PENDING_PATH:-}" ]; then
+        mv -- "$MARKETHUB_DUE_CAPTURE_PENDING_PATH" "$MARKETHUB_DUE_CAPTURE_PENDING_PATH.completed-$RUN_ID"
+    fi
     log "完成每日数据更新 result=$RESULT_PATH"
 }
 

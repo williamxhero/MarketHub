@@ -29,13 +29,14 @@ MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS="${MARKETHUB_SUSPENSION_RECONCILE
 MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT="${MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT:-$RUNTIME_ROOT/audit/stock-intraday-suspension-reconcile-preflight}"
 MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE="${MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE:-$(TZ=Asia/Shanghai date '+%F')}"
 # A direct historical capture can write the same market-data version while the
-# publisher is reading it. The shared lock serializes the write pipeline; the
-# global update must never wait on a long historical capture while holding it.
+# publisher is reading it. The shared lock serializes this wrapper; the due
+# chain must finish (within its timeout) before health and publication begin.
 MARKETHUB_CAPTURE_RUNS_ENDPOINT="${MARKETHUB_CAPTURE_RUNS_ENDPOINT:-/api/admin/capture-runs}"
-# The publisher waits only for its declared dependency.  `run-due` can include
-# historical repairs and unrelated long-running capabilities, so waiting for it
-# turns a routine publication into an unbounded global backlog drain.
-MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"
+# The async endpoint has no owner receipt: individual capture runs briefly reach
+# zero between capabilities. A synchronous response covers the entire due chain.
+MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due}"
+MARKETHUB_HEALTH_CAPTURE_TIMEOUT_SECONDS="${MARKETHUB_HEALTH_CAPTURE_TIMEOUT_SECONDS:-14400}"
+MARKETHUB_DUE_CAPTURE_PENDING_PATH="$RUNTIME_ROOT/data-update/pending-due-owner"
 MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily_snapshot,indexes.quotes.daily}"
 # The publication is gated on its own declared health dependencies, not on the
 # platform-wide aggregate.  The aggregate covers every registered capability,
@@ -112,9 +113,22 @@ run_suspension_reconcile_preflight() {
 }
 
 run_once() {
-    log "开始 MarketHub 全局数据更新和数据健康检查 capture_endpoint=$MARKETHUB_HEALTH_CAPTURE_ENDPOINT"
+    if [ "$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" != "/api/admin/capture/run-due" ] ||
+        ! [[ "$MARKETHUB_HEALTH_CAPTURE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+        log "无效的同步采集配置 endpoint=$MARKETHUB_HEALTH_CAPTURE_ENDPOINT timeout_seconds=$MARKETHUB_HEALTH_CAPTURE_TIMEOUT_SECONDS"
+        return 64
+    fi
+    if [ -e "$MARKETHUB_DUE_CAPTURE_PENDING_PATH" ] || [ -L "$MARKETHUB_DUE_CAPTURE_PENDING_PATH" ]; then
+        log "global_update_capture_outcome=blocked reason=previous_due_owner_unknown path=$MARKETHUB_DUE_CAPTURE_PENDING_PATH retry_semantics=operator"
+        return 75
+    fi
+    log "开始 MarketHub 全局数据更新和数据健康检查 capture_endpoint=$MARKETHUB_HEALTH_CAPTURE_ENDPOINT timeout_seconds=$MARKETHUB_HEALTH_CAPTURE_TIMEOUT_SECONDS"
     run_suspension_reconcile_preflight
     MARKETHUB_CAPTURE_ENDPOINT="$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" \
+        MARKETHUB_CAPTURE_TIMEOUT_SECONDS="$MARKETHUB_HEALTH_CAPTURE_TIMEOUT_SECONDS" \
+        MARKETHUB_DUE_CAPTURE_PENDING_PATH="$MARKETHUB_DUE_CAPTURE_PENDING_PATH" \
+        MARKETHUB_ENABLE_ASYNC_DUE_CAPTURE=1 \
+        MARKETHUB_REQUIRE_DUE_CAPTURE_SUCCESS=1 \
         MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES" \
         "$GLOBAL_DATA_UPDATE_SCRIPT"
     log "全局数据更新完成，开始数据健康检查和覆盖构建"
