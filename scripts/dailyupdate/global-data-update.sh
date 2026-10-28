@@ -180,7 +180,7 @@ main() {
     log "后处理：校验采集结果"
     postprocess
     if [ -n "${MARKETHUB_DUE_CAPTURE_PENDING_PATH:-}" ]; then
-        rm -- "$MARKETHUB_DUE_CAPTURE_PENDING_PATH"
+        mv -- "$MARKETHUB_DUE_CAPTURE_PENDING_PATH" "$MARKETHUB_DUE_CAPTURE_PENDING_PATH.completed-$RUN_ID"
     fi
     log "完成每日数据更新 result=$RESULT_PATH"
 }
