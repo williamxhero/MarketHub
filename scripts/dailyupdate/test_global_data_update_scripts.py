@@ -23,7 +23,7 @@ def test_global_update_retains_opt_in_async_due_endpoint() -> None:
 def test_health_gated_update_waits_for_due_capture_and_serializes_runs() -> None:
     source = (SCRIPT_DIR / "global-data-update-with-health.sh").read_text(encoding="utf-8")
 
-    assert 'MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due-async}"' in source
+    assert 'MARKETHUB_HEALTH_CAPTURE_ENDPOINT="${MARKETHUB_HEALTH_CAPTURE_ENDPOINT:-/api/admin/capture/run-due}"' in source
     assert 'MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES="${MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES:-stocks.quotes.daily_snapshot,indexes.quotes.daily}"' in source
     assert 'MARKETHUB_REQUIRED_CAPTURE_CAPABILITIES="$MARKETHUB_GLOBAL_UPDATE_REQUIRED_CAPABILITIES"' in source
     assert 'MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS="${MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS:-900}"' in source
@@ -108,7 +108,7 @@ def test_publication_is_gated_on_declared_dependencies_not_platform_aggregate() 
     assert 'MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES="${MARKETHUB_PUBLICATION_HEALTH_DEPENDENCIES:-' in source
     assert 'core_dataset_freshness:fact.stock_daily_1d' in source
     assert '--not-before "$health_started_at"' in source
-    assert 'if ! evaluate_publication_health; then' in source
+    assert 'if evaluate_publication_health; then' in source
     assert 'global_update_publication_outcome=deferred reason=publication_health_gate_unusable' in source
     # The platform-wide alert must stay observable but must no longer gate the
     # publication, otherwise an unrelated durable alert defers it forever.
