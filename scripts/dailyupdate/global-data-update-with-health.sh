@@ -161,7 +161,9 @@ run_once() {
         fi
     fi
     if [ "$MARKETHUB_ENABLE_DAILY_PARQUET_PUBLISH" = "1" ]; then
-        if ! evaluate_publication_health; then
+        if evaluate_publication_health; then
+            :
+        else
             gate_status=$?
             if [ "$gate_status" -eq 64 ]; then
                 log "global_update_publication_outcome=deferred reason=publication_health_gate_unusable retry_semantics=operator"
