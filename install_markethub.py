@@ -119,10 +119,10 @@ def _install_runtime_scripts() -> None:
                 "reconcile_task_center.py",
             ),
         ),
+        ("scripts/local", ("monitor_stock_backfill_chain.sh",)),
         (
-            "scripts/local",
+            "scripts/maintenance",
             (
-                "monitor_stock_backfill_chain.sh",
                 "backfill_stock_money_flow.py",
                 "backfill_stock_market_indicators.py",
                 "backfill_stock_price_band.py",
