@@ -113,6 +113,7 @@ def _install_runtime_scripts() -> None:
             (
                 "global-data-update.sh",
                 "global-data-update-with-health.sh",
+                "resolve_closed_trading_day.py",
                 "data-health-check.sh",
                 "stock-intraday-capture-with-health.sh",
                 "reconcile_task_center.py",
