@@ -27,7 +27,7 @@ MARKETHUB_GLOBAL_UPDATE_LOCK_TIMEOUT_SECONDS="${MARKETHUB_GLOBAL_UPDATE_LOCK_TIM
 MARKETHUB_SUSPENSION_RECONCILE_SCRIPT="${MARKETHUB_SUSPENSION_RECONCILE_SCRIPT:-$RUNTIME_ROOT/scripts/reconcile-stock-intraday-suspensions.py}"
 MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS="${MARKETHUB_SUSPENSION_RECONCILE_TIMEOUT_SECONDS:-900}"
 MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT="${MARKETHUB_SUSPENSION_RECONCILE_EVIDENCE_ROOT:-$RUNTIME_ROOT/audit/stock-intraday-suspension-reconcile-preflight}"
-MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE="${MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE:-$(TZ=Asia/Shanghai date '+%F')}"
+MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE="${MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE:-}"
 # A direct historical capture can write the same market-data version while the
 # publisher is reading it. The shared lock serializes this wrapper; the due
 # chain must finish (within its timeout) before health and publication begin.
@@ -123,6 +123,12 @@ run_once() {
         return 75
     fi
     log "开始 MarketHub 全局数据更新和数据健康检查 capture_endpoint=$MARKETHUB_HEALTH_CAPTURE_ENDPOINT timeout_seconds=$MARKETHUB_HEALTH_CAPTURE_TIMEOUT_SECONDS"
+    if [ -z "$MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE" ]; then
+        if ! MARKETHUB_SUSPENSION_RECONCILE_TARGET_DATE=$("$MARKETHUB_PYTHON" "$SCRIPT_DIR/resolve_closed_trading_day.py" --now "$(TZ=Asia/Shanghai date '+%F %T')"); then
+            log "suspension_reconcile_preflight=failed reason=target_date_resolution"
+            return 1
+        fi
+    fi
     run_suspension_reconcile_preflight
     MARKETHUB_CAPTURE_ENDPOINT="$MARKETHUB_HEALTH_CAPTURE_ENDPOINT" \
         MARKETHUB_CAPTURE_TIMEOUT_SECONDS="$MARKETHUB_HEALTH_CAPTURE_TIMEOUT_SECONDS" \
