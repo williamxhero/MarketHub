@@ -13,7 +13,7 @@ dependencies = [
     "pandas==2.3.3",
     "psycopg[binary]==3.3.3",
     "pyarrow==21.0.0",
-    "quotemux @ git+https://github.com/williamxhero/QuoteMux.git@6636e3dc6fef6709394ade267470b535fda6fb45",
+    "quotemux @ git+https://github.com/williamxhero/QuoteMux.git@76c36932cb8fb95a60a6c18628f1205a217fddb6",
     "uvicorn[standard]==0.35.0",
 ]
 
