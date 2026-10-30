@@ -10,4 +10,4 @@ opentdx
 tushare==1.4.24
 baostock==0.8.9
 pytest
-httpx
+httpx>=0.28,<0.29
