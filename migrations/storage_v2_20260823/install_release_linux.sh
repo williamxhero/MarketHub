@@ -59,13 +59,10 @@ ensure_service_path_traversable() {
     if command -v setfacl >/dev/null 2>&1; then
       setfacl -m "u:${service_user}:x" "$path"
     else
-      local owner group
+      local owner
       owner="$(stat -c '%U' "$path")"
-      group="$(stat -c '%G' "$path")"
       if [[ "$owner" == "$service_user" ]]; then
         chmod u+X "$path"
-      elif [[ "$group" == "$service_group" ]]; then
-        chmod g+X "$path"
       else
         echo "setfacl is required to grant service traversal: $path" >&2
         return 1
