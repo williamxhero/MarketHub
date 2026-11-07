@@ -46,7 +46,6 @@ env_backup="$status_root/env-$release_name.before"
 unit_path="/etc/systemd/system/$service_name.service"
 unit_backup="$status_root/unit-$release_name.before"
 candidate_manifest_path="$candidate_root/release-manifest.json"
-maintenance_lock_path="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-$runtime_root/audit/stock-bar-maintenance.lock}"
 
 # systemd resolves WorkingDirectory as the service user.  Grant traversal only
 # to that user; never make a release searchable by all
@@ -386,6 +385,32 @@ python3 "$candidate_root/MarketHub/migrations/storage_v2_20260823/sync_runtime_e
 chmod 0600 "$env_path"
 chown "$service_user:$service_group" "$env_path"
 
+# Read the persisted environment before resolving the shared lock.  This keeps
+# an operator-provided runtime root and lock override in the same contract as
+# maintenance wrappers and prevents the installer from freezing its inherited
+# shell environment before the env file is loaded.
+set -a
+. "$env_path"
+set +a
+env_runtime_root="${MARKETHUB_RUNTIME_ROOT:-}"
+if [[ "$env_runtime_root" != /* || "$env_runtime_root" == */ ]]; then
+  echo "MARKETHUB_RUNTIME_ROOT in env file must be an explicit absolute directory" >&2
+  exit 64
+fi
+if [[ "$env_runtime_root" != "$runtime_root" ]]; then
+  echo "MARKETHUB_RUNTIME_ROOT in env file does not match installer runtime root" >&2
+  exit 64
+fi
+configured_maintenance_lock="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-}"
+if [[ -n "$configured_maintenance_lock" ]]; then
+  if [[ "$configured_maintenance_lock" != /* || "$configured_maintenance_lock" == */ ]]; then
+    echo "MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK must be an absolute file path" >&2
+    exit 64
+  fi
+  maintenance_lock_path="$configured_maintenance_lock"
+else
+  maintenance_lock_path="$env_runtime_root/audit/stock-bar-maintenance.lock"
+fi
 mkdir -p -- "$(dirname "$maintenance_lock_path")"
 exec 8>>"$maintenance_lock_path"
 flock -x 8 || { echo "unable to acquire stock-bar maintenance writer lock" >&2; exit 75; }

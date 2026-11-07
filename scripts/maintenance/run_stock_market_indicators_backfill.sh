@@ -42,6 +42,10 @@ fi
 
 # Same advisory lock as the stock-bar maintenance writers; hold across all batches.
 LOCK_PATH="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-$RUNTIME_ROOT/audit/stock-bar-maintenance.lock}"
+if [[ "$LOCK_PATH" != /* || "$LOCK_PATH" == */ ]]; then
+    echo "MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK must be an absolute file path" >&2
+    exit 64
+fi
 mkdir -p -- "$(dirname "$LOCK_PATH")"
 exec 9>>"$LOCK_PATH"
 if ! flock -n 9; then
