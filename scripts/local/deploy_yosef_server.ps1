@@ -492,7 +492,11 @@ done
 # Confirm the old release is healthy before deliberately stopping it; post-start
 # health is checked after the atomic current switch below.
 if [ "$service_stopped" != 1 ]; then
-  health_readback
+  if [ -n "$previous_current" ]; then
+    health_readback "$(basename "$previous_current")"
+  else
+    health_readback
+  fi
   if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
     echo "controlled service stop failed before privileged migration; restoring old release" >&2
     exit 1
