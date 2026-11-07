@@ -257,6 +257,10 @@ resolve_maintenance_lock() {
     echo "MARKETHUB_RUNTIME_ROOT must be an explicit absolute directory" >&2
     exit 64
   fi
+  if [ "$configured_runtime" != "$runtime_root" ]; then
+    echo "MARKETHUB_RUNTIME_ROOT does not match the deployment runtime root" >&2
+    exit 64
+  fi
   configured_lock="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-}"
   if [ -n "$configured_lock" ]; then
     if [ "$configured_lock" != /* ] || [ "$configured_lock" = */ ]; then
