@@ -15,6 +15,17 @@ DEFAULT_START_DATE = "20200101"
 REQUIRED_FIELDS = ("limit_up", "limit_down")
 
 
+def _load_env_file(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line != "" and not line.startswith("#") and "=" in line:
+            name, value = line.split("=", 1)
+            os.environ.setdefault(name, value)
+    return True
+
+
 def _bootstrap_env() -> None:
     code_root = os.getenv("MARKETHUB_CODE_ROOT", "")
     workspace_root = (
@@ -28,23 +39,27 @@ def _bootstrap_env() -> None:
     source_root = str(workspace_root / "QuoteMux" / "src")
     if source_root not in sys.path:
         sys.path.insert(0, source_root)
-    environment_paths = (
-        Path(os.getenv("MARKETHUB_ENV_PATH", "")),
-        workspace_root / "runtime" / "env" / "markethub.env",
-        Path("/data/markethub/env/markethub.env"),
-    )
+    environment_paths: list[Path] = []
+    env_path = os.getenv("MARKETHUB_ENV_PATH", "").strip()
+    if env_path:
+        environment_paths.append(Path(env_path).expanduser())
+    configured_runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip()
+    if configured_runtime_root:
+        environment_paths.append(Path(configured_runtime_root).expanduser() / "env" / "markethub.env")
+    environment_paths.append(workspace_root / "runtime" / "env" / "markethub.env")
     for path in environment_paths:
-        if str(path) == "." or not path.is_file():
-            continue
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if line != "" and not line.startswith("#") and "=" in line:
-                name, value = line.split("=", 1)
-                os.environ.setdefault(name, value)
-        break
-    runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", str(workspace_root / "runtime"))
+        if _load_env_file(path):
+            if os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip():
+                break
+    runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip()
+    if runtime_root == "":
+        raise RuntimeError("MARKETHUB_RUNTIME_ROOT is required and must be provided directly or by a loaded env file")
+    runtime_path = Path(runtime_root).expanduser()
+    if not runtime_path.is_absolute():
+        raise RuntimeError("MARKETHUB_RUNTIME_ROOT must be an absolute directory")
+    os.environ["MARKETHUB_RUNTIME_ROOT"] = str(runtime_path)
     os.environ.setdefault("MARKETHUB_DATA_ROOT", runtime_root)
-    os.environ.setdefault("QUOTEMUX_RUNTIME_ROOT", str(Path(runtime_root) / "runtime"))
+    os.environ.setdefault("QUOTEMUX_RUNTIME_ROOT", str(runtime_path / "runtime"))
 
 
 def _parse_args() -> argparse.Namespace:
@@ -132,7 +147,6 @@ def _market_by_code(trade_date: str) -> dict[str, str]:
         select market, code
         from fact.stock_daily_1d
         where trade_date = %s::date
-          and not coalesce(is_suspended, false)
         order by code
         """,
         (trade_date,),

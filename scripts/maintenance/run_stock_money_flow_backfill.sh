@@ -2,7 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_BIN="${MARKETHUB_PYTHON:-/data/markethub/.venv/bin/python}"
+RUNTIME_ROOT="${MARKETHUB_RUNTIME_ROOT:-}"
+if [[ "$RUNTIME_ROOT" != /* || "$RUNTIME_ROOT" == */ ]]; then
+    echo "MARKETHUB_RUNTIME_ROOT must be an explicit absolute directory" >&2
+    exit 64
+fi
+PYTHON_BIN="${MARKETHUB_PYTHON:-$RUNTIME_ROOT/.venv/bin/python}"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "MARKETHUB_PYTHON is not executable: $PYTHON_BIN" >&2
+    exit 64
+fi
 # Operator-owned bounds and durable state are mandatory; never default to a full backfill.
 START_DATE="${MARKETHUB_MONEY_FLOW_START_DATE:-}"
 END_DATE="${MARKETHUB_MONEY_FLOW_END_DATE:-}"
@@ -32,7 +41,7 @@ if ! mkdir -p -- "$(dirname "$STATE_PATH")"; then
 fi
 
 # Same advisory lock as the stock-bar maintenance writers; hold across all batches.
-LOCK_PATH="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-/data/markethub/audit/stock-bar-maintenance.lock}"
+LOCK_PATH="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-$RUNTIME_ROOT/audit/stock-bar-maintenance.lock}"
 mkdir -p -- "$(dirname "$LOCK_PATH")"
 exec 9>>"$LOCK_PATH"
 if ! flock -n 9; then

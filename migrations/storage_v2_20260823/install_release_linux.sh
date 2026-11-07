@@ -46,9 +46,10 @@ env_backup="$status_root/env-$release_name.before"
 unit_path="/etc/systemd/system/$service_name.service"
 unit_backup="$status_root/unit-$release_name.before"
 candidate_manifest_path="$candidate_root/release-manifest.json"
+maintenance_lock_path="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-$runtime_root/audit/stock-bar-maintenance.lock}"
 
 # systemd resolves WorkingDirectory as the service user.  Grant traversal only
-# to that user and its primary group; never make a release searchable by all
+# to that user; never make a release searchable by all
 # users.  setfacl is required when an ancestor is not owned by the service
 # account, because chmod u+X would grant the wrong principal.
 ensure_service_path_traversable() {
@@ -56,7 +57,7 @@ ensure_service_path_traversable() {
   while [[ "$path" != "/" && "$path" != "." ]]; do
     [[ -d "$path" ]] || { echo "service path is not a directory: $path" >&2; return 1; }
     if command -v setfacl >/dev/null 2>&1; then
-      setfacl -m "u:${service_user}:x,g:${service_group}:x" "$path"
+      setfacl -m "u:${service_user}:x" "$path"
     else
       local owner group
       owner="$(stat -c '%U' "$path")"
@@ -94,23 +95,40 @@ if any(not str(source.get(key, "")) for key in required):
     raise SystemExit("release manifest is missing a version contract")
 release_inputs_path = pathlib.Path(source_path).parents[3] / "release-inputs.json"
 release_inputs = {}
-if release_inputs_path.is_file():
+release_inputs_present = release_inputs_path.is_file()
+if release_inputs_present:
     release_inputs = json.loads(release_inputs_path.read_text(encoding="utf-8"))
     if not isinstance(release_inputs, dict):
         raise SystemExit("release-inputs.json must contain an object")
-def tree_hash(path):
-    rows = []
-    for item in sorted(candidate.rglob("*")):
-        if item.is_file() and item.name != "release-manifest.json":
-            rows.append(f"{item.relative_to(candidate).as_posix()}\0{hashlib.sha256(item.read_bytes()).hexdigest()}\n".encode())
-    return hashlib.sha256(b"".join(rows)).hexdigest()
 candidate_root = pathlib.Path(source_path).parents[3]
-candidate = candidate_root / "MarketHub"
-commit_inputs = release_inputs or {
-    "market_hub_tree_sha256": tree_hash(candidate),
+def tree_hash(path):
+    if not path.is_dir():
+        raise SystemExit(f"release input tree is missing: {path}")
+    rows = []
+    for item in sorted(path.rglob("*")):
+        if item.is_file() and item.name != "release-manifest.json":
+            rows.append(f"{item.relative_to(path).as_posix()}\0{hashlib.sha256(item.read_bytes()).hexdigest()}\n".encode())
+    return hashlib.sha256(b"".join(rows)).hexdigest()
+expected_commit_inputs = {
+    "market_hub_tree_sha256": tree_hash(candidate_root / "MarketHub"),
     "quote_mux_tree_sha256": tree_hash(candidate_root / "QuoteMux"),
     "quote_mux_packages_tree_sha256": tree_hash(candidate_root / "QuoteMux_Packages"),
 }
+if release_inputs_present:
+    required_commit_inputs = ("market_hub_commit", "quote_mux_commit", "quote_mux_packages_commit")
+    if any(not isinstance(release_inputs.get(key), str) or not release_inputs[key] for key in required_commit_inputs):
+        raise SystemExit("release-inputs.json is missing a required commit input")
+    if any(len(release_inputs[key]) != 40 or any(char not in "0123456789abcdefABCDEF" for char in release_inputs[key]) for key in required_commit_inputs):
+        raise SystemExit("release-inputs.json contains an invalid commit input")
+    commit_inputs = {key: release_inputs[key] for key in required_commit_inputs}
+else:
+    commit_inputs = expected_commit_inputs
+actual_archive_hash = hashlib.sha256(pathlib.Path(archive).read_bytes()).hexdigest()
+if actual_archive_hash != archive_hash:
+    raise SystemExit("archive hash changed while writing release manifest")
+actual_inventory_hash = tree_hash(candidate_root)
+if actual_inventory_hash != inventory_hash:
+    raise SystemExit("candidate inventory changed while writing release manifest")
 payload = {
     "release_name": release_name,
     "release_version": str(source["package_version"]),
@@ -121,6 +139,7 @@ payload = {
     "source_manifest_sha256": hashlib.sha256(pathlib.Path(source_path).read_bytes()).hexdigest(),
     "candidate_file_inventory_sha256": inventory_hash,
     "commit_inputs": commit_inputs,
+    "tree_inputs": expected_commit_inputs,
     "task_inputs": {
         "app_root": app_root, "runtime_root": runtime_root, "env_path": env_path,
         "service_name": service_name, "health_url": health_url,
@@ -143,8 +162,18 @@ if payload.get("release_name") != sys.argv[2]:
 for key in ("release_version", "target_storage_version", "migration_id", "archive_sha256", "source_manifest_sha256", "candidate_file_inventory_sha256"):
     if not isinstance(payload.get(key), str) or not payload[key]:
         raise SystemExit(f"release manifest missing {key}")
-if not isinstance(payload.get("commit_inputs"), dict) or not payload["commit_inputs"]:
+commit_inputs = payload.get("commit_inputs")
+if not isinstance(commit_inputs, dict):
     raise SystemExit("release manifest commit inputs readback is incomplete")
+commit_keys = set(commit_inputs)
+if commit_keys == {"market_hub_commit", "quote_mux_commit", "quote_mux_packages_commit"}:
+    if any(not isinstance(commit_inputs[key], str) or len(commit_inputs[key]) != 40 or any(char not in "0123456789abcdefABCDEF" for char in commit_inputs[key]) for key in commit_keys):
+        raise SystemExit("release manifest commit inputs readback is invalid")
+elif commit_keys == {"market_hub_tree_sha256", "quote_mux_tree_sha256", "quote_mux_packages_tree_sha256"}:
+    if any(not isinstance(commit_inputs[key], str) or not commit_inputs[key] for key in commit_keys):
+        raise SystemExit("release manifest tree inputs readback is incomplete")
+else:
+    raise SystemExit("release manifest commit input schema is incomplete")
 inputs = payload.get("task_inputs")
 if not isinstance(inputs, dict) or any(not isinstance(inputs.get(key), str) or not inputs[key] for key in ("app_root", "runtime_root", "env_path", "service_name", "health_url")):
     raise SystemExit("release task inputs readback is incomplete")
@@ -172,8 +201,8 @@ health_readback() {
   printf '%s' "$payload" | python3 -c '
 import json, sys
 value = json.load(sys.stdin)
-if not isinstance(value, dict) or not value.get("status"):
-    raise SystemExit("health response is not an object with status")
+if not isinstance(value, dict) or value.get("status") != "ok":
+    raise SystemExit("health response status is not ok")
 expected = sys.argv[1]
 if expected and str(value.get("version", value.get("release", ""))) != expected:
     raise SystemExit("health release version readback mismatch")
@@ -225,6 +254,20 @@ if value.get("quiescent") is not True or value.get("capture_state") not in {"emp
 PY
 }
 
+rollback_quiescence_gate() {
+  local state owner_path
+  state="$(systemctl is-active "$service_name.service" 2>/dev/null || true)"
+  [[ "$state" == "inactive" || "$state" == "failed" ]] || {
+    echo "service is not stopped for rollback: $state" >&2
+    return 1
+  }
+  owner_path="${MARKETHUB_OWNER_STATE_PATH:-$runtime_root/audit/pending-due-owner}"
+  [[ ! -e "$owner_path" ]] || {
+    echo "active owner marker exists during rollback: $owner_path" >&2
+    return 1
+  }
+}
+
 [[ "$(id -u)" -eq 0 ]] || { echo "本脚本必须由 root 执行" >&2; exit 3; }
 test -f "$archive"
 id "$service_user" >/dev/null
@@ -266,7 +309,7 @@ finish() {
     fi
     if [[ "$service_stopped" -eq 1 && "$rollback_authorized" -eq 1 ]]; then
       systemctl daemon-reload >/dev/null 2>&1 || true
-      if verify_saved_gate; then
+      if rollback_quiescence_gate; then
         systemctl start "$service_name.service" >/dev/null 2>&1 || true
         health_readback "$(basename "$previous_current")" >/dev/null 2>&1 || true
       else
@@ -346,9 +389,15 @@ python3 "$candidate_root/MarketHub/migrations/storage_v2_20260823/sync_runtime_e
 chmod 0600 "$env_path"
 chown "$service_user:$service_group" "$env_path"
 
+mkdir -p -- "$(dirname "$maintenance_lock_path")"
+exec 8>>"$maintenance_lock_path"
+flock -x 8 || { echo "unable to acquire stock-bar maintenance writer lock" >&2; exit 75; }
 capture_owner_quiescence_gate
 rollback_authorized=1
 if [[ "$(systemctl is-active "$service_name.service" 2>/dev/null || true)" == "active" ]]; then
+  # Re-read the live gate immediately before stopping the service.  The first
+  # snapshot may have become stale while the candidate was prepared.
+  capture_owner_quiescence_gate
   systemctl stop "$service_name.service" >/dev/null 2>&1 || { echo "service stop failed; old release remains current" >&2; exit 11; }
   service_stopped=1
 fi
