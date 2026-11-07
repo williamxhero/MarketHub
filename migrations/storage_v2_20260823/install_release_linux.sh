@@ -36,6 +36,18 @@ package_venv_root="${MARKETHUB_PACKAGE_VENV_ROOT:-$runtime_root/package_venvs/$r
 status_root="$runtime_root/migrations/markethub-storage-v2-20260823"
 status_file="$status_root/install-$release_name.status"
 
+# systemd resolves WorkingDirectory as the service user.  Archives may carry
+# restrictive directory modes, so make every ancestor of the candidate
+# service root searchable before publishing the current symlink.  `a+X` only
+# changes directory search bits and leaves regular-file modes untouched.
+ensure_service_path_searchable() {
+  local path="$1"
+  while [[ "$path" != "/" && "$path" != "." ]]; do
+    chmod a+X "$path"
+    path="$(dirname "$path")"
+  done
+}
+
 [[ "$(id -u)" -eq 0 ]] || { echo "本脚本必须由 root 执行" >&2; exit 3; }
 test -f "$archive"
 id "$service_user" >/dev/null
@@ -74,6 +86,7 @@ tar --no-same-owner -xzf "$archive" -C "$release_root"
 find "$release_root/MarketHub" -type f -name '*.sh' -exec chmod 0755 {} +
 chown -R "$service_user:$service_group" "$release_root"
 chown "$service_user:$service_group" "$runtime_root"
+ensure_service_path_searchable "$release_root/MarketHub/services/markethub_api"
 
 if [[ ! -f "$env_path" ]]; then
   db_password="$(openssl rand -base64 32 | tr -d '=+/\n' | head -c 32)"
@@ -124,11 +137,12 @@ set +a
 export QUOTEMUX_PACKAGE_REPO_SPEC="$release_root/QuoteMux_Packages"
 export QUOTEMUX_PACKAGE_VENV_ROOT="$package_venv_root"
 export MARKETHUB_VENV_ROOT="$runtime_root/.venv"
-export PYTHONPATH="$release_root/QuoteMux/src:$release_root/MarketHub/services/markethub_api/src"
+export PYTHONPATH="$release_root/MarketHub/services/markethub_api:$release_root/QuoteMux/src:$release_root/MarketHub/services/markethub_api/src"
 install -d -o "$service_user" -g "$service_group" \
   "$runtime_root"/{runtime,cache_payloads,package_venvs,store,logs,data-update,migrations,scripts} \
   "$package_venv_root" "$app_root/exports"
 chown -R "$service_user:$service_group" "$release_root" "$runtime_root/.venv"
+ensure_service_path_searchable "$runtime_root/.venv/bin"
 runuser -u "$service_user" -- env \
   QUOTEMUX_PACKAGE_REPO_SPEC="$QUOTEMUX_PACKAGE_REPO_SPEC" \
   QUOTEMUX_PACKAGE_VENV_ROOT="$QUOTEMUX_PACKAGE_VENV_ROOT" \
@@ -157,7 +171,7 @@ Group=$service_group
 WorkingDirectory=$app_root/current/MarketHub/services/markethub_api
 EnvironmentFile=$env_path
 Environment=MARKETHUB_RELEASE=$release_name
-Environment=PYTHONPATH=$app_root/current/QuoteMux/src:$app_root/current/MarketHub/services/markethub_api/src
+Environment=PYTHONPATH=$app_root/current/MarketHub/services/markethub_api:$app_root/current/QuoteMux/src:$app_root/current/MarketHub/services/markethub_api/src
 Environment=QUOTEMUX_PACKAGE_REPO_SPEC=$app_root/current/QuoteMux_Packages
 Environment=QUOTEMUX_PACKAGE_VENV_ROOT=$package_venv_root
 ExecStart=$runtime_root/.venv/bin/python $app_root/current/MarketHub/services/markethub_api/app.py
