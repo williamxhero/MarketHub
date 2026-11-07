@@ -253,20 +253,26 @@ set +a
 resolve_maintenance_lock() {
   local configured_runtime configured_lock
   configured_runtime="${MARKETHUB_RUNTIME_ROOT:-}"
-  if [ "$configured_runtime" != /* ] || [ "$configured_runtime" = */ ]; then
-    echo "MARKETHUB_RUNTIME_ROOT must be an explicit absolute directory" >&2
-    exit 64
-  fi
+  case "$configured_runtime" in
+    /*) ;;
+    *) echo "MARKETHUB_RUNTIME_ROOT must be an explicit absolute directory" >&2; exit 64 ;;
+  esac
+  case "$configured_runtime" in
+    */) echo "MARKETHUB_RUNTIME_ROOT must not end with a slash" >&2; exit 64 ;;
+  esac
   if [ "$configured_runtime" != "$runtime_root" ]; then
     echo "MARKETHUB_RUNTIME_ROOT does not match the deployment runtime root" >&2
     exit 64
   fi
   configured_lock="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-}"
   if [ -n "$configured_lock" ]; then
-    if [ "$configured_lock" != /* ] || [ "$configured_lock" = */ ]; then
-      echo "MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK must be an absolute file path" >&2
-      exit 64
-    fi
+    case "$configured_lock" in
+      /*) ;;
+      *) echo "MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK must be an absolute file path" >&2; exit 64 ;;
+    esac
+    case "$configured_lock" in
+      */) echo "MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK must not end with a slash" >&2; exit 64 ;;
+    esac
     maintenance_lock_path="$configured_lock"
   else
     maintenance_lock_path="$configured_runtime/audit/stock-bar-maintenance.lock"
