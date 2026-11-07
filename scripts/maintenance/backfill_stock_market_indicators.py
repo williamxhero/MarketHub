@@ -11,7 +11,9 @@ from pathlib import Path
 
 DEFAULT_START_DATE = "20200101"
 DEFAULT_BATCH_DAYS = 5
-MIN_COVERAGE_RATIO = 0.9
+REQUIRED_BASIC_FIELDS = ("turnover_rate", "total_share", "float_share", "free_share")
+REQUIRED_VALUATION_FIELDS = ("dv_ratio", "dv_ttm")
+REQUIRED_MARKET_VALUE_FIELDS = ("total_mv", "float_mv")
 
 
 def _load_env_file(path: Path) -> bool:
@@ -141,12 +143,6 @@ def _markets_by_code(trade_date: str) -> dict[str, str]:
     return {str(row["code"]).zfill(6): str(row["market"]) for row in frame.to_dict("records")}
 
 
-def _require_coverage(name: str, trade_date: str, rows: int, expected: int) -> None:
-    minimum = max(1, int(expected * MIN_COVERAGE_RATIO))
-    if rows < minimum:
-        raise RuntimeError(f"{name} 覆盖不足: trade_date={trade_date} expected={expected} actual={rows} minimum={minimum}")
-
-
 def _fetch_indicators(trade_date: str) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
     from quotemux.runtime_core.registry import _default_source_instance
     from quotemux.source_packages.instance_context import use_source_instance
@@ -211,27 +207,34 @@ def _write_rows(
     market_value_items: list[dict[str, object]],
 ) -> int:
     from quotemux.infra.db.client import execute_many
+    from backfill_contracts import require_complete_rows
 
-    turnover_by_code = {str(item.get("code", "")).zfill(6): item.get("turnover_rate") for item in basic_items}
-    float_share_by_code = {str(item.get("code", "")).zfill(6): item.get("float_share") for item in basic_items}
-    free_share_by_code = {str(item.get("code", "")).zfill(6): item.get("free_share") for item in basic_items}
-    total_share_by_code = {str(item.get("code", "")).zfill(6): item.get("total_share") for item in basic_items}
-    dividend_yield_by_code = {str(item.get("code", "")).zfill(6): item.get("dv_ratio") for item in valuation_items}
-    dividend_yield_ttm_by_code = {str(item.get("code", "")).zfill(6): item.get("dv_ttm") for item in valuation_items}
-    float_mv_by_code = {str(item.get("code", "")).zfill(6): item.get("float_mv") for item in market_value_items}
-    codes = sorted(set(turnover_by_code) & set(float_mv_by_code) & set(markets))
+    expected_codes = set(markets)
+    basic_by_code = require_complete_rows(
+        trade_date=trade_date, expected_codes=expected_codes, items=basic_items,
+        required_fields=REQUIRED_BASIC_FIELDS, label="市场指标 basic",
+    )
+    valuation_by_code = require_complete_rows(
+        trade_date=trade_date, expected_codes=expected_codes, items=valuation_items,
+        required_fields=REQUIRED_VALUATION_FIELDS, label="市场指标 valuation",
+    )
+    market_value_by_code = require_complete_rows(
+        trade_date=trade_date, expected_codes=expected_codes, items=market_value_items,
+        required_fields=REQUIRED_MARKET_VALUE_FIELDS, label="市场指标 market_value",
+    )
+    codes = sorted(expected_codes)
     rows = [
         (
             markets[code],
             code,
             trade_date,
-            turnover_by_code[code],
-            float_mv_by_code[code],
-            total_share_by_code.get(code),
-            float_share_by_code.get(code),
-            free_share_by_code.get(code),
-            dividend_yield_by_code.get(code),
-            dividend_yield_ttm_by_code.get(code),
+            basic_by_code[code]["turnover_rate"],
+            market_value_by_code[code]["float_mv"],
+            basic_by_code[code]["total_share"],
+            basic_by_code[code]["float_share"],
+            basic_by_code[code]["free_share"],
+            valuation_by_code[code]["dv_ratio"],
+            valuation_by_code[code]["dv_ttm"],
             "tushare",
         )
         for code in codes
@@ -264,12 +267,8 @@ def _backfill_trade_date(trade_date: str) -> None:
         raise RuntimeError(f"日线股票池不一致: trade_date={trade_date} expected={expected} codes={len(markets)}")
     basic_items, valuation_items, market_value_items = _fetch_indicators(trade_date)
     written = _write_rows(trade_date, markets, basic_items, valuation_items, market_value_items)
-    ttm_rows = sum(1 for item in valuation_items if item.get("dv_ttm") is not None)
-    if ttm_rows == 0:
-        raise RuntimeError(
-            f"TTM 股息率缺少上游数据: trade_date={trade_date}; 不得把空值标记为已回填"
-        )
-    _require_coverage("stock_market_indicators", trade_date, written, expected)
+    if written != expected:
+        raise RuntimeError(f"stock_market_indicators 覆盖不足: trade_date={trade_date} expected={expected} actual={written}")
 
 
 def main() -> int:
