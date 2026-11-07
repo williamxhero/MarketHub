@@ -41,20 +41,26 @@ def _bootstrap_env() -> None:
     quotemux_source_root = str(workspace_root / "QuoteMux" / "src")
     if quotemux_source_root not in sys.path:
         sys.path.insert(0, quotemux_source_root)
-    candidates = (
-        Path(os.getenv("MARKETHUB_ENV_PATH", "")),
-        Path(os.getenv("MARKETHUB_RUNTIME_ROOT", "")) / "env" / "markethub.env",
-        workspace_root / "runtime" / "env" / "markethub.env",
-        Path("/data/markethub/env/markethub.env"),
-    )
+    candidates: list[Path] = []
+    env_path = os.getenv("MARKETHUB_ENV_PATH", "").strip()
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    configured_runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip()
+    if configured_runtime_root:
+        candidates.append(Path(configured_runtime_root).expanduser() / "env" / "markethub.env")
+    candidates.append(workspace_root / "runtime" / "env" / "markethub.env")
     for path in candidates:
         if str(path) != "." and _load_env_file(path):
-            break
+            if os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip():
+                break
 
-    runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", "")
+    runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip()
     if runtime_root == "":
-        runtime_root = str(Path("/data/markethub") if Path("/data/markethub").exists() else workspace_root / "runtime")
-        os.environ["MARKETHUB_RUNTIME_ROOT"] = runtime_root
+        raise RuntimeError("MARKETHUB_RUNTIME_ROOT is required and must be provided directly or by a loaded env file")
+    runtime_path = Path(runtime_root).expanduser()
+    if not runtime_path.is_absolute():
+        raise RuntimeError("MARKETHUB_RUNTIME_ROOT must be an absolute directory")
+    os.environ["MARKETHUB_RUNTIME_ROOT"] = str(runtime_path)
     runtime_path = Path(runtime_root).expanduser()
     os.environ.setdefault("QUOTEMUX_RUNTIME_ROOT", str(runtime_path / "runtime"))
     os.environ.setdefault("QUOTEMUX_CACHE_PAYLOAD_ROOT", str(runtime_path / "cache_payloads"))
@@ -176,6 +182,7 @@ def _ensure_table() -> None:
             code text not null,
             trade_date date not null,
             turnover_rate double precision,
+            total_mv double precision,
             float_mv double precision,
             total_share double precision,
             float_share double precision,
@@ -193,6 +200,7 @@ def _ensure_table() -> None:
         "alter table fact.stock_market_indicators_daily add column if not exists dv_ratio double precision",
         "alter table fact.stock_market_indicators_daily add column if not exists dv_ttm double precision",
         "alter table fact.stock_market_indicators_daily add column if not exists total_share double precision",
+        "alter table fact.stock_market_indicators_daily add column if not exists total_mv double precision",
     )
     for statement in statements:
         if not execute_sql(statement, ()):
@@ -229,6 +237,7 @@ def _write_rows(
             code,
             trade_date,
             basic_by_code[code]["turnover_rate"],
+            market_value_by_code[code]["total_mv"],
             market_value_by_code[code]["float_mv"],
             basic_by_code[code]["total_share"],
             basic_by_code[code]["float_share"],
@@ -241,10 +250,11 @@ def _write_rows(
     ]
     if not execute_many(
         """
-        insert into fact.stock_market_indicators_daily (market, code, trade_date, turnover_rate, float_mv, total_share, float_share, free_share, dv_ratio, dv_ttm, source)
-        values (%s, %s, %s::date, %s, %s, %s, %s, %s, %s, %s, %s)
+        insert into fact.stock_market_indicators_daily (market, code, trade_date, turnover_rate, total_mv, float_mv, total_share, float_share, free_share, dv_ratio, dv_ttm, source)
+        values (%s, %s, %s::date, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         on conflict (market, code, trade_date) do update set
             turnover_rate = excluded.turnover_rate,
+            total_mv = excluded.total_mv,
             float_mv = excluded.float_mv,
             total_share = excluded.total_share,
             float_share = excluded.float_share,

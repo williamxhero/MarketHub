@@ -38,19 +38,25 @@ def _bootstrap_env() -> None:
     quotemux_source_root = str(workspace_root / "QuoteMux" / "src")
     if quotemux_source_root not in sys.path:
         sys.path.insert(0, quotemux_source_root)
-    candidates = (
-        Path(os.getenv("MARKETHUB_ENV_PATH", "")),
-        Path(os.getenv("MARKETHUB_RUNTIME_ROOT", "")) / "env" / "markethub.env",
-        workspace_root / "runtime" / "env" / "markethub.env",
-        Path("/data/markethub/env/markethub.env"),
-    )
+    candidates: list[Path] = []
+    env_path = os.getenv("MARKETHUB_ENV_PATH", "").strip()
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    configured_runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip()
+    if configured_runtime_root:
+        candidates.append(Path(configured_runtime_root).expanduser() / "env" / "markethub.env")
+    candidates.append(workspace_root / "runtime" / "env" / "markethub.env")
     for path in candidates:
         if str(path) != "." and _load_env_file(path):
-            break
-    runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", "")
+            if os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip():
+                break
+    runtime_root = os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip()
     if runtime_root == "":
-        runtime_root = str(Path("/data/markethub") if Path("/data/markethub").exists() else workspace_root / "runtime")
-        os.environ["MARKETHUB_RUNTIME_ROOT"] = runtime_root
+        raise RuntimeError("MARKETHUB_RUNTIME_ROOT is required and must be provided directly or by a loaded env file")
+    runtime_path = Path(runtime_root).expanduser()
+    if not runtime_path.is_absolute():
+        raise RuntimeError("MARKETHUB_RUNTIME_ROOT must be an absolute directory")
+    os.environ["MARKETHUB_RUNTIME_ROOT"] = str(runtime_path)
     os.environ.setdefault("MARKETHUB_DATA_ROOT", runtime_root)
 
 
