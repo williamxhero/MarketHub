@@ -12,7 +12,7 @@ import threading
 
 
 DEFAULT_START_DATE = "20200101"
-MIN_COVERAGE_RATIO = 0.9
+REQUIRED_FIELDS = ("limit_up", "limit_down")
 
 
 def _bootstrap_env() -> None:
@@ -128,7 +128,13 @@ def _market_by_code(trade_date: str) -> dict[str, str]:
     from quotemux.infra.db.client import query_dataframe
 
     frame = query_dataframe(
-        "select market, code from fact.stock_daily_1d where trade_date = %s::date order by code",
+        """
+        select market, code
+        from fact.stock_daily_1d
+        where trade_date = %s::date
+          and not coalesce(is_suspended, false)
+        order by code
+        """,
         (trade_date,),
     )
     return {str(row["code"]).zfill(6): str(row["market"]) for row in frame.to_dict("records")}
@@ -165,18 +171,19 @@ def _fetch_snapshot(trade_date: str) -> list[dict[str, object]]:
 
 def _write_rows(trade_date: str, markets: dict[str, str], items: list[dict[str, object]]) -> int:
     from quotemux.infra.db.client import execute_many
+    from backfill_contracts import require_complete_rows
 
-    rows: list[tuple[object, ...]] = []
-    for item in items:
-        code = str(item.get("code", "")).zfill(6)
-        market = markets.get(code, "")
-        upper_limit = item.get("limit_up")
-        lower_limit = item.get("limit_down")
-        if market == "" or upper_limit is None or lower_limit is None:
-            continue
-        rows.append((market, code, trade_date, upper_limit, lower_limit, "tushare.stk_limit"))
-    if rows == []:
-        return 0
+    by_code = require_complete_rows(
+        trade_date=trade_date,
+        expected_codes=markets,
+        items=items,
+        required_fields=REQUIRED_FIELDS,
+        label="历史涨跌停边界",
+    )
+    rows = [
+        (markets[code], code, trade_date, by_code[code]["limit_up"], by_code[code]["limit_down"], "tushare.stk_limit")
+        for code in sorted(markets)
+    ]
     if not execute_many(
         """
         insert into fact.stock_price_band_daily (market, code, trade_date, upper_limit, lower_limit, source)
@@ -196,9 +203,8 @@ def _write_rows(trade_date: str, markets: dict[str, str], items: list[dict[str, 
 def _backfill_day(trade_date: str) -> int:
     markets = _market_by_code(trade_date)
     written = _write_rows(trade_date, markets, _fetch_snapshot(trade_date))
-    minimum = max(1, int(len(markets) * MIN_COVERAGE_RATIO))
-    if written < minimum:
-        raise RuntimeError(f"历史涨跌停边界覆盖不足: trade_date={trade_date} expected={len(markets)} actual={written} minimum={minimum}")
+    if written != len(markets):
+        raise RuntimeError(f"历史涨跌停边界覆盖不足: trade_date={trade_date} expected={len(markets)} actual={written}")
     return written
 
 
@@ -229,11 +235,8 @@ def main() -> int:
         for trade_date, items in _fetch_batch(trade_dates, args.workers):
             markets = _market_by_code(trade_date)
             rows = _write_rows(trade_date, markets, items)
-            minimum = max(1, int(len(markets) * MIN_COVERAGE_RATIO))
-            if rows < minimum:
-                raise RuntimeError(
-                    f"coverage below minimum trade_date={trade_date} expected={len(markets)} actual={rows} minimum={minimum}"
-                )
+            if rows != len(markets):
+                raise RuntimeError(f"coverage incomplete trade_date={trade_date} expected={len(markets)} actual={rows}")
             completed.add(trade_date)
             _write_completed(state_path, completed)
             print(f"stock_price_band_backfill=success trade_date={trade_date} rows={rows}", flush=True)

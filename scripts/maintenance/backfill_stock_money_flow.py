@@ -10,7 +10,7 @@ from pathlib import Path
 
 DEFAULT_START_DATE = "20200101"
 DEFAULT_BATCH_DAYS = 1
-MIN_COVERAGE_RATIO = 0.8
+REQUIRED_FIELDS = ("main_inflow", "main_outflow", "net_inflow", "active_buy_amount")
 
 
 def _load_env_file(path: Path) -> bool:
@@ -166,17 +166,25 @@ def _fetch_snapshot(trade_date: str) -> list[dict[str, object]]:
 
 def _write_rows(trade_date: str, stocks: tuple[tuple[str, str], ...], items: list[dict[str, object]]) -> int:
     from quotemux.infra.db.client import execute_many
+    from backfill_contracts import require_complete_rows
 
     markets = {code: market for market, code in stocks}
-    rows = []
-    for item in items:
-        code = str(item.get("code", "")).zfill(6)
-        market = markets.get(code, "")
-        if market == "" or str(item.get("trade_date", "")).replace("-", "") != trade_date:
-            continue
-        rows.append((market, code, trade_date, item.get("main_inflow"), item.get("main_outflow"), item.get("net_inflow"), item.get("active_buy_amount"), "tushare"))
-    if rows == []:
-        return 0
+    by_code = require_complete_rows(
+        trade_date=trade_date,
+        expected_codes=markets,
+        items=items,
+        required_fields=REQUIRED_FIELDS,
+        label="资金流",
+    )
+    expected_codes = set(markets)
+    rows = [
+        (
+            markets[code], code, trade_date,
+            by_code[code]["main_inflow"], by_code[code]["main_outflow"],
+            by_code[code]["net_inflow"], by_code[code]["active_buy_amount"], "tushare",
+        )
+        for code in sorted(expected_codes)
+    ]
     ok = execute_many(
         """
         insert into fact.stock_money_flow_daily (market, code, trade_date, main_inflow, main_outflow, net_inflow, active_buy_amount, source)
@@ -200,19 +208,8 @@ def _backfill_day(trade_date: str) -> int:
     stocks = _active_stocks(trade_date)
     items = _fetch_snapshot(trade_date)
     written = _write_rows(trade_date, stocks, items)
-    active_buy_rows = sum(
-        1
-        for item in items
-        if item.get("active_buy_amount") is not None
-        and str(item.get("trade_date", "")).replace("-", "") == trade_date
-    )
-    if active_buy_rows == 0:
-        raise RuntimeError(
-            f"全单主动买入金额缺少上游数据: trade_date={trade_date}; 不得把空值标记为已回填"
-        )
-    minimum = max(1, int(len(stocks) * MIN_COVERAGE_RATIO))
-    if written < minimum:
-        raise RuntimeError(f"资金流覆盖不足: trade_date={trade_date} expected={len(stocks)} actual={written} minimum={minimum}")
+    if written != len(stocks):
+        raise RuntimeError(f"资金流覆盖不足: trade_date={trade_date} expected={len(stocks)} actual={written}")
     return written
 
 
