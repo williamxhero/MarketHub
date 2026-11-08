@@ -24,6 +24,12 @@ and whose `ts_code` has the same symbol plus `.SH`, `.SZ`, or `.BJ` enter the
 catalog. Provider-only synthetic or malformed identifiers are not rewritten;
 they are excluded with a reason, count, and hash in each shard receipt, and
 preflight requires provider rows to equal accepted plus rejected rows.
+
+The authority-approved release inputs are hash-pinned in `manifest.json`. The
+historical SPEC-3 QuoteMux/Packages pair and the current main pair are accepted
+as complete pairs; a mixed pair is rejected. The external `release-inputs.json`
+must exactly equal the release-inputs object embedded in the captured bundle,
+so an authority capture cannot be applied to a different accepted release.
 3. `release_migration.py rehearse` is accepted only when the target database
    name contains `spec3`, `rehearsal`, or `test`. It expands the schema,
    freezes/reconciles the authority input, repeats the same run key, publishes,

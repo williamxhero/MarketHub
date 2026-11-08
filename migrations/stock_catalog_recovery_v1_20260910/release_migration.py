@@ -35,6 +35,22 @@ ACCEPTED_QUOTE_MUX_PACKAGES_COMMITS = frozenset(
         "5fc61b280f8b63d33b4873a4511803fb697407b8",
     }
 )
+ACCEPTED_QUOTE_MUX_INPUT_PAIRS = frozenset(
+    {
+        (
+            "b57653327ad4a7e48a323eb21534663a3686b7bf",
+            "7af2bc7c0c78788f0358035725590fce9f4c7f77",
+        ),
+        (
+            "76c36932cb8fb95a60a6c18628f1205a217fddb6",
+            "5fc61b280f8b63d33b4873a4511803fb697407b8",
+        ),
+    }
+)
+COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+RELEASE_INPUT_KEYS = frozenset(
+    {"market_hub_commit", "quote_mux_commit", "quote_mux_packages_commit"}
+)
 LEGACY_KNOWN_DIRTY_DATA_VERSION = (
     "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
 )
@@ -342,12 +358,38 @@ def _health_data_version(url: str) -> str:
     return value
 
 
-def _validate_release_inputs(args: argparse.Namespace) -> dict[str, str]:
+def _validate_release_inputs(
+    args: argparse.Namespace, *, expected_release_inputs: object | None = None
+) -> dict[str, str]:
     if args.release_inputs is None:
+        if expected_release_inputs not in (None, {}):
+            raise NoGo("authority bundle release inputs require release-inputs.json")
         if args.action != "rehearse":
             raise NoGo("candidate release-inputs.json is required")
         return {}
     payload = json.loads(args.release_inputs.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or set(payload) != RELEASE_INPUT_KEYS:
+        raise NoGo("release-inputs.json must contain exactly the three commit identities")
+    if any(
+        not isinstance(payload[key], str) or COMMIT_SHA.fullmatch(payload[key]) is None
+        for key in RELEASE_INPUT_KEYS
+    ):
+        raise NoGo("release-inputs.json contains an invalid commit identity")
+    if expected_release_inputs is not None:
+        if (
+            not isinstance(expected_release_inputs, dict)
+            or set(expected_release_inputs) != RELEASE_INPUT_KEYS
+        ):
+            raise NoGo("authority bundle release inputs are missing or malformed")
+        normalized_expected = {
+            key: expected_release_inputs[key] for key in RELEASE_INPUT_KEYS
+        }
+        if payload != normalized_expected:
+            raise NoGo(
+                "release-inputs.json differs from the captured authority bundle",
+                expected=normalized_expected,
+                actual=payload,
+            )
     expected = {
         "market_hub_commit": args.expected_market_hub_commit,
         "quote_mux_commit": args.expected_quote_mux_commit,
@@ -374,6 +416,12 @@ def _validate_release_inputs(args: argparse.Namespace) -> dict[str, str]:
             expected=sorted(ACCEPTED_QUOTE_MUX_PACKAGES_COMMITS),
             actual=actual_packages,
         )
+    if (actual_quote_mux, actual_packages) not in ACCEPTED_QUOTE_MUX_INPUT_PAIRS:
+        raise NoGo(
+            "release contains an unapproved mixed QuoteMux authority input pair",
+            expected=sorted(ACCEPTED_QUOTE_MUX_INPUT_PAIRS),
+            actual=[actual_quote_mux, actual_packages],
+        )
     return {key: str(payload.get(key, "")) for key in expected}
 
 
@@ -381,7 +429,9 @@ def _production_preflight(
     bundle: dict[str, Any], args: argparse.Namespace, *, allow_database_mismatch: bool = False
 ) -> dict[str, object]:
     authority = _prepare_authority(bundle)
-    release_inputs = _validate_release_inputs(args)
+    release_inputs = _validate_release_inputs(
+        args, expected_release_inputs=bundle.get("release_inputs")
+    )
     captured_database = bundle.get("database")
     if not isinstance(captured_database, dict):
         raise NoGo("authority bundle omits database baseline")
@@ -644,7 +694,9 @@ def main() -> int:
             }
         elif args.action == "verify":
             authority = _prepare_authority(bundle)
-            _validate_release_inputs(args)
+            _validate_release_inputs(
+                args, expected_release_inputs=bundle.get("release_inputs")
+            )
             result = {
                 "decision": "go",
                 "mode": "verify",

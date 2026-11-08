@@ -5,6 +5,24 @@
   "market_hub_base_commit": "fe26c9adea20a1054c64c349f8eb3d9f3c8def61",
   "required_quote_mux_commit": "b57653327ad4a7e48a323eb21534663a3686b7bf",
   "required_quote_mux_packages_commit": "7af2bc7c0c78788f0358035725590fce9f4c7f77",
+  "accepted_quote_mux_commits": [
+    "b57653327ad4a7e48a323eb21534663a3686b7bf",
+    "76c36932cb8fb95a60a6c18628f1205a217fddb6"
+  ],
+  "accepted_quote_mux_packages_commits": [
+    "7af2bc7c0c78788f0358035725590fce9f4c7f77",
+    "5fc61b280f8b63d33b4873a4511803fb697407b8"
+  ],
+  "accepted_quote_mux_input_pairs": [
+    [
+      "b57653327ad4a7e48a323eb21534663a3686b7bf",
+      "7af2bc7c0c78788f0358035725590fce9f4c7f77"
+    ],
+    [
+      "76c36932cb8fb95a60a6c18628f1205a217fddb6",
+      "5fc61b280f8b63d33b4873a4511803fb697407b8"
+    ]
+  ],
   "known_dirty_data_versions": [
     "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
   ],
