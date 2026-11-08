@@ -19,8 +19,22 @@ from psycopg.rows import dict_row
 FORMAT_VERSION = "markethub-stock-authority-bundle-v1"
 APPLY_TOKEN = "SPEC-3-CONTROLLER-APPLY"
 NO_GO_EXIT = 20
-REQUIRED_QUOTE_MUX_COMMIT = "b57653327ad4a7e48a323eb21534663a3686b7bf"
-REQUIRED_QUOTE_MUX_PACKAGES_COMMIT = "7af2bc7c0c78788f0358035725590fce9f4c7f77"
+# These are the authority-approved QuoteMux inputs.  The original SPEC-3
+# predecessor remains accepted for replaying its historical bundle; the
+# current main commits include the later strict-public-read and CSI identity
+# fixes that are required by the active #793 Gate 0 path.
+ACCEPTED_QUOTE_MUX_COMMITS = frozenset(
+    {
+        "b57653327ad4a7e48a323eb21534663a3686b7bf",
+        "76c36932cb8fb95a60a6c18628f1205a217fddb6",
+    }
+)
+ACCEPTED_QUOTE_MUX_PACKAGES_COMMITS = frozenset(
+    {
+        "7af2bc7c0c78788f0358035725590fce9f4c7f77",
+        "5fc61b280f8b63d33b4873a4511803fb697407b8",
+    }
+)
 LEGACY_KNOWN_DIRTY_DATA_VERSION = (
     "mhf-v1-02f1aa9d6e2eb0553d88c53e0d0023a070a786e94896a66fb4696e407a00065f"
 )
@@ -347,17 +361,17 @@ def _validate_release_inputs(args: argparse.Namespace) -> dict[str, str]:
                 actual=str(payload.get(key, "")),
             )
     actual_quote_mux = str(payload.get("quote_mux_commit", ""))
-    if actual_quote_mux != REQUIRED_QUOTE_MUX_COMMIT:
+    if actual_quote_mux not in ACCEPTED_QUOTE_MUX_COMMITS:
         raise NoGo(
             "release does not contain the accepted QuoteMux authority predecessor",
-            expected=REQUIRED_QUOTE_MUX_COMMIT,
+            expected=sorted(ACCEPTED_QUOTE_MUX_COMMITS),
             actual=actual_quote_mux,
         )
     actual_packages = str(payload.get("quote_mux_packages_commit", ""))
-    if actual_packages != REQUIRED_QUOTE_MUX_PACKAGES_COMMIT:
+    if actual_packages not in ACCEPTED_QUOTE_MUX_PACKAGES_COMMITS:
         raise NoGo(
             "release does not contain the accepted QuoteMux_Packages authority provider",
-            expected=REQUIRED_QUOTE_MUX_PACKAGES_COMMIT,
+            expected=sorted(ACCEPTED_QUOTE_MUX_PACKAGES_COMMITS),
             actual=actual_packages,
         )
     return {key: str(payload.get(key, "")) for key in expected}
