@@ -181,6 +181,19 @@ restore_peer_runtime_access() {
     peer_runtime_access_changed=0
   fi
 }
+health_readback() {
+  local expected_release="${1:-}" payload
+  payload="$(curl -fsS --retry 20 --retry-delay 2 --retry-connrefused --max-time 5 "$health_url")" || return 1
+  printf '%s' "$payload" | python3 -c '
+import json, sys
+value = json.load(sys.stdin)
+if not isinstance(value, dict) or value.get("status") != "ok":
+    raise SystemExit("health response status is not ok")
+expected = sys.argv[1]
+if expected and str(value.get("version", value.get("release", ""))) != expected:
+    raise SystemExit("health release version readback mismatch")
+' "$expected_release"
+}
 restart_on_exit() {
   restore_peer_runtime_access || true
   if [ -n "$migration_stage" ]; then sudo -n rm -rf "$migration_stage" || true; fi
@@ -206,7 +219,7 @@ restart_on_exit() {
   if [ "$service_stopped" = 1 ] || [ "$current_switched" = 1 ]; then
     sudo -n systemctl daemon-reload || true
     sudo -n systemctl restart "$service_name.service" >/dev/null 2>&1 || true
-    if ! curl -fsS --retry 20 --retry-delay 2 --retry-connrefused --max-time 5 "$health_url" >/dev/null; then
+    if ! health_readback "$(basename "$previous_current")" >/dev/null 2>&1; then
       echo "rollback failed: previous release health check also failed" >&2
     fi
   fi
@@ -237,6 +250,38 @@ sudo -n chown "$service_user:$service_group" "$env_path"
 set -a
 . "$env_path"
 set +a
+resolve_maintenance_lock() {
+  local configured_runtime configured_lock
+  configured_runtime="${MARKETHUB_RUNTIME_ROOT:-}"
+  case "$configured_runtime" in
+    /*) ;;
+    *) echo "MARKETHUB_RUNTIME_ROOT must be an explicit absolute directory" >&2; exit 64 ;;
+  esac
+  case "$configured_runtime" in
+    */) echo "MARKETHUB_RUNTIME_ROOT must not end with a slash" >&2; exit 64 ;;
+  esac
+  if [ "$configured_runtime" != "$runtime_root" ]; then
+    echo "MARKETHUB_RUNTIME_ROOT does not match the deployment runtime root" >&2
+    exit 64
+  fi
+  configured_lock="${MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK:-}"
+  if [ -n "$configured_lock" ]; then
+    case "$configured_lock" in
+      /*) ;;
+      *) echo "MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK must be an absolute file path" >&2; exit 64 ;;
+    esac
+    case "$configured_lock" in
+      */) echo "MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK must not end with a slash" >&2; exit 64 ;;
+    esac
+    maintenance_lock_path="$configured_lock"
+  else
+    maintenance_lock_path="$configured_runtime/audit/stock-bar-maintenance.lock"
+  fi
+}
+resolve_maintenance_lock
+mkdir -p -- "$(dirname "$maintenance_lock_path")"
+exec 8>>"$maintenance_lock_path"
+flock -x 8 || { echo "unable to acquire stock-bar maintenance writer lock" >&2; exit 75; }
 application_db_owner="$MARKETHUB_DB_USER"
 # 环境文件可能保留旧 current 的包源，安装当前 release 前必须以本次发布目录为准。
 export QUOTEMUX_PACKAGE_REPO_SPEC="$release_root/QuoteMux_Packages"
@@ -250,7 +295,7 @@ if [ -n "$reuse_package_venv_root" ]; then
   # install the release source without forcing an online dependency refresh.
   export QUOTEMUX_RUNTIME_INSTALL_NO_DEPS=true
 fi
-export PYTHONPATH="$release_root/QuoteMux/src:$release_root/MarketHub/services/markethub_api/src"
+export PYTHONPATH="$release_root/MarketHub/services/markethub_api:$release_root/QuoteMux/src:$release_root/MarketHub/services/markethub_api/src"
 mkdir -p "$runtime_root/type=cache"
 sudo -n chown -R "$(id -un):$(id -gn)" "$runtime_root/type=cache" || true
 # package_venvs 是部署用户维护的运行时生成目录；清除历史 sudo 安装留下的所有权漂移。
@@ -447,7 +492,11 @@ done
 # Confirm the old release is healthy before deliberately stopping it; post-start
 # health is checked after the atomic current switch below.
 if [ "$service_stopped" != 1 ]; then
-  curl -fsS "$health_url" >/dev/null
+  if [ -n "$previous_current" ]; then
+    health_readback "$(basename "$previous_current")"
+  else
+    health_readback
+  fi
   if ! sudo -n systemctl stop "$service_name.service" >/dev/null 2>&1; then
     echo "controlled service stop failed before privileged migration; restoring old release" >&2
     exit 1
@@ -501,7 +550,7 @@ Environment=MARKETHUB_RELEASE=$release_name
 # Keep QuoteMux's configuration state separate from MarketHub's data/runtime
 # root.  Production profiles and their audit history live under this directory.
 Environment=QUOTEMUX_RUNTIME_ROOT=$runtime_root/runtime
-Environment=PYTHONPATH=$remote_root/current/QuoteMux/src:$remote_root/current/MarketHub/services/markethub_api/src
+Environment=PYTHONPATH=$remote_root/current/MarketHub/services/markethub_api:$remote_root/current/QuoteMux/src:$remote_root/current/MarketHub/services/markethub_api/src
 Environment=QUOTEMUX_PACKAGE_REPO_SPEC=$remote_root/current/QuoteMux_Packages
 Environment=QUOTEMUX_PACKAGE_VENV_ROOT=$package_venv_root
 ExecStart=$runtime_root/.venv/bin/python $remote_root/current/MarketHub/services/markethub_api/app.py
@@ -525,7 +574,7 @@ sudo -n systemctl daemon-reload
 sudo -n systemctl enable "$service_name.service"
 sudo -n systemctl restart "$service_name.service"
 for attempt in $(seq 1 20); do
-  if curl -fsS "$health_url" >/dev/null; then
+  if health_readback "$release_name"; then
     api_base="${health_url%/api/health}"
     health_payload="$(curl -fsS "$health_url")"
     stock_data_version="$(printf '%s' "$health_payload" | "$runtime_root/.venv/bin/python" -c 'import json, sys, urllib.parse; value = json.load(sys.stdin).get("data_version"); assert isinstance(value, str) and value; print(urllib.parse.quote(value, safe=""))')"

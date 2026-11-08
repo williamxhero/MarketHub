@@ -120,6 +120,19 @@ def _install_runtime_scripts() -> None:
             ),
         ),
         ("scripts/local", ("monitor_stock_backfill_chain.sh",)),
+        (
+            "scripts/maintenance",
+            (
+                "backfill_contracts.py",
+                "backfill_stock_money_flow.py",
+                "backfill_stock_market_indicators.py",
+                "backfill_stock_price_band.py",
+                "run_stock_money_flow_backfill.sh",
+                "run_stock_market_indicators_after_money_flow_backfill.sh",
+                "run_stock_market_indicators_backfill.sh",
+                "run_stock_price_band_backfill.sh",
+            ),
+        ),
     ):
         for script_name in script_names:
             source_path = MARKETHUB_ROOT / source_directory / script_name

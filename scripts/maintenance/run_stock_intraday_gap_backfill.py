@@ -22,12 +22,31 @@ import psycopg
 
 CAPABILITY = "stocks.quotes.intraday"
 DATASET = "stock_bar_1m"
-MAINTENANCE_LOCK = Path("/data/markethub/audit/stock-bar-maintenance.lock")
+
+
+def maintenance_runtime_root() -> Path:
+    """Return the explicit runtime root used by all maintenance state."""
+    configured = os.getenv("MARKETHUB_RUNTIME_ROOT", "").strip()
+    path = Path(configured)
+    if not configured or not path.is_absolute() or configured.endswith("/"):
+        raise RuntimeError("MARKETHUB_RUNTIME_ROOT must be an explicit absolute directory")
+    return path
+
+
+def maintenance_lock_path() -> Path:
+    """Resolve the shared stock-bar writer lock without a deployment default."""
+    runtime_root = maintenance_runtime_root()
+    configured = os.getenv("MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK", "").strip()
+    path = Path(configured) if configured else runtime_root / "audit/stock-bar-maintenance.lock"
+    if not path.is_absolute() or configured.endswith("/"):
+        raise RuntimeError("MARKETHUB_STOCK_BAR_MAINTENANCE_LOCK must be an absolute file path")
+    return path
 
 
 def acquire_maintenance_lock() -> bool:
-    MAINTENANCE_LOCK.parent.mkdir(parents=True, exist_ok=True)
-    handle = MAINTENANCE_LOCK.open("a+")
+    lock_path = maintenance_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -154,13 +173,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--api-url", default="http://127.0.0.1:8803")
     parser.add_argument("--task-url", default="http://127.0.0.1:8810")
-    parser.add_argument("--audit-dir", type=Path, default=Path("/data/markethub/audit/stock-intraday-gap-backfill"))
+    parser.add_argument("--audit-dir", type=Path)
     parser.add_argument("--batch-size", type=int, default=50)
     parser.add_argument("--max-batches", type=int, default=500)
     parser.add_argument("--stop-at-utc", default="15:40")
     args = parser.parse_args()
     if not 1 <= args.batch_size <= 120 or not 1 <= args.max_batches <= 10000:
         parser.error("batch-size must be 1..120 and max-batches 1..10000")
+    if args.audit_dir is None:
+        args.audit_dir = maintenance_runtime_root() / "audit/stock-intraday-gap-backfill"
     if not acquire_maintenance_lock():
         print("deferred: stock-bar maintenance is already running", file=sys.stderr)
         return 75
