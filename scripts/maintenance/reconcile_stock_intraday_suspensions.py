@@ -338,12 +338,23 @@ def _source_probe_eastmoney(targets: list[Candidate]) -> tuple[list[dict], list[
 
 def source_probe(targets: list[Candidate]) -> tuple[list[dict], list[dict], list[dict]]:
     try:
-        return _source_probe_tushare(targets)
+        tushare_raw, tushare_qualified, tushare_residual = _source_probe_tushare(targets)
     except Exception as tushare_error:
         raw, qualified, residual = _source_probe_eastmoney(targets)
         raw.insert(0, {"source": TUSHARE_SOURCE, "error": f"{type(tushare_error).__name__}: {tushare_error}",
                        "fallback": EASTMONEY_SOURCE})
         return raw, qualified, residual
+    source_errors = [row for row in tushare_residual
+                     if str(row.get("reason", "")).startswith("source_error:")]
+    if not source_errors:
+        return tushare_raw, tushare_qualified, tushare_residual
+    eastmoney_raw, eastmoney_qualified, eastmoney_residual = _source_probe_eastmoney(targets)
+    fallback_record = {
+        "source": TUSHARE_SOURCE,
+        "fallback": EASTMONEY_SOURCE,
+        "errors": source_errors,
+    }
+    return [fallback_record, *tushare_raw, *eastmoney_raw], eastmoney_qualified, eastmoney_residual
 
 
 def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_version: str,

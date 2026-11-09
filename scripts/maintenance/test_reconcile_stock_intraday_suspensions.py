@@ -184,6 +184,47 @@ def test_source_probe_falls_back_to_eastmoney(monkeypatch) -> None:
     assert raw[0]["fallback"] == MODULE.EASTMONEY_SOURCE
 
 
+def test_source_probe_falls_back_when_tushare_has_per_target_error(monkeypatch) -> None:
+    targets = [("SHSE", "688121", "2026-11-09", 0, "snapshot_shortfall_no_daily")]
+    calls: list[str] = []
+    received_by_fallback: list[list[MODULE.Candidate]] = []
+    tushare_error = {
+        "market": "SHSE",
+        "code": "688121",
+        "trade_date": "2026-11-09",
+        "candidate_kind": "snapshot_shortfall_no_daily",
+        "reason": "source_error:RuntimeError:no suspend_d access",
+    }
+    eastmoney_qualified = [{
+        "market": "SHSE",
+        "code": "688121",
+        "trade_date": "2026-11-09",
+        "candidate_kind": "snapshot_shortfall_no_daily",
+        "source": MODULE.EASTMONEY_SOURCE,
+        "source_marker": MODULE.EASTMONEY_SOURCE_MARKER,
+    }]
+
+    def partial_failure(_targets):
+        calls.append("tushare")
+        return ([{"source": MODULE.TUSHARE_SOURCE, "target_count": 1}], [], [tushare_error])
+
+    def fallback(fallback_targets):
+        calls.append("eastmoney")
+        received_by_fallback.append(fallback_targets)
+        return ([{"source": MODULE.EASTMONEY_SOURCE, "target_count": len(fallback_targets)}], eastmoney_qualified, [])
+
+    monkeypatch.setattr(MODULE, "_source_probe_tushare", partial_failure)
+    monkeypatch.setattr(MODULE, "_source_probe_eastmoney", fallback)
+
+    raw, result, residual = MODULE.source_probe(targets)
+    assert calls == ["tushare", "eastmoney"]
+    assert received_by_fallback == [targets]
+    assert result == eastmoney_qualified
+    assert residual == []
+    assert raw[0]["fallback"] == MODULE.EASTMONEY_SOURCE
+    assert raw[0]["errors"] == [tushare_error]
+
+
 def test_eastmoney_lineage_is_used_for_history_insert() -> None:
     cursor = _Cursor([])
     cursor.rowcount = 1
