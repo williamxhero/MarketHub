@@ -245,6 +245,42 @@ python3 "$release_root/MarketHub/migrations/storage_v2_20260823/sync_runtime_env
   --runtime-root "$runtime_root" \
   --release-root "$release_root" \
   --package-venv-root "$package_venv_root"
+# EnvironmentFile values take precedence over the unit's Environment entries
+# on the target host. Keep all release-scoped paths in sync with this atomic
+# candidate so the health version and imports cannot resolve to the previous
+# current release.
+"$runtime_root/.venv/bin/python" - "$env_path" "$release_name" "$release_root" "$package_venv_root" <<'PY'
+from pathlib import Path
+import sys
+
+env_path, release_name, release_root, package_venv_root = sys.argv[1:]
+updates = {
+    "MARKETHUB_RELEASE": release_name,
+    "MARKETHUB_CODE_ROOT": release_root,
+    "PYTHONPATH": (
+        f"{release_root}/MarketHub/services/markethub_api:"
+        f"{release_root}/QuoteMux/src:"
+        f"{release_root}/MarketHub/services/markethub_api/src"
+    ),
+    "QUOTEMUX_PACKAGE_REPO_SPEC": f"{release_root}/QuoteMux_Packages",
+    "QUOTEMUX_PACKAGE_VENV_ROOT": package_venv_root,
+}
+path = Path(env_path)
+lines = path.read_text(encoding="utf-8").splitlines()
+seen = set()
+rewritten = []
+for line in lines:
+    key = line.split("=", 1)[0] if "=" in line else ""
+    if key in updates:
+        rewritten.append(f"{key}={updates[key]}")
+        seen.add(key)
+    else:
+        rewritten.append(line)
+for key, value in updates.items():
+    if key not in seen:
+        rewritten.append(f"{key}={value}")
+path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+PY
 sudo -n chmod 0600 "$env_path"
 sudo -n chown "$service_user:$service_group" "$env_path"
 set -a
