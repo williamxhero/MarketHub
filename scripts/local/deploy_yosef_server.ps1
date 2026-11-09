@@ -374,14 +374,30 @@ case "$migration_mode" in
       "$runtime_root/.venv/bin/python" "$migration_stage/code/release_migration.py"
     reader_role="$(sudo -n -u postgres sed -n 's/^QUOTEMUX_READ_DB_USER=//p' "$reader_stage" | tail -n 1)"
     test -n "$reader_role"
-    sudo -n -u postgres env \
+    set +e
+    stock_name_history_verify_json="$(sudo -n -u postgres env \
       PYTHONPATH="$migration_stage/code" \
-      "$runtime_root/.venv/bin/python" "$migration_stage/code/stock_name_history_release_migration.py" apply \
+      "$runtime_root/.venv/bin/python" "$migration_stage/code/stock_name_history_release_migration.py" verify \
       --db-host /var/run/postgresql \
       --db-port "$MARKETHUB_DB_PORT" \
       --db-name "$MARKETHUB_DB_NAME" \
       --owner-role "$application_db_owner" \
-      --reader-role "$reader_role"
+      --reader-role "$reader_role" 2>&1)"
+    stock_name_history_verify_status=$?
+    set -e
+    if [ "$stock_name_history_verify_status" = 0 ]; then
+      printf 'stock name history snapshot verify (reused): %s\n' "$stock_name_history_verify_json"
+    else
+      printf 'stock name history snapshot verify unavailable; applying migration: %s\n' "$stock_name_history_verify_json"
+      sudo -n -u postgres env \
+        PYTHONPATH="$migration_stage/code" \
+        "$runtime_root/.venv/bin/python" "$migration_stage/code/stock_name_history_release_migration.py" apply \
+        --db-host /var/run/postgresql \
+        --db-port "$MARKETHUB_DB_PORT" \
+        --db-name "$MARKETHUB_DB_NAME" \
+        --owner-role "$application_db_owner" \
+        --reader-role "$reader_role"
+    fi
     restore_peer_runtime_access
     publisher_target_stage="${publisher_env_path}.${release_name}.new"
     reader_target_stage="${reader_env_path}.${release_name}.new"
@@ -412,15 +428,32 @@ case "$migration_mode" in
       "$runtime_root/.venv/bin/python" "$release_root/MarketHub/migrations/quotemux_futures_partial_v1_20260826/release_migration.py"
     reader_role="$(sed -n 's/^QUOTEMUX_READ_DB_USER=//p' "$reader_stage" | tail -n 1)"
     test -n "$reader_role"
-    PYTHONPATH="$release_root/MarketHub/services/markethub_api/src" \
+    set +e
+    stock_name_history_verify_json="$(PYTHONPATH="$release_root/MarketHub/services/markethub_api/src" \
       PGUSER="$MARKETHUB_DB_USER" PGPASSWORD="$MARKETHUB_DB_PASSWORD" \
       "$runtime_root/.venv/bin/python" \
-      "$release_root/MarketHub/migrations/stock_name_history_snapshot_v1_20260911/release_migration.py" apply \
+      "$release_root/MarketHub/migrations/stock_name_history_snapshot_v1_20260911/release_migration.py" verify \
       --db-host "$MARKETHUB_DB_HOST" \
       --db-port "$MARKETHUB_DB_PORT" \
       --db-name "$MARKETHUB_DB_NAME" \
       --owner-role "$application_db_owner" \
-      --reader-role "$reader_role"
+      --reader-role "$reader_role" 2>&1)"
+    stock_name_history_verify_status=$?
+    set -e
+    if [ "$stock_name_history_verify_status" = 0 ]; then
+      printf 'stock name history snapshot verify (reused): %s\n' "$stock_name_history_verify_json"
+    else
+      printf 'stock name history snapshot verify unavailable; applying migration: %s\n' "$stock_name_history_verify_json"
+      PYTHONPATH="$release_root/MarketHub/services/markethub_api/src" \
+        PGUSER="$MARKETHUB_DB_USER" PGPASSWORD="$MARKETHUB_DB_PASSWORD" \
+        "$runtime_root/.venv/bin/python" \
+        "$release_root/MarketHub/migrations/stock_name_history_snapshot_v1_20260911/release_migration.py" apply \
+        --db-host "$MARKETHUB_DB_HOST" \
+        --db-port "$MARKETHUB_DB_PORT" \
+        --db-name "$MARKETHUB_DB_NAME" \
+        --owner-role "$application_db_owner" \
+        --reader-role "$reader_role"
+    fi
     publisher_target_stage="${publisher_env_path}.${release_name}.new"
     reader_target_stage="${reader_env_path}.${release_name}.new"
     sudo -n install -o "$service_user" -g "$service_group" -m 0600 "$publisher_stage" "$publisher_target_stage"
