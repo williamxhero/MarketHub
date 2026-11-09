@@ -29,8 +29,9 @@ _PUBLIC_FIELDS = (
 
 _AUTHORITATIVE_SOURCE_QUERY = """
 select stock.identity_status, stock.identity_source, stock.market, stock.code, stock.name,
+       stock.authority_provider, stock.authority_input_id, item.input_id as evidence_input_id,
        stock.industry, stock.listing_board, stock.listed_date::text as listed_date,
-       stock.delisted_date::text as delisted_date, item.area, item.list_status
+       stock.delisted_date::text as delisted_date, stock.area, item.list_status
 from ref.stock stock
 left join audit.stock_authority_input_item item
   on item.input_id = stock.authority_input_id
@@ -43,7 +44,9 @@ order by stock.code, stock.market
 _LATEST_AUTHORITY_EVIDENCE_QUERY = """
 select reconciliation.input_id, authority_input.content_sha256, authority_input.provider,
        authority_input.source_refreshed_at, authority_input.fresh_through,
-       reconciliation.provisional_count, reconciliation.conflict_count
+       authority_input.candidate_count,
+       reconciliation.provisional_count, reconciliation.conflict_count,
+       reconciliation.missing_count
 from audit.stock_reference_reconciliation reconciliation
 join audit.stock_authority_input authority_input
   on authority_input.input_id = reconciliation.input_id
@@ -81,6 +84,8 @@ class CatalogSourceEvidence:
     fresh_through: date
     provisional_count: int
     conflict_count: int
+    candidate_count: int
+    missing_count: int
 
 
 @dataclass(frozen=True)
@@ -151,10 +156,18 @@ def _validated_evidence(
         raise CatalogCandidateRejected(
             "authority input is not fresh through the required trading day"
         )
-    if evidence.provisional_count < 0 or evidence.conflict_count < 0:
-        raise CatalogCandidateRejected("authority audit counts must be non-negative")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (
+            evidence.provisional_count, evidence.conflict_count,
+            evidence.candidate_count, evidence.missing_count,
+        )
+    ):
+        raise CatalogCandidateRejected("authority audit counts must be non-negative integers")
     if evidence.conflict_count != 0:
         raise CatalogCandidateRejected("authority input has unresolved conflict count")
+    if evidence.missing_count != 0:
+        raise CatalogCandidateRejected("authority input has unresolved missing authoritative rows")
     return evidence
 
 
@@ -210,6 +223,17 @@ def build_stock_catalog_candidate(
             continue
         if identity_status != "authoritative":
             raise CatalogCandidateRejected("identity_status must be authoritative or provisional")
+        if (
+            _text(row.get("authority_provider"), "authority_provider", required=True)
+            != source.provider
+            or _text(row.get("authority_input_id"), "authority_input_id", required=True)
+            != source.input_id
+            or _text(row.get("evidence_input_id"), "evidence_input_id", required=True)
+            != source.input_id
+        ):
+            raise CatalogCandidateRejected(
+                "authoritative row is not covered by the selected authority input"
+            )
         item = _normalize_item(row)
         if item.code in seen_codes:
             raise CatalogCandidateRejected("authoritative catalog contains duplicate code")
@@ -217,6 +241,8 @@ def build_stock_catalog_candidate(
         items.append(item)
     if not items:
         raise CatalogCandidateRejected("authoritative catalog candidate is empty")
+    if len(items) != source.candidate_count:
+        raise CatalogCandidateRejected("catalog candidate does not cover the complete authority input")
     frozen_items = tuple(sorted(items, key=lambda item: (item.code, item.exchange)))
     encoded = json.dumps(
         [item.public_payload() for item in frozen_items],
@@ -279,6 +305,7 @@ def build_current_stock_catalog_candidate(
 ) -> StockCatalogCandidate:
     """Read the completed authoritative reconciliation into an immutable candidate."""
     with connection_factory() as connection:
+        connection.execute("set transaction isolation level repeatable read read only")
         expected_row = connection.execute(_LATEST_COMPLETED_TRADING_DAY_QUERY).fetchone()
         evidence_row = connection.execute(_LATEST_AUTHORITY_EVIDENCE_QUERY).fetchone()
         rows = connection.execute(_AUTHORITATIVE_SOURCE_QUERY).fetchall()
@@ -297,6 +324,8 @@ def build_current_stock_catalog_candidate(
         fresh_through=_parse_date(_record_value(evidence_row, "fresh_through"), "fresh_through"),
         provisional_count=int(_record_value(evidence_row, "provisional_count") or 0),
         conflict_count=int(_record_value(evidence_row, "conflict_count") or 0),
+        candidate_count=_record_value(evidence_row, "candidate_count"),
+        missing_count=_record_value(evidence_row, "missing_count"),
     )
     return build_stock_catalog_candidate(
         rows, evidence, expected_fresh_through=expected_fresh_through
