@@ -1,7 +1,9 @@
 """Confirm zero-turnover daily rows against source-native full-day suspensions.
 
-Only Tushare suspend_d=S with no daily bar can exclude a code-day from the
-240-minute capture obligation. Ambiguous rows remain visible and fail the job.
+Only source-native full-day suspension evidence can exclude a code-day from the
+240-minute capture obligation. Tushare suspend_d=S remains preferred; when it
+is unavailable, AKShare's Eastmoney suspension interval is used. Ambiguous
+rows remain visible and fail the job.
 """
 
 from __future__ import annotations
@@ -22,8 +24,13 @@ import psycopg
 Candidate = tuple[str, str, str, int, str]
 
 
-SOURCE = "Tushare.suspend_d"
-SOURCE_MARKER = "suspend_type_S_full_day_no_daily"
+TUSHARE_SOURCE = "Tushare.suspend_d"
+TUSHARE_SOURCE_MARKER = "suspend_type_S_full_day_no_daily"
+EASTMONEY_SOURCE = "Eastmoney.RPT_CUSTOM_SUSPEND_DATA_INTERFACE"
+EASTMONEY_SOURCE_MARKER = "suspend_tfp_em_active_on_trade_date"
+# Keep the historical names for callers that imported this maintenance script.
+SOURCE = TUSHARE_SOURCE
+SOURCE_MARKER = TUSHARE_SOURCE_MARKER
 API = "http://127.0.0.1:8803"
 TASK_CENTER = "http://127.0.0.1:8810"
 # Some historical daily imports contain the smallest positive float instead of
@@ -85,7 +92,7 @@ def records(frame: object) -> list[dict[str, object]]:
     return output
 
 
-def _snapshot_shortfall_codes(target_date: str) -> tuple[str, ...]:
+def _snapshot_shortfall_codes_tushare(target_date: str) -> tuple[str, ...]:
     from quotemux.infra.db.reference_reads import load_stock_active_codes_frame
     from quotemux.settings import QuoteMuxSettings
     from quotemux.source_packages.instance_context import use_source_instance
@@ -105,6 +112,77 @@ def _snapshot_shortfall_codes(target_date: str) -> tuple[str, ...]:
         )(target_date)
     active_codes, complete_codes = _snapshot_complete_codes(active_frame, items, target_date)
     return tuple(code for code in dict.fromkeys(active_codes) if code not in complete_codes)
+
+
+def _date_text(value: object) -> str:
+    """Normalize provider date values without inventing a timestamp."""
+    if value is None:
+        return ""
+    text = str(value).strip().replace("/", "-")
+    return text[:10] if len(text) >= 10 else text
+
+
+def _eastmoney_active_codes(records: list[dict[str, object]], target_date: str) -> tuple[str, ...]:
+    """Return codes covered by an Eastmoney full-day suspension interval."""
+    active: set[str] = set()
+    for row in records:
+        code = str(row.get("代码", "")).strip().zfill(6)
+        start = _date_text(row.get("停牌时间"))
+        end = _date_text(row.get("停牌截止时间"))
+        if code and start and start <= target_date and (not end or target_date <= end):
+            active.add(code)
+    return tuple(sorted(active))
+
+
+def _eastmoney_identity_matches(row: dict[str, object], market: str, code: str) -> bool:
+    expected_suffix = {"SHSE": "SH", "SZSE": "SZ", "BJSE": "BJ"}.get(market, "")
+    if not expected_suffix or str(row.get("代码", "")).strip().zfill(6) != code:
+        return False
+    secucode = str(row.get("SECUCODE", "")).strip().upper()
+    if secucode in {"", "NONE", "NAN", "NAT"}:
+        secucode = ""
+    if secucode:
+        return secucode == f"{code}.{expected_suffix}"
+    market_text = str(row.get("所属市场", ""))
+    if "上交所" in market_text:
+        provider_suffix = "SH"
+    elif "深交所" in market_text:
+        provider_suffix = "SZ"
+    elif "北交所" in market_text or "北京" in market_text:
+        provider_suffix = "BJ"
+    else:
+        provider_suffix = ""
+    return provider_suffix == expected_suffix
+
+
+def _snapshot_shortfall_codes_eastmoney(target_date: str) -> tuple[str, ...]:
+    from quotemux.settings import QuoteMuxSettings
+    from quotemux.source_packages.instance_context import use_source_instance
+    from quotemux_packages.akshare import source as ak_source
+
+    instance = next((item for item in QuoteMuxSettings().get_contract_source_instances(
+        "stocks.quotes.daily_snapshot", ("akshare",)
+    ) if item.package_id == "akshare"), None)
+    if instance is None:
+        raise RuntimeError("AKShare snapshot source instance unavailable")
+    date_arg = target_date.replace("-", "")
+    with use_source_instance(instance):
+        frame = ak_source._call_ak("stock_tfp_em", ak_source.ak.stock_tfp_em, date=date_arg)
+    return _eastmoney_active_codes(records(frame), target_date)
+
+
+def _snapshot_shortfall_codes(target_date: str) -> tuple[str, ...]:
+    try:
+        return _snapshot_shortfall_codes_tushare(target_date)
+    except Exception as tushare_error:
+        try:
+            return _snapshot_shortfall_codes_eastmoney(target_date)
+        except Exception as eastmoney_error:
+            raise RuntimeError(
+                "Tushare snapshot unavailable and Eastmoney suspension fallback failed: "
+                f"tushare={type(tushare_error).__name__}:{tushare_error}; "
+                f"eastmoney={type(eastmoney_error).__name__}:{eastmoney_error}"
+            ) from eastmoney_error
 
 
 def candidates(
@@ -163,7 +241,7 @@ def candidates(
     return result
 
 
-def source_probe(targets: list[Candidate]) -> tuple[list[dict], list[dict], list[dict]]:
+def _source_probe_tushare(targets: list[Candidate]) -> tuple[list[dict], list[dict], list[dict]]:
     from quotemux.settings import QuoteMuxSettings
     from quotemux.source_packages.instance_context import use_source_instance
     from quotemux_packages.tushare.rate_limit import call_tushare_api
@@ -199,7 +277,8 @@ def source_probe(targets: list[Candidate]) -> tuple[list[dict], list[dict], list
                         and str(row.get("suspend_type", "")).upper() == "S"
                         and row.get("suspend_timing") in (None, "")]
             if not daily and len(verified) == 1 and existing_bars == 0:
-                qualified.append({**key, "source_code": source_code, "source_record": verified[0]})
+                qualified.append({**key, "source": TUSHARE_SOURCE, "source_marker": TUSHARE_SOURCE_MARKER,
+                                  "source_code": source_code, "source_record": verified[0]})
             elif not daily and len(verified) == 1 and existing_bars > 0:
                 residual.append({**key, "reason": "source_confirmed_suspension_conflicts_with_existing_1m",
                                  "existing_1m_bars": existing_bars})
@@ -209,6 +288,62 @@ def source_probe(targets: list[Candidate]) -> tuple[list[dict], list[dict], list
     if len(qualified) + len(residual) != len(targets):
         raise RuntimeError("source probe target accounting mismatch")
     return raw, qualified, residual
+
+
+def _source_probe_eastmoney(targets: list[Candidate]) -> tuple[list[dict], list[dict], list[dict]]:
+    from quotemux.settings import QuoteMuxSettings
+    from quotemux.source_packages.instance_context import use_source_instance
+    from quotemux_packages.akshare import source as ak_source
+
+    instance = next((item for item in QuoteMuxSettings().get_contract_source_instances(
+        "stocks.quotes.daily_snapshot", ("akshare",)
+    ) if item.package_id == "akshare"), None)
+    if instance is None:
+        raise RuntimeError("AKShare snapshot source instance unavailable")
+    dates = sorted({str(row[2]) for row in targets})
+    raw: list[dict] = []
+    qualified: list[dict] = []
+    residual: list[dict] = []
+    with use_source_instance(instance):
+        for target_date in dates:
+            date_arg = target_date.replace("-", "")
+            frame = ak_source._call_ak("stock_tfp_em", ak_source.ak.stock_tfp_em, date=date_arg)
+            source_rows = records(frame)
+            raw.append({"source": EASTMONEY_SOURCE, "target_date": target_date,
+                        "request": {"date": date_arg}, "rows": source_rows})
+            active_by_code: dict[str, list[dict[str, object]]] = {}
+            for source_row in source_rows:
+                for code in _eastmoney_active_codes([source_row], target_date):
+                    active_by_code.setdefault(code, []).append(source_row)
+            for market, code, day, existing_bars, candidate_kind in targets:
+                if day != target_date:
+                    continue
+                key = {"market": market, "code": code, "trade_date": day,
+                       "candidate_kind": candidate_kind}
+                verified = [row for row in active_by_code.get(code, [])
+                            if _eastmoney_identity_matches(row, market, code)]
+                if existing_bars == 0 and len(verified) == 1:
+                    qualified.append({**key, "source": EASTMONEY_SOURCE,
+                                      "source_marker": EASTMONEY_SOURCE_MARKER,
+                                      "source_code": verified[0].get("SECUCODE", code),
+                                      "source_record": verified[0]})
+                else:
+                    residual.append({**key, "reason": "eastmoney_full_day_suspension_not_confirmed",
+                                     "suspension_rows": len(verified),
+                                     "existing_1m_bars": existing_bars})
+    if len(qualified) + len(residual) != len(targets):
+        raise RuntimeError("Eastmoney source probe target accounting mismatch")
+    return raw, qualified, residual
+
+
+def source_probe(targets: list[Candidate]) -> tuple[list[dict], list[dict], list[dict]]:
+    try:
+        return _source_probe_tushare(targets)
+    except Exception as tushare_error:
+        raw, qualified, residual = _source_probe_eastmoney(targets)
+        raw.insert(0, {"source": TUSHARE_SOURCE, "error": f"{type(tushare_error).__name__}: {tushare_error}",
+                       "fallback": EASTMONEY_SOURCE})
+        return raw, qualified, residual
 
 
 def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_version: str,
@@ -232,7 +367,7 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
                            where existing.market=%s and existing.code=%s and existing.status='suspended'
                              and %s::date between existing.suspend_start_date and existing.suspend_end_date
                        )""",
-                    (market, code, day, day, SOURCE, SOURCE_MARKER, captured_at, data_version,
+                    (market, code, day, day, row.get("source", SOURCE), row.get("source_marker", SOURCE_MARKER), captured_at, data_version,
                      market, code, day),
                 )
                 inserted += cursor.rowcount
@@ -297,6 +432,13 @@ def apply_qualified(connection: psycopg.Connection, qualified: list[dict], data_
     return inserted, updated, ineligible
 
 
+def apply_if_requested(connection: psycopg.Connection, qualified: list[dict], data_version: str,
+                       captured_at: str, *, dry_run: bool) -> tuple[int, int, int]:
+    if dry_run:
+        return 0, 0, 0
+    return apply_qualified(connection, qualified, data_version, captured_at)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-date", default="", help="default: latest daily fact date")
@@ -304,6 +446,11 @@ def main() -> int:
         "--include-snapshot-shortfall",
         action="store_true",
         help="include active codes absent from the daily fact and QuoteMux snapshot",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="probe providers and write evidence artifacts without database writes",
     )
     parser.add_argument("--audit-root", type=Path, default=Path("/data/markethub/audit/stock-intraday-suspension-reconcile"))
     args = parser.parse_args()
@@ -331,7 +478,9 @@ def main() -> int:
         require_stable_daily_snapshot(before, after_probe)
         captured_at = datetime.now(timezone.utc).isoformat()
         raw_path = run_dir / "source_raw.json"
-        raw_path.write_text(json.dumps({"captured_at_utc": captured_at, "source": SOURCE,
+        source_names = sorted({str(item["source"]) for item in [*raw, *qualified] if item.get("source")})
+        source_markers = sorted({str(item["source_marker"]) for item in qualified if item.get("source_marker")})
+        raw_path.write_text(json.dumps({"captured_at_utc": captured_at, "sources": source_names,
                                         "targets": targets, "responses": raw}, ensure_ascii=False,
                                        indent=2, default=str) + "\n", encoding="utf-8")
         qualified_path = run_dir / "qualified.json"
@@ -342,7 +491,10 @@ def main() -> int:
             kind: sum(1 for row in qualified if row.get("candidate_kind") == kind)
             for kind in ("daily_row", "snapshot_shortfall_no_daily")
         }
-        manifest = {"captured_at_utc": captured_at, "source": SOURCE, "source_marker": SOURCE_MARKER,
+        manifest = {"captured_at_utc": captured_at, "dry_run": args.dry_run,
+                    "source": source_names[0] if len(source_names) == 1 else "mixed",
+                    "source_marker": source_markers[0] if len(source_markers) == 1 else "mixed",
+                    "sources": source_names, "source_markers": source_markers,
                     "release": before.get("version"), "data_version_before": before.get("data_version"),
                     "data_version_after_probe": after_probe.get("data_version"),
                     "stock_daily_dataset_version": before["dataset_versions"]["stock_daily_1d"],
@@ -354,17 +506,19 @@ def main() -> int:
                     "residual_sha256": sha256(residual_path), "script_sha256": sha256(Path(__file__))}
         manifest_path = run_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        inserted, updated, ineligible = apply_qualified(
-            connection, qualified, str(after_probe.get("data_version", "")), captured_at
+        inserted, updated, ineligible = apply_if_requested(
+            connection, qualified, str(after_probe.get("data_version", "")), captured_at,
+            dry_run=args.dry_run,
         )
         manifest["history_rows_inserted"] = inserted
         manifest["daily_flags_corrected"] = updated
         manifest["capture_gaps_ineligible"] = ineligible
         manifest["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    audit = api_json(API, "/api/admin/capture-gaps/audit?window_count=90", post=True)
-    (run_dir / "capture_gap_audit.json").write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    if qualified:
+    if not args.dry_run:
+        audit = api_json(API, "/api/admin/capture-gaps/audit?window_count=90", post=True)
+        (run_dir / "capture_gap_audit.json").write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if qualified and not args.dry_run:
         with db_connection() as connection, connection.cursor() as cursor:
             for row in qualified:
                 if row["candidate_kind"] != "daily_row":
@@ -378,7 +532,8 @@ def main() -> int:
                 gap = cursor.fetchone()
                 if gap is not None and gap[0] != "ineligible_suspended":
                     raise RuntimeError(f"capture gap not classified as source-confirmed suspension: {row['code']} {row['trade_date']} status={gap[0]}")
-    print(json.dumps({"artifact": str(run_dir), "targets": len(targets), "qualified": len(qualified),
+    print(json.dumps({"artifact": str(run_dir), "dry_run": args.dry_run,
+                      "targets": len(targets), "qualified": len(qualified),
                       "qualified_by_kind": {kind: sum(1 for row in qualified if row.get("candidate_kind") == kind)
                                             for kind in ("daily_row", "snapshot_shortfall_no_daily")},
                       "residual": len(residual), "history_rows_inserted": inserted,
