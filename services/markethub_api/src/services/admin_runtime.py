@@ -1273,6 +1273,7 @@ def resume_future_1m_coverage_backfill(
 _REPAIR_DATASET_CAPABILITIES = {
     "stock_daily_1d": "stocks.quotes.daily",
     "stock_bar_1m": "stocks.quotes.intraday",
+    "index_daily_1d": "indexes.quotes.daily",
     "future_bar_1m": "futures.quotes.main_continuous.1m",
     "future_contract_reference": "futures.contracts.catalog",
     "concept_daily_1d": "concepts.quotes.daily",
